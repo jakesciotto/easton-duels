@@ -1,0 +1,52 @@
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { createMemoryRouter, RouterProvider } from 'react-router'
+import { routes } from '@/router'
+import { setAdminToken } from '@/lib/auth'
+import { fakeFetch } from './fakes'
+
+beforeEach(() => { localStorage.clear(); setAdminToken('tok') })
+afterEach(() => vi.unstubAllGlobals())
+
+function mount(path = '/admin') {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const router = createMemoryRouter(routes, { initialEntries: [path] })
+  render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
+  return router
+}
+
+const summary = { id: 7, name: 'Fall Duels', date: '2026-10-03', matCount: 2, matCode: '0420', status: 'setup', maxAgeGap: 1, maxWeightGap: 10, sameGender: false, createdAt: 'x',
+  teams: [{ id: 1, eventId: 7, name: 'Boulder', color: 'red', position: 0 }, { id: 2, eventId: 7, name: 'Denver', color: 'blue', position: 1 }] }
+
+describe('AdminPage', () => {
+  it('lists events with their teams and opens one', async () => {
+    fakeFetch(url => url === '/api/events' ? { json: [summary] } : { json: { event: summary, teams: summary.teams, athletes: [], rulesets: [], mats: [], matches: [] } })
+    const router = mount()
+    expect(await screen.findByText('Fall Duels')).toBeInTheDocument()
+    expect(screen.getByText(/Boulder/)).toBeInTheDocument()
+    await userEvent.setup().click(screen.getByRole('link', { name: /open/i }))
+    expect(router.state.location.pathname).toBe('/events/7')
+  })
+
+  it('creates an event from the dialog and navigates to it', async () => {
+    const f = fakeFetch((url, init) => {
+      if (url === '/api/events' && init?.method === 'POST') return { status: 201, json: { event: { ...summary, id: 9 }, teams: summary.teams, athletes: [], rulesets: [], mats: [], matches: [] } }
+      if (url === '/api/events') return { json: [] }
+      return { json: { event: { ...summary, id: 9 }, teams: summary.teams, athletes: [], rulesets: [], mats: [], matches: [] } }
+    })
+    const router = mount()
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'New event' }))
+    await user.type(screen.getByLabelText('Event name'), 'Fall Duels')
+    await user.clear(screen.getByLabelText('Date'))
+    await user.type(screen.getByLabelText('Date'), '2026-10-03')
+    await user.type(screen.getByLabelText('Team A name'), 'Boulder')
+    await user.type(screen.getByLabelText('Team B name'), 'Denver')
+    await user.click(screen.getByRole('button', { name: 'Create event' }))
+    await vi.waitFor(() => expect(router.state.location.pathname).toBe('/events/9'))
+    const posted = f.body(f.calls.findIndex(c => c.init?.method === 'POST'))
+    expect(posted).toMatchObject({ name: 'Fall Duels', date: '2026-10-03', matCount: 1, teams: [{ name: 'Boulder', color: 'red' }, { name: 'Denver', color: 'blue' }] })
+  })
+})

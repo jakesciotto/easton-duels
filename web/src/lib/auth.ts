@@ -13,9 +13,16 @@ function write(key: string, value: string | null) {
   } catch { /* storage blocked */ }
 }
 
+const listeners = new Set<() => void>()
+export function subscribeAdminToken(cb: () => void): () => void {
+  listeners.add(cb)
+  return () => { listeners.delete(cb) }
+}
+const notify = () => { for (const cb of listeners) cb() }
+
 export const getAdminToken = () => read(ADMIN_KEY)
-export const setAdminToken = (token: string) => write(ADMIN_KEY, token)
-export const clearAdminToken = () => write(ADMIN_KEY, null)
+export const setAdminToken = (token: string) => { write(ADMIN_KEY, token); notify() }
+export const clearAdminToken = () => { write(ADMIN_KEY, null); notify() }
 
 export function getMatBinding(): MatBinding | null {
   const raw = read(MAT_KEY)
