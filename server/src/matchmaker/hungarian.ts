@@ -4,22 +4,24 @@ export const PAD = 1e6
 // Returns the assigned column for each row, or -1. Padded cells cost PAD, so a
 // caller that also uses PAD for excluded pairs can drop every assignment at or
 // above PAD and get an optimal matching of the remaining pairs.
+const filled = <T>(length: number, value: T): T[] => Array.from({ length }, () => value)
+
 export function solveAssignment(cost: number[][]): number[] {
   const n = cost.length
   const m = n === 0 ? 0 : Math.max(...cost.map(r => r.length))
-  if (n === 0 || m === 0) return new Array<number>(n).fill(-1)
+  if (n === 0 || m === 0) return filled(n, -1)
   const size = Math.max(n, m)
   const a = Array.from({ length: size }, (_, i) => Array.from({ length: size }, (_, j) => cost[i]?.[j] ?? PAD))
-  const u = new Array<number>(size + 1).fill(0)
-  const v = new Array<number>(size + 1).fill(0)
-  const p = new Array<number>(size + 1).fill(0)
-  const way = new Array<number>(size + 1).fill(0)
+  const u = filled(size + 1, 0)
+  const v = filled(size + 1, 0)
+  const p = filled(size + 1, 0)
+  const way = filled(size + 1, 0)
 
   for (let i = 1; i <= size; i++) {
     p[0] = i
     let j0 = 0
-    const minv = new Array<number>(size + 1).fill(Number.POSITIVE_INFINITY)
-    const used = new Array<boolean>(size + 1).fill(false)
+    const minv = filled(size + 1, Number.POSITIVE_INFINITY)
+    const used = filled(size + 1, false)
     do {
       used[j0] = true
       const i0 = p[j0]
@@ -54,7 +56,7 @@ export function solveAssignment(cost: number[][]): number[] {
     } while (j0 !== 0)
   }
 
-  const result = new Array<number>(n).fill(-1)
+  const result = filled(n, -1)
   for (let j = 1; j <= size; j++) {
     const i = p[j]
     if (i >= 1 && i <= n && j <= m && j - 1 < cost[i - 1].length) result[i - 1] = j - 1

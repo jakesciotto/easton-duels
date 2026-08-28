@@ -15,7 +15,7 @@ const row = (i: number) => ({ id: `kid-${i}`, name: `Kid ${i}`, belt: 'grey', ag
 describe('fetchCompetitors', () => {
   it('pages by 1000 using the Range header and sends the key twice', async () => {
     const { fetchFn, calls } = fakeFetch((url, init) => {
-      const range = (init?.headers as Record<string, string>).range
+      const range = ((init?.headers ?? {}) as Record<string, string>).range
       const from = Number(range.split('-')[0])
       const count = from === 0 ? 1000 : 3
       return new Response(JSON.stringify(Array.from({ length: count }, (_, i) => row(from + i))), { status: 206 })

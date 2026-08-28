@@ -26,7 +26,7 @@ describe('WlClient', () => {
     expect(calls).toHaveLength(3)
     expect(calls[1].url).toContain('id_region=1')
     expect(calls[1].url).toContain('k_business=9')
-    expect((calls[1].init?.headers as Record<string, string>).authorization).toBe('Bearer tok')
+    expect(((calls[1].init?.headers ?? {}) as Record<string, string>).authorization).toBe('Bearer tok')
   })
 
   it('polls the report until status 3 and maps rows by field name', async () => {

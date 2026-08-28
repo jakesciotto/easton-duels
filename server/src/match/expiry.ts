@@ -42,7 +42,8 @@ export class ExpiryScheduler {
   }
 
   clear(): void {
-    for (const id of [...this.timers.keys()]) this.cancel(id)
+    for (const timer of this.timers.values()) clearTimeout(timer)
+    this.timers.clear()
   }
 
   pendingCount(): number {

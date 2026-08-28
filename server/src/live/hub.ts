@@ -42,13 +42,15 @@ export class Hub {
     const snap = this.snapshot(eventId)
     const set = this.subs.get(eventId)
     if (set) {
-      for (const send of [...set]) {
+      const dead: Sender[] = []
+      for (const send of set) {
         try {
           send(snap)
         } catch {
-          set.delete(send)
+          dead.push(send)
         }
       }
+      for (const send of dead) set.delete(send)
     }
     return snap
   }
