@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { createApp } from './app.js'
@@ -9,6 +10,9 @@ import { Hub } from './live/hub.js'
 import { ExpiryScheduler, expireClock } from './match/expiry.js'
 import { rosterFromEnv } from './roster/config.js'
 import { lanIp } from './lib/lanIp.js'
+import { loadDotEnv } from './lib/env.js'
+
+loadDotEnv(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../.env'))
 
 const port = Number(process.env.PORT ?? 8422)
 const adminPin = validateAdminPin(process.env.ADMIN_PIN)
