@@ -10,6 +10,7 @@ import { athleteRoutes } from './routes/athletes.js'
 import { scoringRoutes } from './routes/scoring.js'
 import { entryRoutes } from './routes/entries.js'
 import { matchRoutes } from './routes/matches.js'
+import { rosterRoutes } from './routes/roster.js'
 
 export const VERSION = '0.1.0'
 
@@ -29,6 +30,7 @@ export function createApp(ctx: AppContext) {
   app.route('/api', scoringRoutes)
   app.route('/api', entryRoutes)
   app.route('/api', matchRoutes)
+  app.route('/api', rosterRoutes)
   app.onError((err, c) => {
     if (err instanceof SeqConflict) return errorJson(c, 409, 'sequence', 'stale sequence', { currentSeq: err.currentSeq })
     if (err instanceof DecisionRequired) return errorJson(c, 422, 'decision_required', 'scores are tied; pick a winner')
