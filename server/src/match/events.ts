@@ -1,6 +1,6 @@
 import { asc, desc, eq } from 'drizzle-orm'
 import type { DbLike } from '../db/client.js'
-import { matches, matchEvents, rulesets, type MatchRow, type MatchEventRow, type RulesetRow } from '../db/schema.js'
+import { events, matches, matchEvents, rulesets, type MatchRow, type MatchEventRow, type RulesetRow } from '../db/schema.js'
 import { deriveMatch, deriveOutcome } from './derive.js'
 import type { MatchResult } from '../shared/types.js'
 
@@ -89,10 +89,17 @@ function assertAthlete(match: MatchRow, athleteId: number | undefined): number {
   return athleteId
 }
 
+function assertEventLive(db: DbLike, eventId: number): void {
+  const ev = db.select({ status: events.status }).from(events).where(eq(events.id, eventId)).get()
+  if (!ev) throw new MatchStateError('event not found')
+  if (ev.status !== 'live') throw new MatchStateError(`event is ${ev.status}`)
+}
+
 function guard(db: DbLike, input: { id: string; matchId: number; lastSeq: number }): { duplicate: AppendResult } | { match: MatchRow } {
   const existing = db.select().from(matchEvents).where(eq(matchEvents.id, input.id)).get()
   if (existing) return { duplicate: { duplicate: true, match: loadMatch(db, existing.matchId) } }
   const match = loadMatch(db, input.matchId)
+  assertEventLive(db, match.eventId)
   if (match.status !== 'live') throw new MatchStateError(`match is ${match.status}`)
   if (match.lastSeq !== input.lastSeq) throw new SeqConflict(match.lastSeq)
   return { match }
@@ -165,11 +172,13 @@ export function endMatch(db: DbLike, input: EndInput): AppendResult {
 export function undoLastMatchEvent(db: DbLike, input: { matchId: number; lastSeq: number }): MatchRow {
   return db.transaction(tx => {
     const match = loadMatch(tx, input.matchId)
+    assertEventLive(tx, match.eventId)
     if (match.status !== 'live') throw new MatchStateError(`match is ${match.status}`)
     if (match.lastSeq !== input.lastSeq) throw new SeqConflict(match.lastSeq)
     const last = tx.select().from(matchEvents).where(eq(matchEvents.matchId, match.id)).orderBy(desc(matchEvents.seq)).get()
     if (!last) throw new MatchStateError('nothing to undo')
     if (last.type === 'admin') throw new MatchStateError('cannot undo an admin event')
+    if (last.type === 'clock_pause') throw new MatchStateError('press Start to resume the clock')
     tx.delete(matchEvents).where(eq(matchEvents.id, last.id)).run()
     return recompute(tx, match.id)
   })

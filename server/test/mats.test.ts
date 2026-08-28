@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm'
 import { freshDb, seedEvent } from './fixtures.js'
 import { startEvent, advanceMat, reopenMatch, setResult, skipMatch } from '../src/match/mats.js'
 import { appendMatchEvent, endMatch, loadMatch, MatchStateError } from '../src/match/events.js'
+import { enterResult } from '../src/match/entry.js'
 import { events, mats, matches } from '../src/db/schema.js'
 
 describe('startEvent', () => {
@@ -75,6 +76,15 @@ describe('reopenMatch', () => {
     advanceMat(db, s.matIds[0])
     appendMatchEvent(db, { id: 'e1', matchId: second, type: 'score', athleteId: s.a2, actionKey: 'takedown', lastSeq: 0 })
     expect(() => reopenMatch(db, first)).toThrow(/already started/)
+  })
+
+  it('refuses while the event is in setup and works once it is done', () => {
+    const db = freshDb()
+    const s = seedEvent(db, { matCount: 1 })
+    enterResult(db, s.matchIds[0], { entryId: 'entry-0001', pointsA: 2, pointsB: 0, winnerAthleteId: s.a1, winType: 'points' })
+    expect(() => reopenMatch(db, s.matchIds[0])).toThrow(/start the event/)
+    db.update(events).set({ status: 'done' }).where(eq(events.id, s.eventId)).run()
+    expect(reopenMatch(db, s.matchIds[0]).status).toBe('live')
   })
 
   it('refuses on a match that is not done', () => {

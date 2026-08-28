@@ -100,7 +100,7 @@ scoringRoutes.post('/matches/:matchId/end', requireMatOrAdmin(matIdFromMatch), v
   const matchId = Number(c.req.param('matchId'))
   try {
     const r = endMatch(db, { ...c.req.valid('json'), matchId })
-    if (!r.duplicate && r.match.matId !== null) advanceMat(db, r.match.matId)
+    if (r.match.matId !== null) advanceMat(db, r.match.matId)
     return respond(c, r.match, !r.duplicate)
   } catch (e) {
     if (e instanceof SeqConflict) return seqConflict(c, matchId, e)

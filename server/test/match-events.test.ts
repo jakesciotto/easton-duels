@@ -62,6 +62,12 @@ describe('appendMatchEvent', () => {
     expect(() => appendMatchEvent(db, { id: 'c4', matchId, type: 'clock_pause', lastSeq: 2, at: T(46) })).toThrow(/not running/)
   })
 
+  it('refuses to score while the event is in setup', () => {
+    const db = freshDb()
+    const s = seedEvent(db)
+    expect(() => appendMatchEvent(db, { id: 'e1', matchId: s.matchIds[0], type: 'clock_start', lastSeq: 0 })).toThrow(/setup/)
+  })
+
   it('pauses the clock before a terminal and blocks restart while pending', () => {
     const { db, s, matchId } = liveMatch()
     appendMatchEvent(db, { id: 'c1', matchId, type: 'clock_start', lastSeq: 0, at: T(0) })
@@ -132,6 +138,18 @@ describe('undoLastMatchEvent', () => {
     expect(m.pendingTerminalKey).toBeNull()
     expect(m.clockStartedAt).toBeNull()
     expect(m.clockElapsedMs).toBe(20_000)
+  })
+
+  it('refuses to undo a clock pause but still undoes a clock start', () => {
+    const { db, matchId } = liveMatch()
+    appendMatchEvent(db, { id: 'c1', matchId, type: 'clock_start', lastSeq: 0, at: T(0) })
+    appendMatchEvent(db, { id: 'c2', matchId, type: 'clock_pause', lastSeq: 1, at: T(30) })
+    expect(() => undoLastMatchEvent(db, { matchId, lastSeq: 2 })).toThrow(/press Start to resume the clock/)
+    const other = liveMatch()
+    appendMatchEvent(other.db, { id: 'c1', matchId: other.matchId, type: 'clock_start', lastSeq: 0, at: T(0) })
+    const m = undoLastMatchEvent(other.db, { matchId: other.matchId, lastSeq: 1 })
+    expect(m.clockStartedAt).toBeNull()
+    expect(m.lastSeq).toBe(0)
   })
 
   it('refuses on a done match, on a stale seq, and on an empty log', () => {

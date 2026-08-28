@@ -54,6 +54,9 @@ export function advanceMat(db: DbLike, matId: number): MatchRow | null {
 export function reopenMatch(db: DbLike, matchId: number): MatchRow {
   return db.transaction(tx => {
     const match = loadMatch(tx, matchId)
+    const ev = tx.select({ status: events.status }).from(events).where(eq(events.id, match.eventId)).get()
+    if (!ev) throw new MatchStateError('event not found')
+    if (ev.status === 'setup') throw new MatchStateError('start the event before reopening a match')
     if (match.status !== 'done') throw new MatchStateError('only a done match can be reopened')
     if (match.matId !== null) {
       const mat = loadMat(tx, match.matId)

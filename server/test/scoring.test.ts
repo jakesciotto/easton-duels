@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest'
+import { eq } from 'drizzle-orm'
 import { createTestApp, call, matToken } from './helpers.js'
 import { seedEvent } from './fixtures.js'
+import { mats } from '../src/db/schema.js'
+import { endMatch } from '../src/match/events.js'
 
 describe('bind and heartbeat', () => {
   it('issues a mat token for the right code and locks after five bad codes', async () => {
@@ -58,6 +61,20 @@ describe('scoring flow', () => {
     const board = await call(app, 'GET', `/api/events/${s.eventId}/board`)
     expect(board.body.mats[0].current.id).toBe(second)
     expect(board.body.teams[0].wins).toBe(1)
+  })
+
+  it('advances the mat on a replayed end whose advance never landed', async () => {
+    const { app, db } = createTestApp()
+    const s = seedEvent(db, { matCount: 1, live: true })
+    const token = matToken(s.eventId, s.matIds[0])
+    const [first, second] = s.matchIds
+    const body = { id: 'end-0001', lastSeq: 0, winnerAthleteId: s.a1 }
+    endMatch(db, { ...body, matchId: first })
+    const version = (await call(app, 'GET', `/api/events/${s.eventId}/board`)).body.version
+    const replay = await call(app, 'POST', `/api/matches/${first}/end`, body, token)
+    expect(replay.status).toBe(200)
+    expect(replay.body.version).toBe(version)
+    expect(db.select().from(mats).where(eq(mats.id, s.matIds[0])).get()?.currentMatchId).toBe(second)
   })
 
   it('requires a decision on a tie and records a submission from a terminal', async () => {
