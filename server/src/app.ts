@@ -4,6 +4,9 @@ import { attachAuth, errorJson } from './auth/middleware.js'
 import { SeqConflict, MatchStateError, DecisionRequired } from './match/events.js'
 import { authRoutes } from './routes/auth.js'
 import { boardRoutes } from './routes/board.js'
+import { eventRoutes } from './routes/events.js'
+import { rulesetRoutes } from './routes/rulesets.js'
+import { athleteRoutes } from './routes/athletes.js'
 
 export const VERSION = '0.1.0'
 
@@ -17,6 +20,9 @@ export function createApp(ctx: AppContext) {
   app.get('/api/health', c => c.json({ ok: true, version: VERSION }))
   app.route('/api', authRoutes)
   app.route('/api', boardRoutes)
+  app.route('/api', eventRoutes)
+  app.route('/api', rulesetRoutes)
+  app.route('/api', athleteRoutes)
   app.onError((err, c) => {
     if (err instanceof SeqConflict) return errorJson(c, 409, 'sequence', 'stale sequence', { currentSeq: err.currentSeq })
     if (err instanceof DecisionRequired) return errorJson(c, 422, 'decision_required', 'scores are tied; pick a winner')
