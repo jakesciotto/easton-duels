@@ -10,6 +10,7 @@ import { resolvePair } from '../match/pairs.js'
 import { respond } from './scoring.js'
 
 const entrySchema = z.object({
+  entryId: z.string().min(8).max(64).regex(/^[A-Za-z0-9-]+$/),
   pointsA: z.number().int().min(0).max(99),
   pointsB: z.number().int().min(0).max(99),
   winnerAthleteId: z.number().int(),
@@ -31,7 +32,8 @@ entryRoutes.post('/matches/:matchId/entry', requireAdmin, validate('json', entry
   if (!match) return errorJson(c, 404, 'not_found', 'match not found')
   const body = c.req.valid('json')
   if (body.winnerAthleteId !== match.athleteAId && body.winnerAthleteId !== match.athleteBId) return errorJson(c, 422, 'validation', 'winner must be one of the two athletes')
-  return respond(c, enterResult(db, matchId, body))
+  const { duplicate, match: updated } = enterResult(db, matchId, body)
+  return respond(c, updated, !duplicate)
 })
 
 entryRoutes.post('/events/:eventId/entries', requireAdmin, validate('json', createSchema), c => {
@@ -42,7 +44,7 @@ entryRoutes.post('/events/:eventId/entries', requireAdmin, validate('json', crea
   const pair = resolvePair(db, eventId, body.athleteAId, body.athleteBId)
   if (typeof pair === 'string') return errorJson(c, 422, 'validation', pair)
   if (body.winnerAthleteId !== pair.a && body.winnerAthleteId !== pair.b) return errorJson(c, 422, 'validation', 'winner must be one of the two athletes')
-  const match = createEntry(db, eventId, body)
-  const res = respond(c, match)
-  return new Response(res.body, { status: 201, headers: res.headers })
+  const { duplicate, match } = createEntry(db, eventId, body)
+  const res = respond(c, match, !duplicate)
+  return duplicate ? res : new Response(res.body, { status: 201, headers: res.headers })
 })

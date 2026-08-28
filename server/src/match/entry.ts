@@ -7,6 +7,7 @@ import { resolvePair } from './pairs.js'
 import type { WinType } from '../shared/types.js'
 
 export interface EntryInput {
+  entryId: string
   pointsA: number
   pointsB: number
   winnerAthleteId: number
@@ -20,10 +21,21 @@ export interface CreateEntryInput extends EntryInput {
   rulesetId?: number
 }
 
+export interface EntryResult { duplicate: boolean; match: MatchRow }
+
 type Insert = typeof matchEvents.$inferInsert
 
-export function enterResult(db: DbLike, matchId: number, input: EntryInput): MatchRow {
+const entryKey = (entryId: string) => `entry:${entryId}`
+
+function replayed(db: DbLike, entryId: string): EntryResult | null {
+  const row = db.select().from(matchEvents).where(eq(matchEvents.id, entryKey(entryId))).get()
+  return row ? { duplicate: true, match: loadMatch(db, row.matchId) } : null
+}
+
+export function enterResult(db: DbLike, matchId: number, input: EntryInput): EntryResult {
   return db.transaction(tx => {
+    const replay = replayed(tx, input.entryId)
+    if (replay) return replay
     const match = loadMatch(tx, matchId)
     if (input.winnerAthleteId !== match.athleteAId && input.winnerAthleteId !== match.athleteBId) throw new MatchStateError('athlete not in match')
     const at = input.at ?? new Date().toISOString()
@@ -34,7 +46,7 @@ export function enterResult(db: DbLike, matchId: number, input: EntryInput): Mat
     const rows: Insert[] = []
     const push = (row: Omit<Insert, 'id' | 'matchId' | 'seq' | 'at'>) => {
       const s = ++seq
-      rows.push({ id: `entry:${matchId}:${s}`, matchId, seq: s, at, ...row })
+      rows.push({ id: rows.length === 0 ? entryKey(input.entryId) : `${entryKey(input.entryId)}:${s}`, matchId, seq: s, at, ...row })
     }
     if (match.clockStartedAt) push({ type: 'clock_pause' })
     push({ type: 'set_score', athleteId: match.athleteAId, points: input.pointsA })
@@ -49,12 +61,14 @@ export function enterResult(db: DbLike, matchId: number, input: EntryInput): Mat
       const mat = tx.select().from(mats).where(eq(mats.id, updated.matId)).get()
       if (mat && mat.currentMatchId === matchId) advanceMat(tx, mat.id)
     }
-    return loadMatch(tx, matchId)
+    return { duplicate: false, match: loadMatch(tx, matchId) }
   })
 }
 
-export function createEntry(db: DbLike, eventId: number, input: CreateEntryInput): MatchRow {
+export function createEntry(db: DbLike, eventId: number, input: CreateEntryInput): EntryResult {
   return db.transaction(tx => {
+    const replay = replayed(tx, input.entryId)
+    if (replay) return replay
     if (!tx.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get()) throw new MatchStateError('event not found')
     const pair = resolvePair(tx, eventId, input.athleteAId, input.athleteBId)
     if (typeof pair === 'string') throw new MatchStateError(pair)
