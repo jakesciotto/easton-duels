@@ -12,7 +12,7 @@ function loadMat(db: DbLike, matId: number): MatRow {
 
 function hasScoringEvents(db: DbLike, matchId: number): boolean {
   return db.select({ id: matchEvents.id }).from(matchEvents)
-    .where(and(eq(matchEvents.matchId, matchId), ne(matchEvents.type, 'admin'))).get() !== undefined
+    .where(and(eq(matchEvents.matchId, matchId), ne(matchEvents.type, 'admin'), ne(matchEvents.type, 'end'))).get() !== undefined
 }
 
 function adminEventId(matchId: number, seq: number): string {

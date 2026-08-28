@@ -7,6 +7,7 @@ import { boardRoutes } from './routes/board.js'
 import { eventRoutes } from './routes/events.js'
 import { rulesetRoutes } from './routes/rulesets.js'
 import { athleteRoutes } from './routes/athletes.js'
+import { scoringRoutes } from './routes/scoring.js'
 
 export const VERSION = '0.1.0'
 
@@ -23,6 +24,7 @@ export function createApp(ctx: AppContext) {
   app.route('/api', eventRoutes)
   app.route('/api', rulesetRoutes)
   app.route('/api', athleteRoutes)
+  app.route('/api', scoringRoutes)
   app.onError((err, c) => {
     if (err instanceof SeqConflict) return errorJson(c, 409, 'sequence', 'stale sequence', { currentSeq: err.currentSeq })
     if (err instanceof DecisionRequired) return errorJson(c, 422, 'decision_required', 'scores are tied; pick a winner')
