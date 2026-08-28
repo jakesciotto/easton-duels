@@ -2,6 +2,7 @@ import { useState, type FormEvent, type ReactNode } from 'react'
 import { api, ApiError } from '@/lib/api'
 import { setAdminToken } from '@/lib/auth'
 import { useAdminToken } from '@/lib/useAdminToken'
+import { Wordmark } from '@/components/Wordmark'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -30,18 +31,18 @@ export function PinGate({ children }: { children: ReactNode }) {
 
   return (
     <main className="grid min-h-dvh place-items-center p-6">
-      <form onSubmit={submit} className="grid w-full max-w-sm gap-5 rounded-2xl border border-border bg-card p-6">
+      <form onSubmit={submit} className="grid w-full max-w-[360px] gap-4 rounded-lg border border-border bg-card p-5">
         <div className="grid gap-1">
-          <h1 className="display bg-[linear-gradient(90deg,#ff7a7a,#5aa2ff)] bg-clip-text text-5xl font-extrabold text-transparent">Duels</h1>
-          <p className="text-sm text-faint">Sign in to run the event.</p>
+          <Wordmark />
+          <h1 className="text-[22px] font-semibold tracking-[-0.035em]">Admin</h1>
         </div>
-        <div className="grid gap-2">
-          <Label htmlFor="pin">Admin PIN</Label>
+        <div className="grid gap-1.5">
+          <Label htmlFor="pin">PIN</Label>
           <Input id="pin" inputMode="numeric" autoComplete="off" maxLength={6} autoFocus value={pin}
-            onChange={e => setPin(e.target.value.replace(/\D/g, ''))} className="font-mono text-lg tracking-[0.4em] tabular-nums" />
+            onChange={e => setPin(e.target.value.replace(/\D/g, ''))} className="font-mono tracking-[0.4em] tabular-nums" />
         </div>
-        {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-        <Button type="submit" className="w-full" disabled={busy || pin.length !== 6}>Enter</Button>
+        {error && <p role="alert" className="text-[13px] text-destructive">{error}</p>}
+        <Button type="submit" className="w-full" disabled={busy || pin.length !== 6}>Continue</Button>
       </form>
     </main>
   )
