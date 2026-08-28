@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+.git
+.env
+data
+**/dist
+server/public
+.claude
+.superpowers
+.github
+*.db
+*.db-wal
+*.db-shm
+README.md
