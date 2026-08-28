@@ -8,3 +8,5 @@ dist/
 .claude/
 .superpowers/
 server/public/
+pnpm-lock.yaml
+yarn.lock

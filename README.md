@@ -11,6 +11,11 @@ iPads at the mat tables score matches. A TV shows team wins and points live.
 3. Open `http://<laptop-ip>:8422/admin` on the laptop. The Live tab shows the URL, a QR code, and
    the mat code for the iPads.
 4. iPads open `/mat`, pick a mat, and enter the mat code. The TV opens `/board/<event id>`.
+5. Back up the event: under `npm start` the database is `server/data/duels.db`, because `DATA_DIR`
+   defaults to `./data` and resolves from the `server` directory. SQLite runs in WAL mode, so a
+   backup must copy all three of `duels.db`, `duels.db-wal`, and `duels.db-shm`, and the server has
+   to be stopped while you copy. Under `docker compose` the same three files live next to
+   `./data/duels.db` on the host.
 
 Only roster sync needs internet. Everything else works on the gym wifi alone.
 
