@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createMemoryRouter, RouterProvider } from 'react-router'
@@ -8,7 +8,10 @@ import { setAdminToken } from '@/lib/auth'
 import { fakeFetch } from './fakes'
 
 beforeEach(() => { localStorage.clear(); setAdminToken('tok') })
-afterEach(() => vi.unstubAllGlobals())
+// Some tests leave a dialog open at the end; base-ui marks the rest of the
+// document inert while a dialog is open, so a leftover tree hides the next
+// test's content unless it is unmounted here.
+afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 function mount(path = '/admin') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -48,5 +51,34 @@ describe('AdminPage', () => {
     await vi.waitFor(() => expect(router.state.location.pathname).toBe('/events/9'))
     const posted = f.body(f.calls.findIndex(c => c.init?.method === 'POST'))
     expect(posted).toMatchObject({ name: 'Fall Duels', date: '2026-10-03', matCount: 1, teams: [{ name: 'Boulder', color: 'red' }, { name: 'Denver', color: 'blue' }] })
+  })
+
+  it('resets the new event form when reopened after cancel', async () => {
+    fakeFetch(url => url === '/api/events' ? { json: [] } : { json: { event: summary, teams: summary.teams, athletes: [], rulesets: [], mats: [], matches: [] } })
+    mount()
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'New event' }))
+    await user.type(screen.getByLabelText('Event name'), 'Fall Duels')
+    expect(screen.getByLabelText('Event name')).toHaveValue('Fall Duels')
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await user.click(screen.getByRole('button', { name: 'New event' }))
+    expect(await screen.findByLabelText('Event name')).toHaveValue('')
+  })
+
+  it('renders a validation error from the server without an unhandled rejection', async () => {
+    fakeFetch((url, init) => {
+      if (url === '/api/events' && init?.method === 'POST') return { status: 422, json: { error: { code: 'validation', message: 'name required' } } }
+      if (url === '/api/events') return { json: [] }
+      return { json: { event: summary, teams: summary.teams, athletes: [], rulesets: [], mats: [], matches: [] } }
+    })
+    const router = mount()
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'New event' }))
+    await user.type(screen.getByLabelText('Event name'), 'Fall Duels')
+    await user.type(screen.getByLabelText('Team A name'), 'Boulder')
+    await user.type(screen.getByLabelText('Team B name'), 'Denver')
+    await user.click(screen.getByRole('button', { name: 'Create event' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('name required')
+    expect(router.state.location.pathname).toBe('/admin')
   })
 })

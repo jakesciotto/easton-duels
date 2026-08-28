@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { TEAM_COLOR_KEYS, type TeamColor } from '@shared/types'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import type { EventDetail } from '@/lib/types'
@@ -34,11 +34,28 @@ export function NewEventDialog({ open, onOpenChange, onCreated }: { open: boolea
   const [sameGender, setSameGender] = useState(false)
   const create = useAdminMutation(null, (body: unknown) => adminApi<EventDetail>('/api/events', { method: 'POST', body }))
 
-  const submit = async (e: FormEvent) => {
+  useEffect(() => {
+    if (!open) return
+    setName('')
+    setDate(today())
+    setMatCount(1)
+    setTeamA({ name: '', color: 'red' })
+    setTeamB({ name: '', color: 'blue' })
+    setMaxAgeGap(1)
+    setMaxWeightGap(10)
+    setSameGender(false)
+    create.reset()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+
+  const submit = (e: FormEvent) => {
     e.preventDefault()
-    const detail = await create.mutateAsync({ name, date, matCount, teams: [teamA, teamB], maxAgeGap, maxWeightGap, sameGender })
-    onOpenChange(false)
-    onCreated(detail)
+    create.mutate({ name, date, matCount, teams: [teamA, teamB], maxAgeGap, maxWeightGap, sameGender }, {
+      onSuccess: detail => {
+        onOpenChange(false)
+        onCreated(detail)
+      },
+    })
   }
 
   return (
