@@ -51,6 +51,15 @@ describe('RateLimiter', () => {
     expect(rl.isBlocked('other', 5_000)).toBe(false)
     expect(rl.isBlocked('ip', 61_000)).toBe(false)
   })
+  it('evicts an idle key once its failures age out, and still counts a failure recorded after that', () => {
+    const rl = new RateLimiter(5, 60_000)
+    rl.recordFailure('ip', 0)
+    expect(rl.size()).toBe(1)
+    expect(rl.isBlocked('ip', 61_000)).toBe(false)
+    expect(rl.size()).toBe(0)
+    rl.recordFailure('ip', 61_000)
+    expect(rl.size()).toBe(1)
+  })
 })
 
 describe('middleware', () => {

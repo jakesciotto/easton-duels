@@ -5,7 +5,8 @@ export class RateLimiter {
 
   private recent(key: string, nowMs: number): number[] {
     const kept = (this.failures.get(key) ?? []).filter(t => nowMs - t < this.windowMs)
-    this.failures.set(key, kept)
+    if (kept.length === 0) this.failures.delete(key)
+    else this.failures.set(key, kept)
     return kept
   }
 
@@ -14,6 +15,12 @@ export class RateLimiter {
   }
 
   recordFailure(key: string, nowMs = Date.now()): void {
-    this.recent(key, nowMs).push(nowMs)
+    const kept = this.recent(key, nowMs)
+    kept.push(nowMs)
+    this.failures.set(key, kept)
+  }
+
+  size(): number {
+    return this.failures.size
   }
 }
