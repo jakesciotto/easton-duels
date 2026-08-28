@@ -3,19 +3,24 @@ import { Link } from 'react-router'
 import { clearAdminToken } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
 
-export function AdminShell({ title, actions, children }: { title: string; actions?: ReactNode; children: ReactNode }) {
+export function AdminShell({ title, status, actions, children }: {
+  title: string
+  status?: ReactNode
+  actions?: ReactNode
+  children: ReactNode
+}) {
   return (
     <div className="min-h-dvh">
-      <header className="sticky top-0 z-10 flex items-center gap-4 border-b bg-background/90 px-6 py-3 backdrop-blur">
-        <Link to="/admin" className="font-bold">Easton Duels</Link>
-        <span className="text-muted-foreground">/</span>
-        <h1 className="truncate text-lg font-semibold">{title}</h1>
+      <header className="sticky top-0 z-10 flex items-center gap-5 border-b border-border bg-background px-7 py-4">
+        <Link to="/admin" className="display bg-[linear-gradient(90deg,#ff7a7a,#5aa2ff)] bg-clip-text text-[22px] font-extrabold text-transparent">Duels</Link>
+        <h1 className="display truncate text-lg">{title}</h1>
+        {status}
         <div className="ml-auto flex items-center gap-2">
           {actions}
-          <Button variant="ghost" size="sm" onClick={clearAdminToken}>Sign out</Button>
+          <Button variant="outline" size="sm" onClick={clearAdminToken}>Sign out</Button>
         </div>
       </header>
-      <main className="mx-auto max-w-6xl p-6">{children}</main>
+      <main className="mx-auto max-w-6xl px-7 py-6">{children}</main>
     </div>
   )
 }

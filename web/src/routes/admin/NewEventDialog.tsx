@@ -1,26 +1,17 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { TEAM_COLOR_KEYS, type TeamColor } from '@shared/types'
+import type { TeamColor } from '@shared/types'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import type { EventDetail } from '@/lib/types'
-import { teamHex } from '@/lib/format'
+import { TeamCard } from '@/components/TeamCard'
+import { ColourOrbs } from '@/components/ColourOrb'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 function today(): string {
   return new Date().toISOString().slice(0, 10)
-}
-
-function ColorPicker({ id, value, onChange }: { id: string; value: TeamColor; onChange: (c: TeamColor) => void }) {
-  return (
-    <div id={id} role="radiogroup" className="flex flex-wrap gap-2">
-      {TEAM_COLOR_KEYS.map(c => (
-        <button key={c} type="button" role="radio" aria-checked={c === value} aria-label={c} onClick={() => onChange(c)}
-          className="size-7 rounded-full border-2 aria-checked:border-foreground border-transparent" style={{ background: teamHex(c) }} />
-      ))}
-    </div>
-  )
 }
 
 export function NewEventDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (o: boolean) => void; onCreated: (d: EventDetail) => void }) {
@@ -60,54 +51,58 @@ export function NewEventDialog({ open, onOpenChange, onCreated }: { open: boolea
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="sm:max-w-[700px]">
         <DialogHeader><DialogTitle>New event</DialogTitle></DialogHeader>
-        <form onSubmit={submit} className="space-y-4">
-          <div className="grid grid-cols-3 gap-3">
-            <div className="col-span-2 space-y-1">
+        <form onSubmit={submit} className="grid gap-4.5">
+          <div className="grid gap-3.5 sm:grid-cols-[1fr_190px]">
+            <div className="grid gap-1.5">
               <Label htmlFor="ev-name">Event name</Label>
               <Input id="ev-name" required value={name} onChange={e => setName(e.target.value)} />
             </div>
-            <div className="space-y-1">
+            <div className="grid gap-1.5">
               <Label htmlFor="ev-date">Date</Label>
-              <Input id="ev-date" type="date" required value={date} onChange={e => setDate(e.target.value)} />
+              <Input id="ev-date" type="date" required value={date} onChange={e => setDate(e.target.value)} className="font-mono tabular-nums" />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label htmlFor="team-a">Team A name</Label>
-              <Input id="team-a" required value={teamA.name} onChange={e => setTeamA({ ...teamA, name: e.target.value })} />
-              <ColorPicker id="team-a-color" value={teamA.color} onChange={color => setTeamA({ ...teamA, color })} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="team-b">Team B name</Label>
-              <Input id="team-b" required value={teamB.name} onChange={e => setTeamB({ ...teamB, name: e.target.value })} />
-              <ColorPicker id="team-b-color" value={teamB.color} onChange={color => setTeamB({ ...teamB, color })} />
-            </div>
+          <div className="grid gap-3.5 sm:grid-cols-2">
+            <TeamCard color={teamA.color} name={teamA.name} role="Team A">
+              <div className="grid gap-1.5">
+                <Label htmlFor="team-a">Team A name</Label>
+                <Input id="team-a" required value={teamA.name} onChange={e => setTeamA({ ...teamA, name: e.target.value })} />
+              </div>
+              <ColourOrbs value={teamA.color} onChange={color => setTeamA({ ...teamA, color })} aria-label="Team A colour" />
+            </TeamCard>
+            <TeamCard color={teamB.color} name={teamB.name} role="Team B">
+              <div className="grid gap-1.5">
+                <Label htmlFor="team-b">Team B name</Label>
+                <Input id="team-b" required value={teamB.name} onChange={e => setTeamB({ ...teamB, name: e.target.value })} />
+              </div>
+              <ColourOrbs value={teamB.color} onChange={color => setTeamB({ ...teamB, color })} aria-label="Team B colour" />
+            </TeamCard>
           </div>
-          <div className="grid grid-cols-3 gap-3">
-            <div className="space-y-1">
+          <div className="grid gap-3.5 sm:grid-cols-3">
+            <div className="grid gap-1.5">
               <Label htmlFor="mats">Mats</Label>
-              <Input id="mats" type="number" min={1} max={8} value={matCount} onChange={e => setMatCount(Number(e.target.value))} />
+              <Input id="mats" type="number" min={1} max={8} value={matCount} onChange={e => setMatCount(Number(e.target.value))} className="font-mono tabular-nums" />
             </div>
-            <div className="space-y-1">
+            <div className="grid gap-1.5">
               <Label htmlFor="age-gap">Max age gap (years)</Label>
-              <Input id="age-gap" type="number" min={0} max={10} value={maxAgeGap} onChange={e => setMaxAgeGap(Number(e.target.value))} />
+              <Input id="age-gap" type="number" min={0} max={10} value={maxAgeGap} onChange={e => setMaxAgeGap(Number(e.target.value))} className="font-mono tabular-nums" />
             </div>
-            <div className="space-y-1">
+            <div className="grid gap-1.5">
               <Label htmlFor="weight-gap">Max weight gap (lb)</Label>
-              <Input id="weight-gap" type="number" min={0} max={100} value={maxWeightGap} onChange={e => setMaxWeightGap(Number(e.target.value))} />
+              <Input id="weight-gap" type="number" min={0} max={100} value={maxWeightGap} onChange={e => setMaxWeightGap(Number(e.target.value))} className="font-mono tabular-nums" />
             </div>
           </div>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={sameGender} onChange={e => setSameGender(e.target.checked)} />
-            Pair only kids of the same gender
-          </label>
+          <div className="flex items-center gap-2.5">
+            <Checkbox id="same-gender" checked={sameGender} onCheckedChange={v => setSameGender(v)} />
+            <Label htmlFor="same-gender" className="text-[15px] text-foreground">Pair only kids of the same gender</Label>
+          </div>
           {create.error && <p role="alert" className="text-sm text-destructive">{create.error.message}</p>}
-          <div className="flex justify-end gap-2">
+          <DialogFooter>
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button type="submit" disabled={create.isPending}>Create event</Button>
-          </div>
+          </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>

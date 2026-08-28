@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createMemoryRouter, RouterProvider } from 'react-router'
@@ -8,10 +8,7 @@ import { setAdminToken } from '@/lib/auth'
 import { fakeFetch } from './fakes'
 
 beforeEach(() => { localStorage.clear(); setAdminToken('tok') })
-// Some tests leave a dialog open at the end; base-ui marks the rest of the
-// document inert while a dialog is open, so a leftover tree hides the next
-// test's content unless it is unmounted here.
-afterEach(() => { cleanup(); vi.unstubAllGlobals() })
+afterEach(() => vi.unstubAllGlobals())
 
 function mount(path = '/admin') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
