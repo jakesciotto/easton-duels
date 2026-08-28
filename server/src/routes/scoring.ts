@@ -66,8 +66,10 @@ scoringRoutes.post('/mats/:matId/heartbeat', requireMatOrAdmin(c => Number(c.req
   return c.json({ ok: true })
 })
 
+const clientEventId = z.string().min(8).max(64).regex(/^[A-Za-z0-9-]+$/)
+
 const eventBody = z.object({
-  id: z.string().min(8).max(64),
+  id: clientEventId,
   type: z.enum(['score', 'clock_start', 'clock_pause', 'terminal']),
   athleteId: z.number().int().optional(),
   actionKey: z.string().max(20).optional(),
@@ -95,7 +97,7 @@ scoringRoutes.delete('/matches/:matchId/events/last', requireMatOrAdmin(matIdFro
   }
 })
 
-scoringRoutes.post('/matches/:matchId/end', requireMatOrAdmin(matIdFromMatch), validate('json', z.object({ id: z.string().min(8).max(64), lastSeq: z.number().int().min(0), winnerAthleteId: z.number().int().optional() })), c => {
+scoringRoutes.post('/matches/:matchId/end', requireMatOrAdmin(matIdFromMatch), validate('json', z.object({ id: clientEventId, lastSeq: z.number().int().min(0), winnerAthleteId: z.number().int().optional() })), c => {
   const { db } = c.get('ctx')
   const matchId = Number(c.req.param('matchId'))
   try {

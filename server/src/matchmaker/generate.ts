@@ -1,4 +1,4 @@
-import { and, asc, eq, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import type { DbLike } from '../db/client.js'
 import { events, teams, athletes, rulesets, mats, matches, type AthleteRow } from '../db/schema.js'
 import { MatchStateError } from '../match/events.js'
@@ -19,7 +19,12 @@ export function generateMatches(db: DbLike, eventId: number): GenerateResult {
     const A = all.filter(a => a.teamId === teamRows[0].id)
     const B = all.filter(a => a.teamId === teamRows[1].id)
 
-    tx.delete(matches).where(and(eq(matches.eventId, eventId), eq(matches.status, 'pending'))).run()
+    const stale = tx.select({ id: matches.id }).from(matches)
+      .where(and(eq(matches.eventId, eventId), eq(matches.status, 'pending'))).all().map(m => m.id)
+    if (stale.length) {
+      tx.update(mats).set({ currentMatchId: null }).where(inArray(mats.currentMatchId, stale)).run()
+      tx.delete(matches).where(inArray(matches.id, stale)).run()
+    }
 
     const constraints = { maxAgeGap: ev.maxAgeGap, maxWeightGap: ev.maxWeightGap, sameGender: ev.sameGender }
     const costs = A.map(a => B.map(b => pairCost(a, b, constraints)))

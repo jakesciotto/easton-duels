@@ -88,7 +88,10 @@ matchRoutes.delete('/matches/:matchId', requireAdmin, c => {
   const existing = db.select().from(matches).where(eq(matches.id, id)).get()
   if (!existing) return errorJson(c, 404, 'not_found', 'match not found')
   if (existing.status !== 'pending') return errorJson(c, 409, 'match_state', 'only a pending match can be deleted')
-  db.delete(matches).where(eq(matches.id, id)).run()
+  db.transaction(tx => {
+    tx.update(mats).set({ currentMatchId: null }).where(eq(mats.currentMatchId, id)).run()
+    tx.delete(matches).where(eq(matches.id, id)).run()
+  })
   hub.broadcast(existing.eventId)
   return c.body(null, 204)
 })

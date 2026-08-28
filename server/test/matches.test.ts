@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
+import { eq } from 'drizzle-orm'
 import { createTestApp, call } from './helpers.js'
 import { seedEvent } from './fixtures.js'
+import { mats } from '../src/db/schema.js'
 
 describe('match routes', () => {
   it('generates, creates by hand with team order fixed, patches, deletes, reorders', async () => {
@@ -21,6 +23,14 @@ describe('match routes', () => {
     expect(reordered.body.map((m: any) => m.id)).toEqual([...ids].reverse())
     expect((await call(app, 'POST', `/api/events/${s.eventId}/matches/reorder`, { ids: ids.slice(1) }, adminToken)).status).toBe(422)
     expect((await call(app, 'DELETE', `/api/matches/${manual.body.id}`, undefined, adminToken)).status).toBe(204)
+  })
+
+  it('clears a mat pointer at the deleted match', async () => {
+    const { app, db, adminToken } = createTestApp()
+    const s = seedEvent(db)
+    db.update(mats).set({ currentMatchId: s.matchIds[0] }).where(eq(mats.id, s.matIds[0])).run()
+    expect((await call(app, 'DELETE', `/api/matches/${s.matchIds[0]}`, undefined, adminToken)).status).toBe(204)
+    expect(db.select().from(mats).where(eq(mats.id, s.matIds[0])).get()?.currentMatchId).toBeNull()
   })
 
   it('rejects same-team pairs, foreign athletes, and edits to live matches', async () => {

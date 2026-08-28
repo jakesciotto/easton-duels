@@ -21,6 +21,17 @@ describe('bind and heartbeat', () => {
     for (let i = 0; i < 4; i++) await call(app, 'POST', `/api/events/${s.eventId}/mats/${s.matIds[0]}/bind`, { code: '9999' })
     expect((await call(app, 'POST', `/api/events/${s.eventId}/mats/${s.matIds[0]}/bind`, { code: '0420' })).status).toBe(429)
   })
+
+  it('answers 404 for an unknown event or an unknown mat', async () => {
+    const { app, db } = createTestApp()
+    const s = seedEvent(db)
+    const noEvent = await call(app, 'POST', `/api/events/999/mats/${s.matIds[0]}/bind`, { code: '0420' })
+    expect(noEvent.status).toBe(404)
+    expect(noEvent.body.error.code).toBe('not_found')
+    const noMat = await call(app, 'POST', `/api/events/${s.eventId}/mats/999/bind`, { code: '0420' })
+    expect(noMat.status).toBe(404)
+    expect(noMat.body.error.code).toBe('not_found')
+  })
 })
 
 describe('scoring flow', () => {
@@ -112,6 +123,14 @@ describe('scoring flow', () => {
     expect(r.status).toBe(409)
     expect((await call(app, 'POST', `${base}/events`, { id: 'evt-0002', type: 'clock_start', lastSeq: 0 }, matToken(s.eventId, s.matIds[1]))).status).toBe(403)
     expect((await call(app, 'POST', `${base}/events`, { id: 'evt-0003', type: 'clock_start', lastSeq: 0 })).status).toBe(401)
+  })
+
+  it('rejects a client event id outside the allowed charset', async () => {
+    const { app, db } = createTestApp()
+    const s = seedEvent(db, { live: true })
+    const r = await call(app, 'POST', `/api/matches/${s.matchIds[0]}/events`, { id: 'entry:0001', type: 'clock_start', lastSeq: 0 }, matToken(s.eventId, s.matIds[0]))
+    expect(r.status).toBe(422)
+    expect(r.body.error.code).toBe('validation')
   })
 
   it('admin can reopen, edit the result, and skip', async () => {
