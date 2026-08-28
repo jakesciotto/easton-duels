@@ -47,19 +47,19 @@ describe('makeCompetitorId', () => {
 
 describe('buildCandidates', () => {
   const rec = (o: Partial<WlBeltRecord>): WlBeltRecord => ({
-    uid: '1', kBusiness: '100001', location: 'Boulder', firstName: 'Zoe', lastName: 'Martin',
+    uid: '1', kBusiness: '100001', location: 'North', firstName: 'Zoe', lastName: 'Martin',
     rankTitle: 'Grey Belt', categoryTitle: 'Kids IBJJF Belts', promotedAt: '2026-01-01', ...o,
   })
   const comp: LeaderboardCompetitor = { id: 'zoe-martin', name: 'Zoe Martin', belt: 'grey', ageGroup: '8-9', gender: 'Female', weightClass: '-60 lbs', academy: 'Boulder', erp: 5.2 }
 
   it('joins by slug and fills age, weight, gender, and erp', () => {
     const [c] = buildCandidates([rec({})], [comp])
-    expect(c).toEqual({ wlUid: '1', firstName: 'Zoe', lastName: 'Martin', belt: 'grey', wlLocation: 'Boulder', leaderboardId: 'zoe-martin', erp: 5.2, age: 8, weightLbs: 60, gender: 'Female' })
+    expect(c).toEqual({ wlUid: '1', firstName: 'Zoe', lastName: 'Martin', belt: 'grey', wlLocation: 'North', leaderboardId: 'zoe-martin', erp: 5.2, age: 8, weightLbs: 60, gender: 'Female' })
   })
   it('keeps one row per uid using the latest promotion', () => {
-    const rows = buildCandidates([rec({ rankTitle: 'Grey/White Belt', promotedAt: '2025-01-01' }), rec({ location: 'Denver', promotedAt: '2026-05-01' })], [])
+    const rows = buildCandidates([rec({ rankTitle: 'Grey/White Belt', promotedAt: '2025-01-01' }), rec({ location: 'South', promotedAt: '2026-05-01' })], [])
     expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ belt: 'grey', wlLocation: 'Denver', leaderboardId: null, erp: null, age: null })
+    expect(rows[0]).toMatchObject({ belt: 'grey', wlLocation: 'South', leaderboardId: null, erp: null, age: null })
   })
   it('sorts by last name then first name', () => {
     const rows = buildCandidates([rec({ uid: '2', firstName: 'Ana', lastName: 'Bell' }), rec({ uid: '1' })], [])
@@ -78,7 +78,7 @@ describe('rosterFromEnv', () => {
 
 describe('roster routes', () => {
   const fakeWl = {
-    async listLocations() { return [{ kBusiness: '100001', title: 'Boulder', city: 'Boulder' }] },
+    async listLocations() { return [{ kBusiness: '100001', title: 'North', city: 'Northtown' }] },
     async fetchKidsBeltRecords(kBusiness: string, location: string) {
       return [{ uid: '9', kBusiness, location, firstName: 'Zoe', lastName: 'Martin', rankTitle: 'Grey Belt', categoryTitle: 'Kids IBJJF Belts', promotedAt: null }]
     },
@@ -99,7 +99,7 @@ describe('roster routes', () => {
     expect(locs.body[0].kBusiness).toBe('100001')
     const r = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['100001'] }, adminToken)
     expect(r.status).toBe(200)
-    expect(r.body.candidates[0]).toMatchObject({ wlUid: '9', belt: 'grey', wlLocation: 'Boulder', erp: null })
+    expect(r.body.candidates[0]).toMatchObject({ wlUid: '9', belt: 'grey', wlLocation: 'North', erp: null })
     expect(r.body.warnings[0]).toMatch(/not configured/)
     expect((await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['1'] }, adminToken)).status).toBe(422)
   })
