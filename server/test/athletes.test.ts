@@ -42,4 +42,17 @@ describe('athletes', () => {
     const s2 = seedEvent(db, { matches: 0 })
     expect((await call(app, 'DELETE', `/api/athletes/${s2.a1}`, undefined, adminToken)).status).toBe(204)
   })
+
+  it('adds a bulk list of manual kids', async () => {
+    const { app, db, adminToken } = createTestApp()
+    const s = seedEvent(db, { matches: 0 })
+    const r = await call(app, 'POST', `/api/events/${s.eventId}/athletes`, { bulk: [
+      { firstName: 'Ana', lastName: 'Bell', age: 7, weightLbs: 52, belt: 'white', gender: 'F', teamId: s.teamA },
+      { firstName: 'Eli', lastName: 'Cruz', teamId: s.teamB },
+    ] }, adminToken)
+    expect(r.status).toBe(201)
+    expect(r.body.filter((a: any) => a.source === 'manual')).toHaveLength(6)
+    expect(r.body.find((a: any) => a.lastName === 'Cruz')).toMatchObject({ age: null, ageSource: null, teamId: s.teamB })
+    expect((await call(app, 'POST', `/api/events/${s.eventId}/athletes`, { bulk: [{ firstName: 'X', lastName: 'Y', teamId: 999 }] }, adminToken)).status).toBe(422)
+  })
 })

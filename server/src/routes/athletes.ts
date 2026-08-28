@@ -31,6 +31,7 @@ const candidateSchema = z.object({
 
 const addSchema = z.union([
   z.object({ manual: manualSchema }),
+  z.object({ bulk: z.array(manualSchema).min(1).max(200) }),
   z.object({ candidates: z.array(candidateSchema).min(1).max(500) }),
 ])
 
@@ -81,6 +82,18 @@ athleteRoutes.post('/events/:eventId/athletes', requireAdmin, validate('json', a
       weightLbs: m.weightLbs ?? null, weightSource: m.weightLbs == null ? null : 'manual',
       belt: m.belt ?? null, gender: m.gender ?? null,
     }).run()
+  } else if ('bulk' in body) {
+    for (const m of body.bulk) if (!teamBelongs(db, eventId, m.teamId)) return errorJson(c, 422, 'validation', 'teamId is not on this event')
+    db.transaction(tx => {
+      for (const m of body.bulk) {
+        tx.insert(athletes).values({
+          eventId, firstName: m.firstName, lastName: m.lastName, source: 'manual', teamId: m.teamId ?? null,
+          age: m.age ?? null, ageSource: m.age == null ? null : 'manual',
+          weightLbs: m.weightLbs ?? null, weightSource: m.weightLbs == null ? null : 'manual',
+          belt: m.belt ?? null, gender: m.gender ?? null,
+        }).run()
+      }
+    })
   } else {
     upsertCandidates(db, eventId, body.candidates)
   }
