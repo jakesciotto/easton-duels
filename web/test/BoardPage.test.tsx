@@ -47,4 +47,36 @@ describe('BoardPage', () => {
     })))
     expect(screen.getByRole('heading', { name: 'Boulder wins' })).toBeInTheDocument()
   })
+
+  it('colours the clock green while running and not while paused', () => {
+    const es = mount()
+    const running = sampleMatch({ id: 20, clock: { elapsedMs: 0, startedAt: '2026-10-03T15:59:00.000Z', lengthMs: 300_000 } })
+    const paused = sampleMatch({ id: 21, clock: { elapsedMs: 0, startedAt: null, lengthMs: 300_000 } })
+    act(() => es.emit('snapshot', sampleSnapshot({
+      mats: [
+        { id: 1, number: 1, current: running, onDeck: [], bound: true },
+        { id: 2, number: 2, current: paused, onDeck: [], bound: true },
+      ],
+    })))
+    const mat1 = screen.getByRole('region', { name: 'Mat 1' })
+    const mat2 = screen.getByRole('region', { name: 'Mat 2' })
+    expect(within(mat1).getByText(/^\d+:\d{2}$/)).toHaveClass('text-ok')
+    expect(within(mat2).getByText(/^\d+:\d{2}$/)).not.toHaveClass('text-ok')
+  })
+
+  it('shows a submission pending badge while a terminal is pending on the live match', () => {
+    const es = mount()
+    const pending = sampleMatch({ id: 30, pendingTerminal: { athleteId: 100, actionKey: 'submission' } })
+    act(() => es.emit('snapshot', sampleSnapshot({
+      mats: [{ id: 1, number: 1, current: pending, onDeck: [], bound: true }],
+    })))
+    expect(screen.getByText('Submission pending')).toBeInTheDocument()
+
+    const resolved = { ...pending, pendingTerminal: null }
+    act(() => es.emit('snapshot', sampleSnapshot({
+      version: 2,
+      mats: [{ id: 1, number: 1, current: resolved, onDeck: [], bound: true }],
+    })))
+    expect(screen.queryByText('Submission pending')).not.toBeInTheDocument()
+  })
 })

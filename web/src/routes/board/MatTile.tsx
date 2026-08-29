@@ -2,6 +2,7 @@ import type { CSSProperties } from 'react'
 import type { MatView, MatchView, TeamView } from '@shared/types'
 import { Clock } from '@/components/Clock'
 import { TeamDot } from '@/components/TeamDot'
+import { Badge } from '@/components/ui/badge'
 import { winTypeLabel } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { RecentResult } from './useRecentResults'
@@ -57,23 +58,25 @@ export function MatTile({ mat, teams, serverNow, recent, large = false }: {
 }) {
   const showing = recent?.match ?? mat.current
   const finished = showing?.status === 'done'
+  const pending = showing != null && showing.status !== 'done' && showing.pendingTerminal !== null
   return (
     <section
       aria-label={`Mat ${mat.number}`}
       style={{ '--scale': large ? 1.4 : 1 } as CSSProperties}
       className={cn(
-        'grid grid-rows-[auto_1fr_1fr_auto] gap-[calc(0.5vw*var(--scale,1))] rounded-[1vw] border bg-card py-[calc(1vw*var(--scale,1))] px-[calc(1.3vw*var(--scale,1))] transition-colors duration-150',
+        'grid grid-rows-[auto_1fr_1fr_auto] gap-[calc(0.5vw*var(--scale,1))] rounded-[calc(1vw*var(--scale,1))] border bg-card py-[calc(1vw*var(--scale,1))] px-[calc(1.3vw*var(--scale,1))] transition-colors duration-150',
         finished ? 'border-ok/45' : 'border-border',
       )}
     >
       <div className="flex items-baseline gap-[calc(0.8vw*var(--scale,1))]">
         <span className="text-[calc(1.5vw*var(--scale,1))] font-semibold tracking-[-0.02em]">Mat {mat.number}</span>
         {showing && <span className="text-[calc(1vw*var(--scale,1))] text-faint">Match {showing.orderIndex + 1}</span>}
+        {pending && <Badge variant="warn">Submission pending</Badge>}
         {showing && (
           <Clock
             clock={showing.clock}
             serverNow={serverNow}
-            className="ml-auto text-[calc(1.7vw*var(--scale,1))] font-medium text-soft"
+            className="ml-auto text-[calc(1.7vw*var(--scale,1))] font-medium"
           />
         )}
       </div>
