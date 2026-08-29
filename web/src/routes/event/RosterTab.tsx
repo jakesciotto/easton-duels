@@ -5,6 +5,7 @@ import { athleteName, beltLabel } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { AddKidDialog } from './AddKidDialog'
 import { PasteRosterDialog } from './PasteRosterDialog'
+import { SyncRosterDialog } from './SyncRosterDialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -106,6 +107,7 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [addOpen, setAddOpen] = useState(false)
   const [pasteOpen, setPasteOpen] = useState(false)
+  const [syncOpen, setSyncOpen] = useState(false)
   const eventId = detail.event.id
   const assign = useAdminMutation(eventId, (v: { ids: number[]; teamId: number | null }) => adminApi(`/api/events/${eventId}/athletes/assign`, { method: 'POST', body: v }))
   const patch = useAdminMutation(eventId, (v: { id: number; body: Partial<AthleteRow> }) => adminApi(`/api/athletes/${v.id}`, { method: 'PATCH', body: v.body }))
@@ -129,10 +131,12 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
       <div className="flex flex-wrap items-center gap-2">
         <Button onClick={() => setAddOpen(true)}>Add kid</Button>
         <Button variant="secondary" onClick={() => setPasteOpen(true)}>Paste roster</Button>
+        <Button variant="secondary" onClick={() => setSyncOpen(true)}>Sync from WellnessLiving</Button>
         {(assign.error || patch.error) && <p role="alert" className="self-center text-[13px] text-destructive">{(assign.error ?? patch.error)?.message}</p>}
       </div>
       <AddKidDialog detail={detail} open={addOpen} onOpenChange={setAddOpen} />
       <PasteRosterDialog detail={detail} open={pasteOpen} onOpenChange={setPasteOpen} />
+      <SyncRosterDialog detail={detail} open={syncOpen} onOpenChange={setSyncOpen} />
       <div className="grid gap-4 lg:grid-cols-3">
         <Column title={teamA.name} roleLabel="Team A" color={teamA.color} teamId={teamA.id} kids={byTeam(teamA.id)} selected={selected} onSelect={onSelect} onPatch={(id, body) => patch.mutate({ id, body })} onMove={onMove} />
         <Column title="Unassigned" color={null} teamId={null} kids={byTeam(null)} selected={selected} onSelect={onSelect} onPatch={(id, body) => patch.mutate({ id, body })} onMove={onMove} />
