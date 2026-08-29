@@ -42,6 +42,13 @@ export function SyncRosterDialog({ detail, open, onOpenChange }: { detail: Event
     if (!open) return
     let ignore = false
     setError(null)
+    setLocations(null)
+    setPicked(new Set())
+    setCandidates(null)
+    setWarnings([])
+    setSelected(new Set())
+    setSearch('')
+    add.reset()
     adminApi<Location[]>(`/api/events/${eventId}/wl-locations`)
       .then(locs => {
         if (ignore) return
@@ -128,6 +135,7 @@ export function SyncRosterDialog({ detail, open, onOpenChange }: { detail: Event
                     <span className="text-[13px] text-soft">{beltLabel(c.belt)}</span>
                     {c.erp !== null && <Badge>ERP <span className="font-mono tabular-nums">{c.erp.toFixed(1)}</span></Badge>}
                     {c.age !== null && <span className="text-[13px] text-faint">age <span className="font-mono tabular-nums">{c.age}</span></span>}
+                    {c.weightLbs !== null && <span className="text-[13px] text-faint"><span className="font-mono tabular-nums">{c.weightLbs}</span> lb</span>}
                     {already.has(c.wlUid) && <Badge variant="done">on roster</Badge>}
                   </ListRow>
                 ))}

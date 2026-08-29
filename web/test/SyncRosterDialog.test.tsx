@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -20,6 +21,21 @@ const cand = { wlUid: '9', firstName: 'Zoe', lastName: 'Martin', belt: 'grey', w
 function mount() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(<QueryClientProvider client={qc}><SyncRosterDialog detail={detail} open onOpenChange={() => {}} /></QueryClientProvider>)
+}
+
+function Host() {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <button onClick={() => setOpen(true)}>Open sync</button>
+      <SyncRosterDialog detail={detail} open={open} onOpenChange={setOpen} />
+    </>
+  )
+}
+
+function mountHost() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(<QueryClientProvider client={qc}><Host /></QueryClientProvider>)
 }
 
 describe('SyncRosterDialog', () => {
@@ -45,9 +61,31 @@ describe('SyncRosterDialog', () => {
     expect(f.body(f.calls.findIndex(c => c.url.endsWith('/roster/sync')))).toEqual({ kBusinesses: ['100001'] })
     await user.type(screen.getByLabelText('Search'), 'zoe')
     expect(screen.queryByText('Kai Wong')).not.toBeInTheDocument()
+    expect(screen.getByText((_, el) => el?.textContent === '60 lb')).toBeInTheDocument()
     await user.click(screen.getByLabelText('Select Zoe Martin'))
     await user.click(screen.getByRole('button', { name: 'Add 1 kid' }))
     await vi.waitFor(() => expect(f.calls.some(c => c.url.endsWith('/athletes') && c.init?.method === 'POST')).toBe(true))
     expect(f.body(f.calls.findIndex(c => c.url.endsWith('/athletes') && c.init?.method === 'POST'))).toEqual({ candidates: [cand] })
+  })
+
+  it('resets pulled candidates, ticks, and search when reopened', async () => {
+    fakeFetch(url => {
+      if (url.endsWith('/wl-locations')) return { json: [{ kBusiness: '100001', title: 'North', city: 'Northtown' }] }
+      if (url.endsWith('/roster/sync')) return { json: { candidates: [cand], warnings: [] } }
+      return { json: {} }
+    })
+    mountHost()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Open sync' }))
+    await screen.findByLabelText('North')
+    await user.click(screen.getByRole('button', { name: 'Pull roster' }))
+    expect(await screen.findByText('Zoe Martin')).toBeInTheDocument()
+    await user.type(screen.getByLabelText('Search'), 'zoe')
+    await user.click(screen.getByLabelText('Select Zoe Martin'))
+    await user.keyboard('{Escape}')
+    await user.click(screen.getByRole('button', { name: 'Open sync' }))
+    expect(await screen.findByLabelText('North')).toBeInTheDocument()
+    expect(screen.queryByText('Zoe Martin')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Search')).not.toBeInTheDocument()
   })
 })

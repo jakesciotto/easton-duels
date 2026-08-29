@@ -32,17 +32,18 @@ export function RulesetDialog({ detail, open, onOpenChange, ruleset }: { detail:
   const [actions, setActions] = useState<RulesetAction[]>([])
   const [terminals, setTerminals] = useState<RulesetTerminal[]>([])
 
+  const save = useAdminMutation(eventId, (body: unknown) => ruleset
+    ? adminApi(`/api/rulesets/${ruleset.id}`, { method: 'PATCH', body })
+    : adminApi(`/api/events/${eventId}/rulesets`, { method: 'POST', body }))
+
   useEffect(() => {
     if (!open) return
     setName(ruleset?.name ?? '')
     setLength(String(ruleset?.defaultLengthSec ?? DEFAULT_LENGTH_SEC))
     setActions(ruleset?.actions ?? [{ key: 'takedown', label: 'Takedown', points: 2 }])
     setTerminals(ruleset?.terminals ?? [{ key: 'submission', label: 'Submission', winType: 'submission' }])
+    save.reset()
   }, [open, ruleset])
-
-  const save = useAdminMutation(eventId, (body: unknown) => ruleset
-    ? adminApi(`/api/rulesets/${ruleset.id}`, { method: 'PATCH', body })
-    : adminApi(`/api/events/${eventId}/rulesets`, { method: 'POST', body }))
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
