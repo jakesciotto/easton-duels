@@ -27,6 +27,7 @@ function Segment({ value, onValueChange, options, className, "aria-label": ariaL
         <Radio.Root
           key={o.value}
           value={o.value}
+          aria-label={o.label}
           className="rounded-[5px] px-3.5 py-[5px] text-center text-[13px] font-medium text-muted-foreground transition-[color,background-color,box-shadow] duration-150 outline-none hover:text-foreground focus-visible:shadow-focus data-checked:bg-input data-checked:text-foreground"
         >
           {o.label}
