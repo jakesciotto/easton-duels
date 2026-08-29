@@ -15,10 +15,13 @@ export function PasteRosterDialog({ detail, open, onOpenChange }: { detail: Even
   const add = useAdminMutation(detail.event.id, (bulk: ManualKid[]) => adminApi(`/api/events/${detail.event.id}/athletes`, { method: 'POST', body: { bulk } }))
   const teamItems = [{ value: null as number | null, label: 'Unassigned' }, ...detail.teams.map(t => ({ value: t.id as number | null, label: t.name }))]
 
-  const submit = async () => {
-    await add.mutateAsync(parsed.rows.map(r => ({ ...r, teamId })))
-    setText('')
-    onOpenChange(false)
+  const submit = () => {
+    add.mutate(parsed.rows.map(r => ({ ...r, teamId })), {
+      onSuccess: () => {
+        setText('')
+        onOpenChange(false)
+      },
+    })
   }
 
   return (

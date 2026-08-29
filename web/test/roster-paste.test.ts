@@ -17,4 +17,14 @@ describe('parseRosterPaste', () => {
     expect(rows).toHaveLength(0)
     expect(errors).toEqual(['line 1: needs a first and last name', 'line 2: age must be a number', 'line 3: unknown belt "purple"'])
   })
+  it('rejects an out-of-range age or weight with a row error', () => {
+    expect(parseRosterPaste('Kai Wong, 2').errors).toEqual(['line 1: age must be between 3 and 17'])
+    expect(parseRosterPaste('Kai Wong, 18').errors).toEqual(['line 1: age must be between 3 and 17'])
+    expect(parseRosterPaste('Kai Wong, 8, 19').errors).toEqual(['line 1: weight must be between 20 and 250'])
+    expect(parseRosterPaste('Kai Wong, 8, 251').errors).toEqual(['line 1: weight must be between 20 and 250'])
+  })
+  it('accepts the boundary age and weight values', () => {
+    expect(parseRosterPaste('Kai Wong, 3, 20').rows).toEqual([{ firstName: 'Kai', lastName: 'Wong', age: 3, weightLbs: 20, belt: null, gender: null }])
+    expect(parseRosterPaste('Kai Wong, 17, 250').rows).toEqual([{ firstName: 'Kai', lastName: 'Wong', age: 17, weightLbs: 250, belt: null, gender: null }])
+  })
 })

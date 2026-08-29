@@ -36,7 +36,7 @@ describe('RosterTab', () => {
     expect(within(pool).getByText('Noah Kid')).toBeInTheDocument()
     expect(within(pool).getAllByText('missing age')).toHaveLength(1)
     expect(within(pool).getByText('estimated')).toBeInTheDocument()
-    expect(within(pool).getByText('ERP 5.2')).toBeInTheDocument()
+    expect(within(pool).getByText((_, el) => el?.textContent === 'ERP 5.2')).toBeInTheDocument()
   })
 
   it('assigns selected kids to a team', async () => {
@@ -62,5 +62,22 @@ describe('RosterTab', () => {
     await user.tab()
     await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/athletes/300')).toBe(true))
     expect(f.body(f.calls.findIndex(c => c.url === '/api/athletes/300'))).toEqual({ age: 9 })
+  })
+
+  it('shows the server validation error when adding a kid fails, without an unhandled rejection', async () => {
+    fakeFetch((url, init) => {
+      if (url === '/api/events/7/athletes' && init?.method === 'POST') {
+        return { status: 422, json: { error: { code: 'validation', message: 'age must be between 3 and 17' } } }
+      }
+      return { json: [] }
+    })
+    mount()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Add kid' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.type(within(dialog).getByLabelText('First name'), 'Kai')
+    await user.type(within(dialog).getByLabelText('Last name'), 'Wong')
+    await user.click(within(dialog).getByRole('button', { name: 'Add kid' }))
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('age must be between 3 and 17')
   })
 })

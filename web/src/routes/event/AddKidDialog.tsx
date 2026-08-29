@@ -28,15 +28,18 @@ export function AddKidDialog({ detail, open, onOpenChange }: { detail: EventDeta
   const add = useAdminMutation(detail.event.id, (manual: ManualKid) => adminApi(`/api/events/${detail.event.id}/athletes`, { method: 'POST', body: { manual } }))
   const teamItems = [{ value: null as number | null, label: 'Unassigned' }, ...detail.teams.map(t => ({ value: t.id as number | null, label: t.name }))]
 
-  const submit = async (e: FormEvent) => {
+  const submit = (e: FormEvent) => {
     e.preventDefault()
-    await add.mutateAsync({
+    add.mutate({
       firstName: f.firstName.trim(), lastName: f.lastName.trim(),
       age: f.age ? Number(f.age) : null, weightLbs: f.weightLbs ? Number(f.weightLbs) : null,
       belt: f.belt, gender: f.gender, teamId: f.teamId,
+    }, {
+      onSuccess: () => {
+        setF(empty)
+        onOpenChange(false)
+      },
     })
-    setF(empty)
-    onOpenChange(false)
   }
 
   return (

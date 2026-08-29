@@ -29,11 +29,13 @@ export function parseRosterPaste(text: string): { rows: ManualKid[]; errors: str
     if (ageRaw) {
       age = Number(ageRaw)
       if (!Number.isInteger(age)) return errors.push(`line ${n}: age must be a number`)
+      if (age < 3 || age > 17) return errors.push(`line ${n}: age must be between 3 and 17`)
     }
     let weightLbs: number | null = null
     if (weightRaw) {
       weightLbs = Math.round(Number(weightRaw))
       if (!Number.isFinite(weightLbs)) return errors.push(`line ${n}: weight must be a number`)
+      if (weightLbs < 20 || weightLbs > 250) return errors.push(`line ${n}: weight must be between 20 and 250`)
     }
     let belt: string | null = null
     if (beltRaw) {

@@ -40,7 +40,7 @@ function KidRow({ kid, selected, onSelect, onPatch }: { kid: AthleteRow; selecte
         <div className="flex flex-wrap items-center gap-2 text-[13px] text-faint">
           <span>{beltLabel(kid.belt)}</span>
           {kid.gender && <span>{kid.gender}</span>}
-          {kid.erp !== null && <Badge>ERP {kid.erp.toFixed(1)}</Badge>}
+          {kid.erp !== null && <Badge>ERP <span className="font-mono tabular-nums">{kid.erp.toFixed(1)}</span></Badge>}
           {kid.age === null && <Badge variant="warn">missing age</Badge>}
           {kid.weightLbs === null && <Badge variant="warn">missing weight</Badge>}
         </div>
