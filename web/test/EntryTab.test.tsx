@@ -27,9 +27,9 @@ const detail: EventDetail = {
   matches: [match(1, { status: 'done', pointsA: 4, pointsB: 2, winnerAthleteId: 100, winType: 'points' }), match(2, { athleteAId: 101, athleteBId: 201 })],
 }
 
-function mount() {
+function mount(d: EventDetail = detail) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  render(<QueryClientProvider client={qc}><EntryTab detail={detail} /></QueryClientProvider>)
+  render(<QueryClientProvider client={qc}><EntryTab detail={d} /></QueryClientProvider>)
 }
 
 describe('EntryTab', () => {
@@ -80,7 +80,28 @@ describe('EntryTab', () => {
     await user.click(screen.getByRole('button', { name: /Olivia Kim wins/ }))
     await user.click(screen.getByRole('button', { name: 'Save correction' }))
     await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/matches/1/entry')).toBe(true))
-    expect(f.body(f.calls.findIndex(c => c.url === '/api/matches/1/entry'))).toMatchObject({ pointsA: 4, pointsB: 4, winnerAthleteId: 200, winType: 'decision' })
+    // The loaded win type ('points') is a pick that survives the points edit and the
+    // winner change below: only an explicit win-type pick changes it, per spec 9.2.
+    expect(f.body(f.calls.findIndex(c => c.url === '/api/matches/1/entry'))).toMatchObject({ pointsA: 4, pointsB: 4, winnerAthleteId: 200, winType: 'points' })
+  })
+
+  it('keeps the loaded win type through a points correction', async () => {
+    const submissionDetail: EventDetail = {
+      ...detail,
+      matches: [match(3, { status: 'done', pointsA: 2, pointsB: 4, winnerAthleteId: 100, winType: 'submission' })],
+    }
+    const f = fakeFetch(() => ({ json: { match: {}, version: 2 } }))
+    mount(submissionDetail)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Edit' }))
+    expect(screen.getByLabelText('Boulder points')).toHaveValue(2)
+    expect(screen.getByLabelText('By submission')).toBeChecked()
+    await user.clear(screen.getByLabelText('Boulder points'))
+    await user.type(screen.getByLabelText('Boulder points'), '3')
+    expect(screen.getByLabelText('By submission')).toBeChecked()
+    await user.click(screen.getByRole('button', { name: 'Save correction' }))
+    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/matches/3/entry')).toBe(true))
+    expect(f.body(f.calls.findIndex(c => c.url === '/api/matches/3/entry'))).toMatchObject({ pointsA: 3, pointsB: 4, winnerAthleteId: 100, winType: 'submission' })
   })
 
   it('offers pending pairs and a start banner in setup', async () => {
@@ -92,5 +113,49 @@ describe('EntryTab', () => {
     expect(screen.getByLabelText('Denver kid')).toHaveValue('201')
     await user.click(screen.getByRole('button', { name: 'Start event' }))
     await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/events/7' && c.init?.method === 'PATCH')).toBe(true))
+  })
+
+  it('tabs through the form in the order spec 9.2 requires', async () => {
+    fakeFetch(() => ({ json: {} }))
+    mount()
+    const user = userEvent.setup()
+    await user.selectOptions(screen.getByLabelText('Boulder kid'), '100')
+    await user.selectOptions(screen.getByLabelText('Denver kid'), '200')
+    // A tied 0-0 score leaves no auto-derived winner, which disables Save and
+    // removes it from the tab order (disabled buttons are never tabbable), so
+    // give the score a real winner to keep Save reachable at the end.
+    await user.type(screen.getByLabelText('Boulder points'), '5')
+    await user.type(screen.getByLabelText('Denver points'), '2')
+
+    const kidA = screen.getByLabelText('Boulder kid')
+    const kidB = screen.getByLabelText('Denver kid')
+    const pointsA = screen.getByLabelText('Boulder points')
+    const pointsB = screen.getByLabelText('Denver points')
+    const winnerA = screen.getByRole('button', { name: /Mateo Rivera wins/ })
+    const winnerB = screen.getByRole('button', { name: /Olivia Kim wins/ })
+    const winTypeGroup = screen.getByRole('radiogroup', { name: 'Win type' })
+    const save = screen.getByRole('button', { name: 'Save result' })
+    expect(save).toBeEnabled()
+
+    kidA.focus()
+    expect(document.activeElement).toBe(kidA)
+    await user.tab()
+    expect(document.activeElement).toBe(kidB)
+    await user.tab()
+    expect(document.activeElement).toBe(pointsA)
+    await user.tab()
+    expect(document.activeElement).toBe(pointsB)
+    await user.tab()
+    expect(document.activeElement).toBe(winnerA)
+    await user.tab()
+    expect(document.activeElement).toBe(winnerB)
+    await user.tab()
+    // A single tab stop for the whole segment: base-ui's radiogroup uses roving
+    // tabindex, so one Tab lands on a radio inside "Win type" (which option is
+    // not asserted here, only that the group is the next stop).
+    expect(document.activeElement?.getAttribute('role')).toBe('radio')
+    expect(winTypeGroup).toContainElement(document.activeElement as HTMLElement)
+    await user.tab()
+    expect(document.activeElement).toBe(save)
   })
 })

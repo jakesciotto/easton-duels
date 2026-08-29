@@ -62,7 +62,10 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   const correct = useAdminMutation(eventId, (v: { id: number; body: CorrectionBody }) => adminApi(`/api/matches/${v.id}/entry`, { method: 'POST', body: v.body }))
   const start = useAdminMutation<void>(eventId, () => adminApi(`/api/events/${eventId}`, { method: 'PATCH', body: { status: 'live' } }))
 
-  const setPoints = (key: 'pointsA' | 'pointsB') => (v: string) => setF(s => ({ ...s, [key]: v.replace(/\D/g, ''), touched: false }))
+  // A points edit alone never resets touched: auto-derivation from points only
+  // drives the suggestion until the organizer picks a winner or a win type (or
+  // loads a match to correct); after that the pick sticks until Save or Cancel edit.
+  const setPoints = (key: 'pointsA' | 'pointsB') => (v: string) => setF(s => ({ ...s, [key]: v.replace(/\D/g, '') }))
   const pickWinner = (w: 'a' | 'b') => setF(s => {
     const nextWinType = s.touched ? s.winType : (defaultOutcome(pA, pB).winner === null ? 'decision' : defaultOutcome(pA, pB).winType)
     return { ...s, winner: w, winType: nextWinType, touched: true }
@@ -116,18 +119,34 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
       )}
       <div className="grid gap-4">
         <form onSubmit={submit} className="grid gap-4 rounded-lg border border-border bg-card p-4">
-          <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-[1fr_auto_1fr]">
-            <TeamColumn
-              idPrefix="a" color={teamA.color} name={teamA.name} role="Team A" kids={kidsA}
-              kidId={f.aId} onKid={v => setF(s => ({ ...s, aId: v }))} points={f.pointsA} onPoints={setPoints('pointsA')}
-              kid={a} pressed={winner === 'a'} onPickWinner={() => pickWinner('a')} selectRef={firstField}
+          {/*
+            One flat grid, not two nested per-team grids: spec 9.2 fixes the tab
+            order (kid A, kid B, points A, points B, winner A, winner B, win
+            type, save), so every field is placed here via explicit grid-column
+            and grid-row, and DOM order matches the required tab order while the
+            column-start/row-start placement recreates the two-column look.
+          */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_auto_1fr]">
+            <TeamHead color={teamA.color} name={teamA.name} role="Team A" className="sm:col-start-1 sm:row-start-1" />
+            <span aria-hidden className="text-xs text-faint sm:col-start-2 sm:row-span-4 sm:row-start-1 sm:self-center sm:justify-self-center">vs</span>
+            <TeamHead color={teamB.color} name={teamB.name} role="Team B" className="sm:col-start-3 sm:row-start-1" />
+
+            <KidSelect
+              id="a-kid" label={`${teamA.name} kid`} kids={kidsA} value={f.aId}
+              onChange={v => setF(s => ({ ...s, aId: v }))} selectRef={firstField}
+              className="sm:col-start-1 sm:row-start-2"
             />
-            <span className="self-center justify-self-center text-xs text-faint">vs</span>
-            <TeamColumn
-              idPrefix="b" color={teamB.color} name={teamB.name} role="Team B" kids={kidsB}
-              kidId={f.bId} onKid={v => setF(s => ({ ...s, bId: v }))} points={f.pointsB} onPoints={setPoints('pointsB')}
-              kid={b} pressed={winner === 'b'} onPickWinner={() => pickWinner('b')}
+            <KidSelect
+              id="b-kid" label={`${teamB.name} kid`} kids={kidsB} value={f.bId}
+              onChange={v => setF(s => ({ ...s, bId: v }))}
+              className="sm:col-start-3 sm:row-start-2"
             />
+
+            <PointsField id="a-points" label={`${teamA.name} points`} value={f.pointsA} onChange={setPoints('pointsA')} className="sm:col-start-1 sm:row-start-3" />
+            <PointsField id="b-points" label={`${teamB.name} points`} value={f.pointsB} onChange={setPoints('pointsB')} className="sm:col-start-3 sm:row-start-3" />
+
+            <WinnerButton kid={a} color={teamA.color} pressed={winner === 'a'} onClick={() => pickWinner('a')} className="sm:col-start-1 sm:row-start-4" />
+            <WinnerButton kid={b} color={teamB.color} pressed={winner === 'b'} onClick={() => pickWinner('b')} className="sm:col-start-3 sm:row-start-4" />
           </div>
           <Segment value={winType} onValueChange={v => pickType(v as WinType)} options={WIN_TYPES} aria-label="Win type" />
           {winner === null && a && b && <p className="text-[13px] text-faint">Scores are tied. Pick the winner.</p>}
@@ -188,69 +207,77 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   )
 }
 
-function TeamColumn({ idPrefix, color, name, role, kids, kidId, onKid, points, onPoints, kid, pressed, onPickWinner, selectRef }: {
-  idPrefix: string
-  color: string
-  name: string
-  role: string
-  kids: AthleteRow[]
-  kidId: string
-  onKid: (v: string) => void
-  points: string
-  onPoints: (v: string) => void
-  kid: AthleteRow | undefined
-  pressed: boolean
-  onPickWinner: () => void
-  selectRef?: Ref<HTMLSelectElement>
-}) {
-  const selectId = `${idPrefix}-kid`
-  const pointsId = `${idPrefix}-points`
+function TeamHead({ color, name, role, className }: { color: string; name: string; role: string; className?: string }) {
   return (
-    <div className="grid gap-2.5">
-      <div className="flex items-center gap-2">
-        <TeamDot color={color} name={name} />
-        <span className="ml-auto shrink-0 text-xs text-faint">{role}</span>
-      </div>
-      <div className="grid gap-1.5">
-        <Label htmlFor={selectId}>{name} kid</Label>
-        <select
-          id={selectId}
-          ref={selectRef}
-          required
-          value={kidId}
-          onChange={e => onKid(e.target.value)}
-          className="h-9 w-full rounded-md border border-input bg-card px-2.5 text-sm text-foreground outline-none transition-[color,background-color,box-shadow] duration-150 focus-visible:border-transparent focus-visible:shadow-focus"
-        >
-          <option value="">Pick a kid</option>
-          {kids.map(k => <option key={k.id} value={k.id}>{athleteName(k)}</option>)}
-        </select>
-      </div>
-      <div className="grid gap-1.5">
-        <Label htmlFor={pointsId}>{name} points</Label>
-        <Input
-          id={pointsId}
-          type="number"
-          min={0}
-          max={99}
-          inputMode="numeric"
-          value={points}
-          onChange={e => onPoints(e.target.value)}
-          className="h-[72px] bg-background text-center font-mono text-[40px] font-medium tabular"
-        />
-      </div>
-      <WinnerButton kid={kid} color={color} pressed={pressed} onClick={onPickWinner} />
+    <div className={cn('flex items-center gap-2', className)}>
+      <TeamDot color={color} name={name} />
+      <span className="ml-auto shrink-0 text-xs text-faint">{role}</span>
     </div>
   )
 }
 
-function WinnerButton({ kid, color, pressed, onClick }: { kid: AthleteRow | undefined; color: string; pressed: boolean; onClick: () => void }) {
+function KidSelect({ id, label, kids, value, onChange, selectRef, className }: {
+  id: string
+  label: string
+  kids: AthleteRow[]
+  value: string
+  onChange: (v: string) => void
+  selectRef?: Ref<HTMLSelectElement>
+  className?: string
+}) {
+  return (
+    <div className={cn('grid gap-1.5', className)}>
+      <Label htmlFor={id}>{label}</Label>
+      <select
+        id={id}
+        ref={selectRef}
+        required
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className="h-9 w-full rounded-md border border-input bg-card px-2.5 text-sm text-foreground outline-none transition-[color,background-color,box-shadow] duration-150 focus-visible:border-transparent focus-visible:shadow-focus"
+      >
+        <option value="">Pick a kid</option>
+        {kids.map(k => <option key={k.id} value={k.id}>{athleteName(k)}</option>)}
+      </select>
+    </div>
+  )
+}
+
+function PointsField({ id, label, value, onChange, className }: {
+  id: string
+  label: string
+  value: string
+  onChange: (v: string) => void
+  className?: string
+}) {
+  return (
+    <div className={cn('grid gap-1.5', className)}>
+      <Label htmlFor={id}>{label}</Label>
+      <Input
+        id={id}
+        type="number"
+        min={0}
+        max={99}
+        inputMode="numeric"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className="h-[72px] rounded-lg bg-background text-center font-mono text-[40px] font-medium tabular"
+      />
+    </div>
+  )
+}
+
+function WinnerButton({ kid, color, pressed, onClick, className }: { kid: AthleteRow | undefined; color: string; pressed: boolean; onClick: () => void; className?: string }) {
   return (
     <button
       type="button"
       aria-pressed={pressed}
       disabled={!kid}
       onClick={onClick}
-      className="inline-flex h-9 items-center justify-center gap-2 rounded-md text-sm font-medium text-soft shadow-[0_0_0_1px_#2f3037] transition-[color,background-color,box-shadow] duration-150 focus-visible:shadow-focus aria-pressed:bg-secondary aria-pressed:text-foreground aria-pressed:shadow-ring disabled:pointer-events-none disabled:opacity-40"
+      className={cn(
+        'inline-flex h-9 items-center justify-center gap-2 rounded-md text-sm font-medium text-soft shadow-[0_0_0_1px_#2f3037] transition-[color,background-color,box-shadow] duration-150 focus-visible:shadow-focus aria-pressed:bg-secondary aria-pressed:text-foreground aria-pressed:shadow-ring disabled:pointer-events-none disabled:opacity-40',
+        className,
+      )}
     >
       {kid && <TeamDot color={color} />}
       <span>{kid ? `${athleteName(kid)} wins` : 'Pick a kid first'}</span>
