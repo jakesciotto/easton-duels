@@ -77,7 +77,7 @@ describe('MatPickPage', () => {
       return { json: {} }
     })
     mount('/mat?event=9')
-    expect(await screen.findByText('This event has no mats yet.')).toBeInTheDocument()
+    expect(await screen.findByText('This event has no mats yet')).toBeInTheDocument()
   })
 
   it('surfaces a 429 rate limit error', async () => {

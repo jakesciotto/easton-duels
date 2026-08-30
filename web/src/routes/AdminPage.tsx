@@ -23,16 +23,20 @@ function EventList() {
   return (
     <AdminShell title="Events" actions={<Button size="sm" onClick={() => setOpen(true)}>New event</Button>}>
       <NewEventDialog open={open} onOpenChange={setOpen} onCreated={d => navigate(`/events/${d.event.id}`)} />
-      <div className="grid gap-3">
+      <div className="grid gap-6 px-6 pb-10">
         {events.isLoading && <p className="text-faint">Loading</p>}
         {events.error && <p role="alert" className="text-destructive">{events.error.message}</p>}
-        {events.data?.length === 0 && <p className="text-faint">No events yet. Create the first one.</p>}
+        {events.data?.length === 0 && (
+          <List>
+            <ListRow className="text-[13px] text-faint">No events yet. Create the first one.</ListRow>
+          </List>
+        )}
         {events.data && events.data.length > 0 && (
           <List>
             {events.data.map(ev => (
-              <ListRow key={ev.id} className="flex items-center gap-4">
+              <ListRow key={ev.id} className="flex items-center gap-3">
                 <div className="grid min-w-0 flex-1 gap-1">
-                  <div className="flex items-center gap-2.5">
+                  <div className="flex items-center gap-2">
                     <span className="truncate font-medium">{ev.name}</span>
                     <Badge variant={STATUS[ev.status].variant}>{STATUS[ev.status].label}</Badge>
                   </div>

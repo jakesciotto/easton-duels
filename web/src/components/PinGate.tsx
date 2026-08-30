@@ -31,7 +31,7 @@ export function PinGate({ children }: { children: ReactNode }) {
 
   return (
     <main className="grid min-h-dvh place-items-center p-6">
-      <form onSubmit={submit} className="grid w-full max-w-[360px] gap-4 rounded-lg border border-border bg-card p-5">
+      <form onSubmit={submit} className="grid w-full max-w-[360px] gap-4 rounded-lg border border-border bg-card p-4">
         <div className="grid justify-items-start gap-2">
           <img src="/easton-logo.png" alt="Easton Training Center" width={40} height={40} className="size-10 rounded-full" />
           <Wordmark />

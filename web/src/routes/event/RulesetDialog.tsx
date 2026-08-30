@@ -76,7 +76,7 @@ export function RulesetDialog({ detail, open, onOpenChange, ruleset }: { detail:
                 <Input id="rs-len" type="number" min={30} max={1800} required className="font-mono tabular-nums" value={length} onChange={e => setLength(e.target.value)} />
               </div>
             </div>
-            <fieldset className="grid gap-2">
+            <fieldset className="grid gap-3">
               <legend className="label">Actions (tap to score)</legend>
               {actions.map((a, i) => (
                 <div key={i} className="flex items-center gap-2">
@@ -87,7 +87,7 @@ export function RulesetDialog({ detail, open, onOpenChange, ruleset }: { detail:
               ))}
               <Button type="button" variant="secondary" size="sm" onClick={() => setActions(rows => [...rows, { key: '', label: '', points: 2 }])} disabled={actions.length >= 12} className="w-fit">Add action</Button>
             </fieldset>
-            <fieldset className="grid gap-2">
+            <fieldset className="grid gap-3">
               <legend className="label">Terminals (end the match)</legend>
               {terminals.map((t, i) => (
                 <div key={i} className="flex items-center gap-2">

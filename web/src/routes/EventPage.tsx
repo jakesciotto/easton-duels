@@ -18,35 +18,39 @@ const STATUS: Record<EventStatus, { label: string; variant: 'default' | 'live' |
   done: { label: 'Done', variant: 'done' },
 }
 
+const PANEL = 'px-6 pt-6 pb-10'
+
 function EventBody({ eventId }: { eventId: number }) {
   const q = useEventDetail(eventId)
-  if (q.isLoading) return <AdminShell title="Loading"><p className="text-faint">Loading</p></AdminShell>
-  if (q.error || !q.data) return <AdminShell title="Event"><p role="alert" className="text-destructive">{q.error?.message ?? 'Not found'}</p></AdminShell>
+  if (q.isLoading) return <AdminShell title="Loading"><p className={`${PANEL} text-faint`}>Loading</p></AdminShell>
+  if (q.error || !q.data) return <AdminShell title="Event"><p role="alert" className={`${PANEL} text-destructive`}>{q.error?.message ?? 'Not found'}</p></AdminShell>
   const detail = q.data
   return (
     <AdminShell
       title={detail.event.name}
       status={<Badge variant={STATUS[detail.event.status].variant}>{STATUS[detail.event.status].label}</Badge>}
       actions={<Link to={`/board/${eventId}`} target="_blank" className={buttonVariants({ variant: 'secondary', size: 'sm' })}>Open board</Link>}
+      meta={
+        <div className="flex items-center gap-3 text-[13px] text-faint">
+          <span className="font-mono tabular-nums">{detail.event.date}</span>
+          <span><span className="font-mono tabular-nums">{detail.athletes.length}</span> competitors</span>
+          <span><span className="font-mono tabular-nums">{detail.matches.length}</span> matches</span>
+        </div>
+      }
     >
-      <div className="mb-4 flex items-center gap-3 text-[13px] text-faint">
-        <span className="font-mono tabular-nums">{detail.event.date}</span>
-        <span><span className="font-mono tabular-nums">{detail.athletes.length}</span> competitors</span>
-        <span><span className="font-mono tabular-nums">{detail.matches.length}</span> matches</span>
-      </div>
-      <Tabs defaultValue="roster">
-        <TabsList>
+      <Tabs defaultValue="roster" className="gap-0">
+        <TabsList className="px-6">
           <TabsTrigger value="roster">Roster<span className="ml-1.5 font-mono text-xs text-faint">{detail.athletes.length}</span></TabsTrigger>
           <TabsTrigger value="entry">Entry</TabsTrigger>
           <TabsTrigger value="rulesets">Rulesets</TabsTrigger>
           <TabsTrigger value="matches">Matches<span className="ml-1.5 font-mono text-xs text-faint">{detail.matches.length}</span></TabsTrigger>
           <TabsTrigger value="live">Live</TabsTrigger>
         </TabsList>
-        <TabsContent value="roster"><RosterTab detail={detail} /></TabsContent>
-        <TabsContent value="entry"><EntryTab detail={detail} /></TabsContent>
-        <TabsContent value="rulesets"><RulesetsTab detail={detail} /></TabsContent>
-        <TabsContent value="matches"><MatchesTab detail={detail} /></TabsContent>
-        <TabsContent value="live"><LiveTab detail={detail} /></TabsContent>
+        <TabsContent value="roster" className={PANEL}><RosterTab detail={detail} /></TabsContent>
+        <TabsContent value="entry" className={PANEL}><EntryTab detail={detail} /></TabsContent>
+        <TabsContent value="rulesets" className={PANEL}><RulesetsTab detail={detail} /></TabsContent>
+        <TabsContent value="matches" className={PANEL}><MatchesTab detail={detail} /></TabsContent>
+        <TabsContent value="live" className={PANEL}><LiveTab detail={detail} /></TabsContent>
       </Tabs>
     </AdminShell>
   )

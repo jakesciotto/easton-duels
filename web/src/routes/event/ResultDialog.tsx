@@ -60,7 +60,7 @@ export function ResultDialog({ detail, match, open, onOpenChange }: { detail: Ev
         <form onSubmit={submit} className="grid min-h-0">
           <DialogHeader><DialogTitle>Edit result</DialogTitle></DialogHeader>
           <DialogBody>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-3">
               <WinnerButton name={match.a.name} color={teamColor(match.a.teamId)} pressed={winner === match.a.athleteId} onClick={() => setWinner(match.a.athleteId)} />
               <WinnerButton name={match.b.name} color={teamColor(match.b.teamId)} pressed={winner === match.b.athleteId} onClick={() => setWinner(match.b.athleteId)} />
             </div>

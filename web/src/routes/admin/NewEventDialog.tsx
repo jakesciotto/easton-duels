@@ -96,7 +96,7 @@ export function NewEventDialog({ open, onOpenChange, onCreated }: { open: boolea
                 <Input id="weight-gap" type="number" min={0} max={100} value={maxWeightGap} onChange={e => setMaxWeightGap(Number(e.target.value))} className="font-mono tabular-nums" />
               </div>
             </div>
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2">
               <Checkbox id="same-gender" checked={sameGender} onCheckedChange={v => setSameGender(v)} />
               <Label htmlFor="same-gender" className="text-sm text-foreground">Pair only competitors of the same gender</Label>
             </div>

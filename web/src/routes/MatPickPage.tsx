@@ -57,7 +57,7 @@ export default function MatPickPage() {
     return (
       <main className="grid min-h-dvh place-items-center p-6">
         <Card className="w-full max-w-sm">
-          <CardContent className="grid gap-4 text-center">
+          <CardContent className="text-center">
             <h1 className="text-[22px] font-semibold tracking-[-0.035em]">This iPad is bound to Mat {binding.matNumber}</h1>
             <p className="text-sm text-soft">{binding.eventName}</p>
             <div className="grid gap-2">
@@ -73,7 +73,7 @@ export default function MatPickPage() {
   return (
     <main className="grid min-h-dvh place-items-center p-6">
       <Card className="w-full max-w-md">
-        <CardContent className="grid gap-4">
+        <CardContent>
           <h1 className="text-[22px] font-semibold tracking-[-0.035em]">Pick your mat</h1>
           {otherEventBinding && (
             <div className="flex items-center gap-3 rounded-lg border border-border bg-card p-2.5 pl-3.5 text-[13px] text-soft">
@@ -122,20 +122,24 @@ export default function MatPickPage() {
                 ))}
               </List>
             ) : (
-              <p className="text-[13px] text-faint">This event has no mats yet.</p>
+              <List>
+                <ListRow className="text-[13px] text-faint">This event has no mats yet</ListRow>
+              </List>
             )
           )}
           <form onSubmit={bind} className="grid gap-3">
-            <Label htmlFor="code">Mat code</Label>
-            <Input
-              id="code"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              maxLength={4}
-              value={code}
-              onChange={e => setCode(e.target.value.replace(/\D/g, ''))}
-              className="text-center font-mono text-3xl tabular tracking-[0.4em]"
-            />
+            <div className="grid gap-1.5">
+              <Label htmlFor="code">Mat code</Label>
+              <Input
+                id="code"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={4}
+                value={code}
+                onChange={e => setCode(e.target.value.replace(/\D/g, ''))}
+                className="text-center font-mono text-3xl tabular tracking-[0.4em]"
+              />
+            </div>
             {error && <p role="alert" className="text-[13px] text-destructive">{error}</p>}
             <Button type="submit" size="lg" className="w-full" disabled={busy || matId === null || code.length !== 4}>
               Bind this iPad

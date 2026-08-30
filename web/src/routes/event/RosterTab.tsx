@@ -2,7 +2,6 @@ import { useState, type DragEvent } from 'react'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import type { AthleteRow, EventDetail } from '@/lib/types'
 import { athleteName, beltLabel } from '@/lib/format'
-import { cn } from '@/lib/utils'
 import { AddKidDialog } from './AddKidDialog'
 import { PasteRosterDialog } from './PasteRosterDialog'
 import { SyncRosterDialog } from './SyncRosterDialog'
@@ -10,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
-import { Card } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { List, ListRow } from '@/components/ui/list'
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { TeamCard } from '@/components/TeamCard'
@@ -77,32 +76,30 @@ function Column({ title, roleLabel, color, teamId, kids, selected, onSelect, onP
     if (id) onMove([id], teamId)
   }
 
-  const toolbar = (
-    <div className="flex items-center justify-between">
-      <span className="text-[13px] text-faint"><span className="font-mono tabular-nums">{kids.length}</span> {kids.length === 1 ? 'competitor' : 'competitors'}</span>
-      {selectedElsewhere > 0 && <Button size="sm" variant="secondary" onClick={moveHere}>Move {selectedElsewhere} here</Button>}
-    </div>
-  )
-  const list = (
-    <List>
-      {kids.length === 0
-        ? <ListRow className="text-[13px] text-faint">No competitors here yet</ListRow>
-        : kids.map(k => <KidRow key={k.id} kid={k} selected={selected.has(k.id)} onSelect={v => onSelect(k.id, v)} onPatch={body => onPatch(k.id, body)} onRemove={() => onRemove(k)} />)}
-    </List>
+  const content = (
+    <>
+      <div className="flex items-center gap-2">
+        <span className="text-[13px] text-faint"><span className="font-mono tabular-nums">{kids.length}</span> {kids.length === 1 ? 'competitor' : 'competitors'}</span>
+        {selectedElsewhere > 0 && <Button size="sm" variant="secondary" className="ml-auto" onClick={moveHere}>Move {selectedElsewhere} here</Button>}
+      </div>
+      <List>
+        {kids.length === 0
+          ? <ListRow className="text-[13px] text-faint">No competitors here yet</ListRow>
+          : kids.map(k => <KidRow key={k.id} kid={k} selected={selected.has(k.id)} onSelect={v => onSelect(k.id, v)} onPatch={body => onPatch(k.id, body)} onRemove={() => onRemove(k)} />)}
+      </List>
+    </>
   )
 
   return (
     <section aria-label={title} onDragOver={e => { e.preventDefault(); setOver(true) }} onDragLeave={() => setOver(false)} onDrop={drop}>
       {color ? (
-        <TeamCard color={color} name={title} role={roleLabel ?? ''} className={over ? 'border-foreground' : undefined}>
-          {toolbar}
-          {list}
+        <TeamCard color={color} name={title} role={roleLabel} className={over ? 'border-foreground' : undefined}>
+          {content}
         </TeamCard>
       ) : (
-        <Card className={cn('grid gap-2.5 p-4', over && 'border-foreground')}>
-          <span className="font-medium">{title}</span>
-          {toolbar}
-          {list}
+        <Card className={over ? 'border-foreground' : undefined}>
+          <CardHeader><CardTitle>{title}</CardTitle></CardHeader>
+          <CardContent>{content}</CardContent>
         </Card>
       )}
     </section>
@@ -155,11 +152,11 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
   const [teamA, teamB] = detail.teams
 
   return (
-    <div className="grid gap-4">
+    <div className="grid gap-6">
       <div className="flex flex-wrap items-center gap-2">
-        <Button onClick={() => setAddOpen(true)}>Add competitor</Button>
-        <Button variant="secondary" onClick={() => setPasteOpen(true)}>Paste roster</Button>
-        <Button variant="secondary" onClick={() => setSyncOpen(true)}>Sync from WellnessLiving</Button>
+        <Button size="sm" onClick={() => setAddOpen(true)}>Add competitor</Button>
+        <Button size="sm" variant="secondary" onClick={() => setPasteOpen(true)}>Paste roster</Button>
+        <Button size="sm" variant="secondary" onClick={() => setSyncOpen(true)}>Sync from WellnessLiving</Button>
         {(assign.error || patch.error) && <p role="alert" className="self-center text-[13px] text-destructive">{(assign.error ?? patch.error)?.message}</p>}
       </div>
       <AddKidDialog detail={detail} open={addOpen} onOpenChange={setAddOpen} />
@@ -180,7 +177,7 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
           </DialogContent>
         )}
       </Dialog>
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid items-start gap-4 lg:grid-cols-3">
         <Column title={teamA.name} roleLabel="Team A" color={teamA.color} teamId={teamA.id} kids={byTeam(teamA.id)} selected={selected} onSelect={onSelect} onPatch={(id, body) => patch.mutate({ id, body })} onMove={onMove} onRemove={setRemoving} />
         <Column title="Unassigned" color={null} teamId={null} kids={byTeam(null)} selected={selected} onSelect={onSelect} onPatch={(id, body) => patch.mutate({ id, body })} onMove={onMove} onRemove={setRemoving} />
         <Column title={teamB.name} roleLabel="Team B" color={teamB.color} teamId={teamB.id} kids={byTeam(teamB.id)} selected={selected} onSelect={onSelect} onPatch={(id, body) => patch.mutate({ id, body })} onMove={onMove} onRemove={setRemoving} />

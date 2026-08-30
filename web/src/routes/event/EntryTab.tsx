@@ -110,14 +110,14 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   const error = create.error ?? correct.error ?? start.error
 
   return (
-    <div className="grid gap-5 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+    <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
       {detail.event.status === 'setup' && (
         <div className="flex items-center gap-3 rounded-lg border border-border bg-card p-2.5 pl-3.5 lg:col-span-2">
           <p className="text-soft">The board shows this event as in progress once you start it.</p>
           <Button size="sm" className="ml-auto" onClick={() => start.mutate()} disabled={start.isPending}>Start event</Button>
         </div>
       )}
-      <div className="grid gap-4">
+      <div className="grid gap-6">
         <form onSubmit={submit} className="grid gap-4 rounded-lg border border-border bg-card p-4">
           {/*
             One flat grid, not two nested per-team grids: spec 9.2 fixes the tab
@@ -127,7 +127,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
             order while the column-start/row-start placement recreates the
             two-column look.
           */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_auto_1fr]">
+          <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-[1fr_auto_1fr]">
             <TeamHead color={teamA.color} name={teamA.name} role="Team A" className="sm:col-start-1 sm:row-start-1" />
             <span aria-hidden className="text-xs text-faint sm:col-start-2 sm:row-span-4 sm:row-start-1 sm:self-center sm:justify-self-center">vs</span>
             <TeamHead color={teamB.color} name={teamB.name} role="Team B" className="sm:col-start-3 sm:row-start-1" />
@@ -153,7 +153,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
           {winner === null && a && b && <p className="text-[13px] text-faint">Scores are tied. Pick the winner.</p>}
           {error && <p role="alert" className="text-[13px] text-destructive">{error.message}</p>}
           <div className="flex items-center gap-3">
-            <Button type="submit" size="lg" disabled={!canSave || create.isPending || correct.isPending}>
+            <Button type="submit" disabled={!canSave || create.isPending || correct.isPending}>
               {f.editingId !== null ? 'Save correction' : 'Save result'}
             </Button>
             {f.editingId !== null && <Button type="button" variant="ghost" onClick={() => setF(fresh())}>Cancel edit</Button>}
@@ -161,7 +161,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
           </div>
         </form>
         {pending.length > 0 && (
-          <section aria-label="Pending pairs" className="grid gap-2">
+          <section aria-label="Pending pairs" className="grid gap-3">
             <h3 className="label">Pending pairs</h3>
             <List>
               {pending.map(m => (
@@ -175,10 +175,12 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
           </section>
         )}
       </div>
-      <section aria-label="Results" className="grid gap-2">
+      <section aria-label="Results" className="grid gap-3">
         <h3 className="label">Results ({done.length})</h3>
         {done.length === 0 ? (
-          <p className="text-[13px] text-faint">No results yet.</p>
+          <List>
+            <ListRow className="text-[13px] text-faint">No results yet</ListRow>
+          </List>
         ) : (
           <List>
             {done.map(m => {

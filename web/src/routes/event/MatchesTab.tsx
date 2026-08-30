@@ -13,6 +13,7 @@ import { AddMatchDialog } from './AddMatchDialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { TeamDot } from '@/components/TeamDot'
+import { TeamCard } from '@/components/TeamCard'
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 interface Pick { matchId: number; side: 'a' | 'b'; teamId: number }
@@ -32,7 +33,7 @@ function Row({ m, detail, index, pendingIndex, pendingCount, onPick, onPatch, on
 
   return (
     <tr ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={cn('border-b border-border', locked && 'text-faint')}>
-      <td className="px-2 py-1.5">
+      <td className="px-3 py-2.5">
         <Button
           type="button" variant="ghost" size="icon" aria-label="Drag to reorder" disabled={locked}
           className="cursor-grab disabled:cursor-not-allowed"
@@ -41,8 +42,8 @@ function Row({ m, detail, index, pendingIndex, pendingCount, onPick, onPatch, on
           <GripVerticalIcon />
         </Button>
       </td>
-      <td className="px-2 py-1.5 font-mono tabular">{index + 1}</td>
-      <td className="px-2 py-1.5">
+      <td className="px-3 py-2.5 font-mono tabular">{index + 1}</td>
+      <td className="px-3 py-2.5">
         {locked ? (
           <Badge variant={m.status === 'live' ? 'live' : 'done'}>{m.status}</Badge>
         ) : (
@@ -52,38 +53,38 @@ function Row({ m, detail, index, pendingIndex, pendingCount, onPick, onPatch, on
           </select>
         )}
       </td>
-      <td className="px-1 py-1.5">
+      <td className="px-3 py-2.5">
         <button
           type="button" disabled={locked} onClick={() => onPick({ matchId: m.id, side: 'a', teamId: teamA.id })}
-          className="rounded-md px-2 py-1 text-left outline-none transition-colors duration-150 hover:bg-accent focus-visible:shadow-focus disabled:pointer-events-none"
+          className="-mx-2 rounded-md px-2 py-1 text-left outline-none transition-colors duration-150 hover:bg-accent focus-visible:shadow-focus disabled:pointer-events-none"
         >
           <TeamDot color={teamA.color} name={name(m.athleteAId)} />
         </button>
       </td>
-      <td className="px-1 py-1.5">
+      <td className="px-3 py-2.5">
         <button
           type="button" disabled={locked} onClick={() => onPick({ matchId: m.id, side: 'b', teamId: teamB.id })}
-          className="rounded-md px-2 py-1 text-left outline-none transition-colors duration-150 hover:bg-accent focus-visible:shadow-focus disabled:pointer-events-none"
+          className="-mx-2 rounded-md px-2 py-1 text-left outline-none transition-colors duration-150 hover:bg-accent focus-visible:shadow-focus disabled:pointer-events-none"
         >
           <TeamDot color={teamB.color} name={name(m.athleteBId)} />
         </button>
       </td>
-      <td className="px-2 py-1.5">{m.why && <Badge>{m.why}</Badge>}</td>
-      <td className="px-2 py-1.5">
+      <td className="px-3 py-2.5">{m.why && <Badge>{m.why}</Badge>}</td>
+      <td className="px-3 py-2.5">
         <input
           aria-label="Length" type="number" min={30} max={1800} disabled={locked} defaultValue={m.lengthSec}
           className="h-8 w-20 rounded-md border border-input bg-card px-2 font-mono tabular text-sm outline-none focus-visible:border-transparent focus-visible:shadow-focus disabled:opacity-50"
           onBlur={e => { const v = Number(e.target.value); if (v !== m.lengthSec && v >= 30 && v <= 1800) onPatch(m.id, { lengthSec: v }) }}
         />
       </td>
-      <td className="px-2 py-1.5">
+      <td className="px-3 py-2.5">
         <select aria-label="Ruleset" disabled={locked} className={selCell} value={m.rulesetId} onChange={e => onPatch(m.id, { rulesetId: Number(e.target.value) })}>
           {detail.rulesets.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
         </select>
       </td>
-      <td className="px-2 py-1.5">
+      <td className="px-3 py-2.5">
         {!locked && (
-          <div className="flex gap-1">
+          <div className="flex gap-2">
             <Button size="sm" variant="ghost" aria-label="Move up" disabled={pendingIndex === 0} onClick={() => onMovePending(pendingIndex, -1)}>Up</Button>
             <Button size="sm" variant="ghost" aria-label="Move down" disabled={pendingIndex === pendingCount - 1} onClick={() => onMovePending(pendingIndex, 1)}>Down</Button>
             <Button size="sm" variant="ghost" aria-label="Delete match" onClick={() => onDelete(m.id)}>Delete</Button>
@@ -189,10 +190,10 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
   const error = (confirmOpen ? null : generate.error) ?? patch.error ?? del.error ?? reorder.error
 
   return (
-    <div className="grid gap-4">
+    <div className="grid gap-6">
       <div className="flex flex-wrap items-center gap-2">
-        <Button onClick={onGenerateClick} disabled={generate.isPending}>{hasPending ? 'Regenerate' : 'Generate'}</Button>
-        <Button variant="secondary" onClick={() => setAddOpen(true)}>Add match</Button>
+        <Button size="sm" onClick={onGenerateClick} disabled={generate.isPending}>{hasPending ? 'Regenerate' : 'Generate'}</Button>
+        <Button size="sm" variant="secondary" onClick={() => setAddOpen(true)}>Add match</Button>
         {summary && <span aria-live="polite" className="text-[13px] text-faint">{summary}</span>}
         {error && <p role="alert" className="text-[13px] text-destructive">{error.message}</p>}
       </div>
@@ -217,20 +218,20 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border text-left">
-                  <th className="px-2 py-2"></th>
-                  <th className="label px-2 py-2">#</th>
-                  <th className="label px-2 py-2">Mat</th>
-                  <th className="label px-1 py-2">{detail.teams[0].name}</th>
-                  <th className="label px-1 py-2">{detail.teams[1].name}</th>
-                  <th className="label px-2 py-2">Why</th>
-                  <th className="label px-2 py-2">Length</th>
-                  <th className="label px-2 py-2">Ruleset</th>
-                  <th className="px-2 py-2"></th>
+                  <th className="px-3 py-2"></th>
+                  <th className="label px-3 py-2">#</th>
+                  <th className="label px-3 py-2">Mat</th>
+                  <th className="label px-3 py-2">{detail.teams[0].name}</th>
+                  <th className="label px-3 py-2">{detail.teams[1].name}</th>
+                  <th className="label px-3 py-2">Why</th>
+                  <th className="label px-3 py-2">Length</th>
+                  <th className="label px-3 py-2">Ruleset</th>
+                  <th className="px-3 py-2"></th>
                 </tr>
               </thead>
               <tbody>
                 {ordered.length === 0 ? (
-                  <tr><td colSpan={9} className="px-2 py-4 text-center text-[13px] text-faint">No matches yet</td></tr>
+                  <tr><td colSpan={9} className="px-3 py-2.5 text-[13px] text-faint">No matches yet</td></tr>
                 ) : ordered.map((m, i) => (
                   <Row
                     key={m.id} m={m} detail={detail} index={i}
@@ -243,20 +244,18 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
           </div>
         </SortableContext>
       </DndContext>
-      <section aria-label="Unpaired" className="grid gap-3 md:grid-cols-2">
+      <section aria-label="Unpaired" className="grid items-start gap-4 md:grid-cols-2">
         {unpaired.map(({ team, kids }) => (
-          <div key={team.id} className="rounded-lg border border-border bg-card p-3 text-sm">
-            <div className="mb-1.5 flex items-center gap-2">
-              <TeamDot color={team.color} name={team.name} />
-              <span className="font-mono tabular text-faint">{kids.length}</span>
-              <span className="text-faint">unpaired</span>
-            </div>
+          <TeamCard
+            key={team.id} color={team.color} name={team.name}
+            role={<><span className="font-mono tabular-nums">{kids.length}</span> unpaired</>}
+          >
             <div className="flex flex-wrap gap-1">
               {kids.length === 0
                 ? <span className="text-[13px] text-faint">Everyone is paired</span>
                 : kids.map(k => <Badge key={k.id}>{athleteName(k)}</Badge>)}
             </div>
-          </div>
+          </TeamCard>
         ))}
       </section>
     </div>

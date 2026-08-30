@@ -1,21 +1,21 @@
 import type { ReactNode } from 'react'
 import { TeamDot } from '@/components/TeamDot'
-import { cn } from '@/lib/utils'
+import { Card, CardContent, CardHeader } from '@/components/ui/card'
 
 export function TeamCard({ color, name, role, className, children }: {
   color: string
   name: string
-  role: string
+  role?: ReactNode
   className?: string
   children?: ReactNode
 }) {
   return (
-    <div className={cn('grid gap-2.5 rounded-lg border border-border bg-card p-3', className)}>
-      <div className="flex items-center gap-2">
+    <Card className={className}>
+      <CardHeader>
         <TeamDot color={color} name={name} />
-        <span className="ml-auto shrink-0 text-xs text-faint">{role}</span>
-      </div>
-      {children}
-    </div>
+        {role && <span className="ml-auto shrink-0 text-xs text-faint">{role}</span>}
+      </CardHeader>
+      {children && <CardContent>{children}</CardContent>}
+    </Card>
   )
 }

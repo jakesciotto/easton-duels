@@ -114,7 +114,7 @@ export function SyncRosterDialog({ detail, open, onOpenChange }: { detail: Event
             </div>
           )}
           {warnings.length > 0 && (
-            <div className="flex flex-col items-start gap-1.5">
+            <div className="flex flex-col items-start gap-2">
               {warnings.map(w => <Badge key={w} variant="warn">{w}</Badge>)}
             </div>
           )}

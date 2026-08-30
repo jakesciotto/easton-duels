@@ -27,7 +27,7 @@ export default function ConnectPage() {
   return (
     <main className="grid min-h-dvh place-items-center p-6">
       <Card className="w-full max-w-sm">
-        <CardContent className="grid gap-4 text-center">
+        <CardContent className="text-center">
           <h1 className="text-[22px] font-semibold tracking-[-0.035em]">Connect an iPad</h1>
           {!eventId ? (
             <div className="grid gap-1.5 text-left">

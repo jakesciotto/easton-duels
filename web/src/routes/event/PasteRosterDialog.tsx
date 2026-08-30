@@ -50,21 +50,21 @@ export function PasteRosterDialog({ detail, open, onOpenChange }: { detail: Even
               <table className="w-full text-sm">
                 <thead className="sticky top-0 bg-card text-[13px] text-faint">
                   <tr>
-                    <th className="px-2.5 py-1.5 text-left font-medium">Name</th>
-                    <th className="px-2.5 py-1.5 text-left font-medium">Age</th>
-                    <th className="px-2.5 py-1.5 text-left font-medium">Weight</th>
-                    <th className="px-2.5 py-1.5 text-left font-medium">Belt</th>
-                    <th className="px-2.5 py-1.5 text-left font-medium">Gender</th>
+                    <th className="px-3 py-2 text-left font-medium">Name</th>
+                    <th className="px-3 py-2 text-left font-medium">Age</th>
+                    <th className="px-3 py-2 text-left font-medium">Weight</th>
+                    <th className="px-3 py-2 text-left font-medium">Belt</th>
+                    <th className="px-3 py-2 text-left font-medium">Gender</th>
                   </tr>
                 </thead>
                 <tbody>
                   {parsed.rows.map((r, i) => (
                     <tr key={i} className="border-t border-border">
-                      <td className="px-2.5 py-1.5">{r.firstName} {r.lastName}</td>
-                      <td className="px-2.5 py-1.5 font-mono tabular-nums">{r.age ?? '-'}</td>
-                      <td className="px-2.5 py-1.5 font-mono tabular-nums">{r.weightLbs ?? '-'}</td>
-                      <td className="px-2.5 py-1.5">{beltLabel(r.belt ?? null)}</td>
-                      <td className="px-2.5 py-1.5">{r.gender ?? '-'}</td>
+                      <td className="px-3 py-2.5">{r.firstName} {r.lastName}</td>
+                      <td className="px-3 py-2.5 font-mono tabular-nums">{r.age ?? '-'}</td>
+                      <td className="px-3 py-2.5 font-mono tabular-nums">{r.weightLbs ?? '-'}</td>
+                      <td className="px-3 py-2.5">{beltLabel(r.belt ?? null)}</td>
+                      <td className="px-3 py-2.5">{r.gender ?? '-'}</td>
                     </tr>
                   ))}
                 </tbody>
