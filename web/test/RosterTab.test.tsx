@@ -52,6 +52,50 @@ describe('RosterTab', () => {
     expect(f.body(i)).toEqual({ ids: [300, 400], teamId: 2 })
   })
 
+  it('shows the server error when an assign fails, without an unhandled rejection', async () => {
+    fakeFetch((url, init) => {
+      if (url === '/api/events/7/athletes/assign' && init?.method === 'POST') {
+        return { status: 422, json: { error: { code: 'validation', message: 'teamId is not on this event' } } }
+      }
+      return { json: [] }
+    })
+    mount()
+    const user = userEvent.setup()
+    const pool = screen.getByRole('region', { name: 'Unassigned' })
+    await user.click(within(pool).getByRole('checkbox', { name: 'Select Noah Kid' }))
+    await user.click(within(screen.getByRole('region', { name: 'Denver' })).getByRole('button', { name: 'Move 1 here' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('teamId is not on this event')
+  })
+
+  it('removes a kid through a confirm dialog', async () => {
+    const f = fakeFetch((url, init) => (url === '/api/athletes/300' && init?.method === 'DELETE' ? { status: 204 } : { json: [] }))
+    mount()
+    const user = userEvent.setup()
+    const pool = screen.getByRole('region', { name: 'Unassigned' })
+    await user.click(within(pool).getByRole('button', { name: 'Remove Noah Kid' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('Remove Noah Kid?')).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
+    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/athletes/300' && c.init?.method === 'DELETE')).toBe(true))
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('keeps the remove dialog open and shows the message when the kid is in a match', async () => {
+    fakeFetch((url, init) => {
+      if (url === '/api/athletes/300' && init?.method === 'DELETE') {
+        return { status: 409, json: { error: { code: 'match_state', message: 'athlete is in a match; delete the match first' } } }
+      }
+      return { json: [] }
+    })
+    mount()
+    const user = userEvent.setup()
+    await user.click(within(screen.getByRole('region', { name: 'Unassigned' })).getByRole('button', { name: 'Remove Noah Kid' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('athlete is in a match; delete the match first')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+
   it('saves an inline age edit as manual', async () => {
     const f = fakeFetch(() => ({ json: {} }))
     mount()
