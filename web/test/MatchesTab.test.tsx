@@ -19,13 +19,20 @@ const match = (id: number, over: Partial<MatchRow> = {}): MatchRow => ({
   winnerAthleteId: null, winType: null, pointsA: 0, pointsB: 0, clockElapsedMs: 0, clockStartedAt: null,
   pendingTerminalAthleteId: null, pendingTerminalKey: null, lastSeq: 0, why: 'ERP 6.1 vs 5.8', ...over,
 })
+// Three matches: two pending (1, 2, adjacent in order) and one locked (3, done).
+// This lets one fixture cover both the reorder-among-pending-only rules and the
+// "locked rows stay locked" rendering checks without juggling several fixtures.
 const detail: EventDetail = {
   event: { id: 7, name: 'Fall Duels', date: '2026-10-03', matCount: 2, matCode: '0420', status: 'setup', maxAgeGap: 1, maxWeightGap: 10, sameGender: false, createdAt: 'x' },
   teams: [{ id: 1, eventId: 7, name: 'Boulder', color: 'red', position: 0 }, { id: 2, eventId: 7, name: 'Denver', color: 'blue', position: 1 }],
   athletes: [kid(100, 1, 'Mateo', 'Rivera'), kid(101, 1, 'Ava', 'Park'), kid(200, 2, 'Olivia', 'Kim'), kid(201, 2, 'Noah', 'Tran'), kid(202, 2, 'Kai', 'Wong')],
   rulesets: [{ id: 1, eventId: 7, name: 'Default', defaultLengthSec: 300, actions: [], terminals: [] }],
   mats: [{ id: 1, eventId: 7, number: 1, currentMatchId: null }, { id: 2, eventId: 7, number: 2, currentMatchId: null }],
-  matches: [match(1), match(2, { athleteAId: 101, athleteBId: 201, matId: 2, status: 'done', winnerAthleteId: 101, winType: 'points' })],
+  matches: [
+    match(1),
+    match(2, { athleteAId: 101, athleteBId: 201, matId: 2, why: 'ERP 5.0 vs 4.8' }),
+    match(3, { status: 'done', winnerAthleteId: 100, winType: 'points' }),
+  ],
 }
 
 function mount() {
@@ -34,23 +41,36 @@ function mount() {
 }
 
 describe('MatchesTab', () => {
-  it('renders rows, locks done rows, lists unpaired kids, and generates', async () => {
-    // Fixture already has a pending match, so the generate button reads
-    // "Regenerate" (see task-8-report.md for why this differs from the brief's literal test).
+  it('renders rows, locks done rows, lists unpaired kids, and generates after confirming', async () => {
     const f = fakeFetch(() => ({ json: { created: 2, unpairedA: [], unpairedB: [202] } }))
     mount()
+    const user = userEvent.setup()
     const rows = screen.getAllByRole('row').slice(1)
-    expect(rows).toHaveLength(2)
+    expect(rows).toHaveLength(3)
     expect(within(rows[0]).getByText('ERP 6.1 vs 5.8')).toBeInTheDocument()
-    expect(within(rows[1]).getByText('done')).toBeInTheDocument()
-    expect(within(rows[1]).queryByRole('button', { name: /delete/i })).not.toBeInTheDocument()
+    expect(within(rows[2]).getByText('done')).toBeInTheDocument()
+    expect(within(rows[2]).queryByRole('button', { name: /delete/i })).not.toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'Unpaired' })).toHaveTextContent('Kai Wong')
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Regenerate' }))
+    await user.click(screen.getByRole('button', { name: 'Regenerate' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(f.calls.some(c => c.url === '/api/events/7/matches/generate')).toBe(false)
+    await user.click(within(dialog).getByRole('button', { name: 'Regenerate' }))
     await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/events/7/matches/generate')).toBe(true))
     expect(await screen.findByText(/2 matches created/)).toBeInTheDocument()
   })
 
-  it('swaps a kid through the picker and moves a row down', async () => {
+  it('confirms before regenerating over existing pending matches, and cancel sends no request', async () => {
+    const f = fakeFetch(() => ({ json: { created: 0, unpairedA: [], unpairedB: [] } }))
+    mount()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Regenerate' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(f.calls.some(c => c.url === '/api/events/7/matches/generate')).toBe(false)
+  })
+
+  it('swaps a kid through the picker and moves a pending row down, past the other pending row', async () => {
     const f = fakeFetch(() => ({ json: {} }))
     mount()
     const user = userEvent.setup()
@@ -61,6 +81,30 @@ describe('MatchesTab', () => {
     expect(f.body(f.calls.findIndex(c => c.url === '/api/matches/1'))).toEqual({ athleteBId: 202 })
     await user.click(within(rows[0]).getByRole('button', { name: 'Move down' }))
     await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/events/7/matches/reorder')).toBe(true))
-    expect(f.body(f.calls.findIndex(c => c.url === '/api/events/7/matches/reorder'))).toEqual({ ids: [2, 1] })
+    // Match 3 (done) keeps its slot at the end; only the two pending ids swap.
+    expect(f.body(f.calls.findIndex(c => c.url === '/api/events/7/matches/reorder'))).toEqual({ ids: [2, 1, 3] })
+  })
+
+  it('disables Move down on the last pending row when its only neighbor down is locked', () => {
+    fakeFetch(() => ({ json: {} }))
+    mount()
+    const rows = screen.getAllByRole('row').slice(1)
+    expect(within(rows[1]).getByRole('button', { name: 'Move down' })).toBeDisabled()
+    expect(within(rows[1]).getByRole('button', { name: 'Move up' })).toBeEnabled()
+  })
+
+  it('clears a stale mutation error once a different action succeeds', async () => {
+    const f = fakeFetch(url => {
+      if (url === '/api/events/7/matches/reorder') return { status: 422, json: { error: { code: 'validation', message: 'ids must be every match of the event exactly once' } } }
+      return { json: {} }
+    })
+    mount()
+    const user = userEvent.setup()
+    const rows = screen.getAllByRole('row').slice(1)
+    await user.click(within(rows[0]).getByRole('button', { name: 'Move down' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('ids must be every match of the event exactly once')
+    await user.click(within(rows[1]).getByRole('button', { name: 'Delete match' }))
+    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/matches/2' && c.init?.method === 'DELETE')).toBe(true))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })
