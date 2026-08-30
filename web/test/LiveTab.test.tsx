@@ -8,7 +8,7 @@ import { setAdminToken } from '@/lib/auth'
 import type { EventDetail } from '@/lib/types'
 import { fakeFetch, FakeEventSource, sampleMatch, sampleSnapshot } from './fakes'
 
-vi.mock('qrcode', () => ({ default: { toDataURL: async () => 'data:image/png;base64,AAAA' } }))
+vi.mock('qrcode', () => ({ default: { toString: async () => '<svg>mock</svg>' } }))
 beforeEach(() => { localStorage.clear(); setAdminToken('tok') })
 afterEach(() => { vi.unstubAllGlobals(); FakeEventSource.instances = [] })
 
@@ -31,7 +31,7 @@ describe('LiveTab', () => {
     const es = mount()
     expect(await screen.findByText('0420')).toBeInTheDocument()
     expect(screen.getByText('http://192.168.1.20:8422')).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: 'QR code' })).toHaveAttribute('src', expect.stringContaining('data:image/png'))
+    expect(await screen.findByRole('img', { name: 'QR code' })).toHaveAttribute('src', expect.stringContaining('data:image/svg+xml'))
     const done = sampleMatch({ id: 9, status: 'done', result: { winnerAthleteId: 100, winType: 'points' } })
     act(() => es.emit('snapshot', sampleSnapshot({ mats: [{ id: 1, number: 1, current: sampleMatch({ id: 10 }), onDeck: [], bound: true }], matches: [done, sampleMatch({ id: 10 })] })))
     const row = screen.getByRole('row', { name: /Mat 1/ })
