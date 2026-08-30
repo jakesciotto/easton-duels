@@ -98,7 +98,7 @@ export function NewEventDialog({ open, onOpenChange, onCreated }: { open: boolea
             </div>
             <div className="flex items-center gap-2.5">
               <Checkbox id="same-gender" checked={sameGender} onCheckedChange={v => setSameGender(v)} />
-              <Label htmlFor="same-gender" className="text-sm text-foreground">Pair only kids of the same gender</Label>
+              <Label htmlFor="same-gender" className="text-sm text-foreground">Pair only competitors of the same gender</Label>
             </div>
             {create.error && <p role="alert" className="text-[13px] text-destructive">{create.error.message}</p>}
           </DialogBody>

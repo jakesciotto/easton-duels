@@ -29,7 +29,7 @@ export function PasteRosterDialog({ detail, open, onOpenChange }: { detail: Even
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader><DialogTitle>Paste roster</DialogTitle></DialogHeader>
         <DialogBody>
-          <p className="text-sm text-soft">One kid per line: <code className="font-mono text-faint">First Last, age, weight, belt, gender</code>. Everything after the name is optional.</p>
+          <p className="text-sm text-soft">One competitor per line: <code className="font-mono text-faint">First Last, age, weight, belt, gender</code>. Everything after the name is optional.</p>
           <textarea aria-label="Roster text" value={text} onChange={e => setText(e.target.value)}
             placeholder={'Mateo Rivera, 8, 62, grey, M\nOlivia Kim, 8, 60, grey/white, F'}
             className="h-40 w-full rounded-md border border-input bg-card p-2.5 font-mono text-sm text-foreground placeholder:text-faint outline-none focus-visible:border-transparent focus-visible:shadow-focus" />
@@ -75,7 +75,7 @@ export function PasteRosterDialog({ detail, open, onOpenChange }: { detail: Even
         </DialogBody>
         <DialogFooter>
           <Button variant="secondary" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={submit} disabled={add.isPending || parsed.rows.length === 0}>Add {parsed.rows.length} kids</Button>
+          <Button onClick={submit} disabled={add.isPending || parsed.rows.length === 0}>Add {parsed.rows.length} competitors</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

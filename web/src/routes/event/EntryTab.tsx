@@ -121,10 +121,11 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
         <form onSubmit={submit} className="grid gap-4 rounded-lg border border-border bg-card p-4">
           {/*
             One flat grid, not two nested per-team grids: spec 9.2 fixes the tab
-            order (kid A, kid B, points A, points B, winner A, winner B, win
-            type, save), so every field is placed here via explicit grid-column
-            and grid-row, and DOM order matches the required tab order while the
-            column-start/row-start placement recreates the two-column look.
+            order (competitor A, competitor B, points A, points B, winner A,
+            winner B, win type, save), so every field is placed here via explicit
+            grid-column and grid-row, and DOM order matches the required tab
+            order while the column-start/row-start placement recreates the
+            two-column look.
           */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_auto_1fr]">
             <TeamHead color={teamA.color} name={teamA.name} role="Team A" className="sm:col-start-1 sm:row-start-1" />
@@ -132,12 +133,12 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
             <TeamHead color={teamB.color} name={teamB.name} role="Team B" className="sm:col-start-3 sm:row-start-1" />
 
             <KidSelect
-              id="a-kid" label={`${teamA.name} kid`} kids={kidsA} value={f.aId}
+              id="a-kid" label={`${teamA.name} competitor`} kids={kidsA} value={f.aId}
               onChange={v => setF(s => ({ ...s, aId: v }))} selectRef={firstField}
               className="sm:col-start-1 sm:row-start-2"
             />
             <KidSelect
-              id="b-kid" label={`${teamB.name} kid`} kids={kidsB} value={f.bId}
+              id="b-kid" label={`${teamB.name} competitor`} kids={kidsB} value={f.bId}
               onChange={v => setF(s => ({ ...s, bId: v }))}
               className="sm:col-start-3 sm:row-start-2"
             />
@@ -236,7 +237,7 @@ function KidSelect({ id, label, kids, value, onChange, selectRef, className }: {
         onChange={e => onChange(e.target.value)}
         className="h-9 w-full rounded-md border border-input bg-card px-2.5 text-sm text-foreground outline-none transition-[color,background-color,box-shadow] duration-150 focus-visible:border-transparent focus-visible:shadow-focus"
       >
-        <option value="">Pick a kid</option>
+        <option value="">Pick a competitor</option>
         {kids.map(k => <option key={k.id} value={k.id}>{athleteName(k)}</option>)}
       </select>
     </div>
@@ -280,7 +281,7 @@ function WinnerButton({ kid, color, pressed, onClick, className }: { kid: Athlet
       )}
     >
       {kid && <TeamDot color={color} />}
-      <span>{kid ? `${athleteName(kid)} wins` : 'Pick a kid first'}</span>
+      <span>{kid ? `${athleteName(kid)} wins` : 'Pick a competitor first'}</span>
     </button>
   )
 }

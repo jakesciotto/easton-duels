@@ -135,7 +135,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
     resetExcept('generate')
     generate.mutate(undefined, {
       onSuccess: r => {
-        setSummary(`${r.created} matches created. ${r.unpairedA.length + r.unpairedB.length} kids unpaired.`)
+        setSummary(`${r.created} matches created. ${r.unpairedA.length + r.unpairedB.length} competitors unpaired.`)
         closeConfirm()
       },
     })

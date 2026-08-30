@@ -13,7 +13,10 @@ export function AdminShell({ title, status, actions, children }: {
   return (
     <div className="min-h-dvh">
       <header className="sticky top-0 z-10 flex items-center gap-4 border-b border-border bg-background px-6 py-3">
-        <Link to="/admin" className="rounded-md outline-none focus-visible:shadow-focus"><Wordmark /></Link>
+        <Link to="/admin" className="flex items-center gap-2.5 rounded-md outline-none focus-visible:shadow-focus">
+          <img src="/easton-logo.png" alt="Easton Training Center" width={24} height={24} className="size-6 shrink-0 rounded-full" />
+          <Wordmark />
+        </Link>
         <span aria-hidden className="text-[#42434d]">/</span>
         <h1 className="truncate font-medium text-[#d9d9de]">{title}</h1>
         {status}

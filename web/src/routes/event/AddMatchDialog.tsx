@@ -47,14 +47,14 @@ export function AddMatchDialog({ detail, open, onOpenChange }: { detail: EventDe
           <DialogHeader><DialogTitle>Add match</DialogTitle></DialogHeader>
           <DialogBody className="sm:grid-cols-2">
             <div className="grid gap-1.5">
-              <Label htmlFor="am-a">{teamA.name} kid</Label>
+              <Label htmlFor="am-a">{teamA.name} competitor</Label>
               <select id="am-a" required className={sel} value={aId} onChange={e => setAId(e.target.value)}>
                 <option value="">Pick</option>
                 {kids(teamA.id).map(k => <option key={k.id} value={k.id}>{athleteName(k)}</option>)}
               </select>
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="am-b">{teamB.name} kid</Label>
+              <Label htmlFor="am-b">{teamB.name} competitor</Label>
               <select id="am-b" required className={sel} value={bId} onChange={e => setBId(e.target.value)}>
                 <option value="">Pick</option>
                 {kids(teamB.id).map(k => <option key={k.id} value={k.id}>{athleteName(k)}</option>)}

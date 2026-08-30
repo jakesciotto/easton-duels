@@ -79,14 +79,14 @@ function Column({ title, roleLabel, color, teamId, kids, selected, onSelect, onP
 
   const toolbar = (
     <div className="flex items-center justify-between">
-      <span className="text-[13px] text-faint"><span className="font-mono tabular-nums">{kids.length}</span> {kids.length === 1 ? 'kid' : 'kids'}</span>
+      <span className="text-[13px] text-faint"><span className="font-mono tabular-nums">{kids.length}</span> {kids.length === 1 ? 'competitor' : 'competitors'}</span>
       {selectedElsewhere > 0 && <Button size="sm" variant="secondary" onClick={moveHere}>Move {selectedElsewhere} here</Button>}
     </div>
   )
   const list = (
     <List>
       {kids.length === 0
-        ? <ListRow className="text-[13px] text-faint">No kids here yet</ListRow>
+        ? <ListRow className="text-[13px] text-faint">No competitors here yet</ListRow>
         : kids.map(k => <KidRow key={k.id} kid={k} selected={selected.has(k.id)} onSelect={v => onSelect(k.id, v)} onPatch={body => onPatch(k.id, body)} onRemove={() => onRemove(k)} />)}
     </List>
   )
@@ -157,7 +157,7 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
   return (
     <div className="grid gap-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Button onClick={() => setAddOpen(true)}>Add kid</Button>
+        <Button onClick={() => setAddOpen(true)}>Add competitor</Button>
         <Button variant="secondary" onClick={() => setPasteOpen(true)}>Paste roster</Button>
         <Button variant="secondary" onClick={() => setSyncOpen(true)}>Sync from WellnessLiving</Button>
         {(assign.error || patch.error) && <p role="alert" className="self-center text-[13px] text-destructive">{(assign.error ?? patch.error)?.message}</p>}
@@ -170,7 +170,7 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
           <DialogContent>
             <DialogHeader><DialogTitle>Remove {athleteName(removing)}?</DialogTitle></DialogHeader>
             <DialogBody>
-              <p className="text-sm text-soft">This takes the kid off this event's roster. Kids already placed in a match cannot be removed.</p>
+              <p className="text-sm text-soft">This takes the competitor off this event's roster. Competitors already placed in a match cannot be removed.</p>
               {remove.error && <p role="alert" className="text-[13px] text-destructive">{remove.error.message}</p>}
             </DialogBody>
             <DialogFooter>

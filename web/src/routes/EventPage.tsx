@@ -31,7 +31,7 @@ function EventBody({ eventId }: { eventId: number }) {
     >
       <div className="mb-4 flex items-center gap-3 text-[13px] text-faint">
         <span className="font-mono tabular-nums">{detail.event.date}</span>
-        <span><span className="font-mono tabular-nums">{detail.athletes.length}</span> kids</span>
+        <span><span className="font-mono tabular-nums">{detail.athletes.length}</span> competitors</span>
         <span><span className="font-mono tabular-nums">{detail.matches.length}</span> matches</span>
       </div>
       <Tabs defaultValue="roster">

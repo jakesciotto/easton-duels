@@ -123,7 +123,7 @@ export function SyncRosterDialog({ detail, open, onOpenChange }: { detail: Event
               <div className="flex flex-wrap items-center gap-3">
                 <Label htmlFor="cand-search">Search</Label>
                 <Input id="cand-search" value={search} onChange={e => setSearch(e.target.value)} className="max-w-xs" />
-                <span className="text-[13px] text-faint"><span className="font-mono tabular-nums">{candidates.length}</span> kids found</span>
+                <span className="text-[13px] text-faint"><span className="font-mono tabular-nums">{candidates.length}</span> competitors found</span>
                 <Button size="sm" variant="ghost" onClick={() => setSelected(new Set(visible.map(c => c.wlUid)))}>Select shown</Button>
               </div>
               <List className="max-h-80 overflow-y-auto">
@@ -146,7 +146,7 @@ export function SyncRosterDialog({ detail, open, onOpenChange }: { detail: Event
         </DialogBody>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>Close</Button>
-          <Button onClick={submit} disabled={selected.size === 0 || add.isPending}>Add {selected.size} {selected.size === 1 ? 'kid' : 'kids'}</Button>
+          <Button onClick={submit} disabled={selected.size === 0 || add.isPending}>Add {selected.size} {selected.size === 1 ? 'competitor' : 'competitors'}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

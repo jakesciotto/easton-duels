@@ -63,7 +63,7 @@ describe('SyncRosterDialog', () => {
     expect(screen.queryByText('Kai Wong')).not.toBeInTheDocument()
     expect(screen.getByText((_, el) => el?.textContent === '60 lb')).toBeInTheDocument()
     await user.click(screen.getByLabelText('Select Zoe Martin'))
-    await user.click(screen.getByRole('button', { name: 'Add 1 kid' }))
+    await user.click(screen.getByRole('button', { name: 'Add 1 competitor' }))
     await vi.waitFor(() => expect(f.calls.some(c => c.url.endsWith('/athletes') && c.init?.method === 'POST')).toBe(true))
     expect(f.body(f.calls.findIndex(c => c.url.endsWith('/athletes') && c.init?.method === 'POST'))).toEqual({ candidates: [cand] })
   })

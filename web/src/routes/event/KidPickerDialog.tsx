@@ -15,12 +15,12 @@ export function KidPickerDialog({ detail, teamId, open, onOpenChange, onPick }: 
   return (
     <Dialog open={open} onOpenChange={o => { onOpenChange(o); if (!o) setSearch('') }}>
       <DialogContent className="sm:max-w-lg">
-        <DialogHeader><DialogTitle>Pick a {team?.name ?? ''} kid</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>Pick a {team?.name ?? ''} competitor</DialogTitle></DialogHeader>
         <DialogBody>
-          <Input aria-label="Search kids" autoFocus value={search} onChange={e => setSearch(e.target.value)} />
+          <Input aria-label="Search competitors" autoFocus value={search} onChange={e => setSearch(e.target.value)} />
           <List className="max-h-80 overflow-y-auto">
             {kids.length === 0
-              ? <ListRow className="text-sm text-faint">No kids match</ListRow>
+              ? <ListRow className="text-sm text-faint">No competitors match</ListRow>
               : kids.map(k => (
                 <ListRow key={k.id} className="p-0">
                   <button

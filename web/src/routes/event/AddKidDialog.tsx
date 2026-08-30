@@ -46,7 +46,7 @@ export function AddKidDialog({ detail, open, onOpenChange }: { detail: EventDeta
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[480px]">
         <form onSubmit={submit} className="grid min-h-0">
-          <DialogHeader><DialogTitle>Add kid</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Add competitor</DialogTitle></DialogHeader>
           <DialogBody>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="grid gap-1.5">
@@ -101,7 +101,7 @@ export function AddKidDialog({ detail, open, onOpenChange }: { detail: EventDeta
           </DialogBody>
           <DialogFooter>
             <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="submit" disabled={add.isPending}>Add kid</Button>
+            <Button type="submit" disabled={add.isPending}>Add competitor</Button>
           </DialogFooter>
         </form>
       </DialogContent>
