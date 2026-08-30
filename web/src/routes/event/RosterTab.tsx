@@ -98,7 +98,11 @@ function Column({ title, roleLabel, color, teamId, kids, selected, onSelect, onP
         </TeamCard>
       ) : (
         <Card className={over ? 'border-foreground' : undefined}>
-          <CardHeader><CardTitle>{title}</CardTitle></CardHeader>
+          <CardHeader>
+            {/* Stands in for a TeamDot's 8px dot so all three column heads share one text edge. */}
+            <span aria-hidden className="size-2 shrink-0" />
+            <CardTitle>{title}</CardTitle>
+          </CardHeader>
           <CardContent>{content}</CardContent>
         </Card>
       )}
