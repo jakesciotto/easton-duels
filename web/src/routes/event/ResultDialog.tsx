@@ -34,14 +34,14 @@ export function ResultDialog({ detail, match, open, onOpenChange }: { detail: Ev
   const save = useAdminMutation(eventId, (v: { id: number; winnerAthleteId: number; winType: WinType }) =>
     adminApi(`/api/matches/${v.id}/result`, { method: 'POST', body: { winnerAthleteId: v.winnerAthleteId, winType: v.winType } }))
 
-  // Reopening (even for the same match) always starts from the current result,
-  // so a cancelled edit never leaves a stale pick behind for next time.
+  // Reopening (even for the same match) always starts from the current result, so a cancelled
+  // edit never leaves a stale pick behind for next time. The deps stay at the open flag and the
+  // match id: a fresh snapshot of the same match must not overwrite the pick being made.
   useEffect(() => {
     if (!open || !match) return
     setWinner(match.result?.winnerAthleteId ?? null)
     setWinType(match.result?.winType ?? 'points')
     save.reset()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, match?.id])
 
   if (!match) return null

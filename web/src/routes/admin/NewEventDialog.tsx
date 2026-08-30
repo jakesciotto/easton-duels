@@ -25,6 +25,8 @@ export function NewEventDialog({ open, onOpenChange, onCreated }: { open: boolea
   const [sameGender, setSameGender] = useState(false)
   const create = useAdminMutation(null, (body: unknown) => adminApi<EventDetail>('/api/events', { method: 'POST', body }))
 
+  // Opening the dialog is the only thing that resets the form, so the deps stay at [open]:
+  // the setters are stable and re-running on a changed create.reset would wipe live input.
   useEffect(() => {
     if (!open) return
     setName('')
@@ -36,7 +38,6 @@ export function NewEventDialog({ open, onOpenChange, onCreated }: { open: boolea
     setMaxWeightGap(10)
     setSameGender(false)
     create.reset()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
   const submit = (e: FormEvent) => {

@@ -18,6 +18,8 @@ export function AddMatchDialog({ detail, open, onOpenChange }: { detail: EventDe
   const [matId, setMatId] = useState('')
   const create = useAdminMutation(detail.event.id, (body: unknown) => adminApi(`/api/events/${detail.event.id}/matches`, { method: 'POST', body }))
 
+  // Opening the dialog is the only thing that resets the form, so the deps stay at [open]:
+  // a later edit to the roster or the rulesets must not wipe what is half typed.
   useEffect(() => {
     if (!open) return
     setAId('')
@@ -26,7 +28,6 @@ export function AddMatchDialog({ detail, open, onOpenChange }: { detail: EventDe
     setLength(String(detail.rulesets[0]?.defaultLengthSec ?? 300))
     setMatId('')
     create.reset()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
   const kids = (teamId: number) => detail.athletes.filter(a => a.teamId === teamId).sort((x, y) => x.lastName.localeCompare(y.lastName))

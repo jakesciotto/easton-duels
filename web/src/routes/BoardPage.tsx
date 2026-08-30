@@ -15,9 +15,11 @@ export default function BoardPage() {
 
   if (!snapshot) {
     return (
-      <main className="grid h-dvh place-items-center bg-background">
+      <main className="flex h-dvh flex-col bg-background">
         <Connecting connected={connected} />
-        <p className="text-[2vw] text-muted-foreground">Connecting to the board</p>
+        <div className="grid flex-1 place-items-center">
+          <p className="text-[2vw] text-muted-foreground">Connecting to the board</p>
+        </div>
       </main>
     )
   }

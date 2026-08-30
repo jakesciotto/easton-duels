@@ -57,12 +57,12 @@ function Scorer({ binding }: { binding: MatBinding }) {
   const teams = snapshot?.teams ?? []
 
   return (
-    <main className="relative flex h-dvh select-none overflow-hidden bg-background">
+    <main className="relative flex h-dvh select-none flex-col overflow-hidden bg-background">
       <Connecting connected={connected} />
       {!s.current || !s.mat ? (
         <div className="grid flex-1 place-items-center text-2xl text-muted-foreground">No match on this mat. Waiting for the organizer.</div>
       ) : (
-        <>
+        <div className="flex min-h-0 flex-1">
           <ScoreSide
             side={s.current.a}
             team={teams.find(t => t.id === s.current!.a.teamId)}
@@ -83,7 +83,7 @@ function Scorer({ binding }: { binding: MatBinding }) {
             onTerminal={k => s.terminal(s.current!.b.athleteId, k)}
           />
           <ConfirmSheet sheet={s.sheet} match={s.current} teams={teams} busy={s.busy} error={s.error} onPick={s.pickWinner} onConfirm={s.confirm} onCancel={s.cancel} />
-        </>
+        </div>
       )}
       {s.error && !s.sheet && (
         <div role="alert" className="fixed inset-x-0 bottom-3 z-30 mx-auto w-fit max-w-[90%] rounded-lg border border-destructive/40 bg-card px-4 py-2 text-sm font-medium text-destructive shadow-dialog">
