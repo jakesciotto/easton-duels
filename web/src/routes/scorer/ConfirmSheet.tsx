@@ -19,8 +19,8 @@ function WinnerToggle({ name, color, pressed, onClick }: { name: string; color: 
   )
 }
 
-export function ConfirmSheet({ sheet, match, teams, busy, onPick, onConfirm, onCancel }: {
-  sheet: SheetState | null; match: MatchView; teams: TeamView[]; busy: boolean
+export function ConfirmSheet({ sheet, match, teams, busy, error, onPick, onConfirm, onCancel }: {
+  sheet: SheetState | null; match: MatchView; teams: TeamView[]; busy: boolean; error: string | null
   onPick: (athleteId: number) => void; onConfirm: () => void; onCancel: () => void
 }) {
   const winner = sheet && sheet.winner !== null ? (sheet.winner === match.a.athleteId ? match.a : match.b) : null
@@ -47,6 +47,7 @@ export function ConfirmSheet({ sheet, match, teams, busy, onPick, onConfirm, onC
               </div>
             </div>
           )}
+          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         </SheetBody>
         <SheetFooter className="gap-3">
           <Button type="button" size="lg" variant="secondary" className="touch h-14 flex-1" onClick={onCancel} disabled={busy}>Cancel</Button>

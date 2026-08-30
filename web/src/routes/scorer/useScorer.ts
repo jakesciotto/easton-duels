@@ -83,7 +83,13 @@ export function useScorer(binding: MatBinding, snapshot: Snapshot | null, connec
     if (r) setSheet(null)
   }
   const cancel = async () => {
-    if (sheet?.reason === 'terminal') await run((id, seq) => undoLast(id, binding.token, seq))
+    if (sheet?.reason === 'terminal') {
+      // A failed undo leaves pendingTerminal set on the server, so the sheet has to stay up
+      // (with the error surfaced there) rather than dropping back to a scoring screen that no
+      // longer matches server state.
+      const r = await run((id, seq) => undoLast(id, binding.token, seq))
+      if (!r) return
+    }
     setSheet(null)
   }
 

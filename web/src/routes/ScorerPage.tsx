@@ -15,7 +15,12 @@ function Scorer({ binding }: { binding: MatBinding }) {
   const s = useScorer(binding, snapshot, connected)
   const { remainingMs } = useClock(s.current?.clock ?? null, snapshot?.now ?? null)
   const [flash, setFlash] = useState(false)
-  const firedFor = useRef<number | null>(null)
+  // Which match we last reacted to an expiry for, and whether the clock has run since then.
+  // Gating on "ran since" (not just "already fired for this match id") means a genuine second
+  // expiry on the same match can still surface, while merely re-rendering after Cancel -- with
+  // the clock still frozen at zero -- can't retrigger it.
+  const firedForId = useRef<number | null>(null)
+  const ranSinceFire = useRef(false)
 
   useEffect(() => {
     const unlock = () => unlockAudio()
@@ -23,17 +28,21 @@ function Scorer({ binding }: { binding: MatBinding }) {
     return () => window.removeEventListener('pointerdown', unlock)
   }, [])
 
-  // Time up: beep and open the sheet once per match, once the server confirms the clock paused
+  // Time up: beep and flash once per expiry, once the server confirms the clock paused
   // (m.clock.elapsedMs only reflects that after a fresh snapshot, so this waits for the real thing
-  // rather than guessing off the locally ticking countdown).
+  // rather than guessing off the locally ticking countdown). Only opens the sheet if none is
+  // already open -- a referee mid-pick on an "End match" tie must not lose that pick when the
+  // clock happens to hit zero at the same moment.
   useEffect(() => {
     const m = s.current
+    if (m?.clock.startedAt) ranSinceFire.current = true
     if (!m || m.status !== 'live' || m.pendingTerminal || remainingMs > 0 || m.clock.elapsedMs < m.clock.lengthMs) return
-    if (firedFor.current === m.id) return
-    firedFor.current = m.id
+    if (firedForId.current === m.id && !ranSinceFire.current) return
+    firedForId.current = m.id
+    ranSinceFire.current = false
     beep()
     setFlash(true)
-    s.openEnd('time')
+    if (!s.sheet) s.openEnd('time')
   }, [remainingMs, s])
 
   // Kept in its own effect, keyed only on the flash flag, so a re-render elsewhere (another
@@ -73,10 +82,10 @@ function Scorer({ binding }: { binding: MatBinding }) {
             onTap={k => s.tap(s.current!.b.athleteId, k)}
             onTerminal={k => s.terminal(s.current!.b.athleteId, k)}
           />
-          <ConfirmSheet sheet={s.sheet} match={s.current} teams={teams} busy={s.busy} onPick={s.pickWinner} onConfirm={s.confirm} onCancel={s.cancel} />
+          <ConfirmSheet sheet={s.sheet} match={s.current} teams={teams} busy={s.busy} error={s.error} onPick={s.pickWinner} onConfirm={s.confirm} onCancel={s.cancel} />
         </>
       )}
-      {s.error && (
+      {s.error && !s.sheet && (
         <div role="alert" className="fixed inset-x-0 bottom-3 z-30 mx-auto w-fit max-w-[90%] rounded-lg border border-destructive/40 bg-card px-4 py-2 text-sm font-medium text-destructive shadow-dialog">
           {s.error}
         </div>

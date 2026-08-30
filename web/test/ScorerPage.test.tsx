@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
-import { render, screen, act, within } from '@testing-library/react'
+import { render, screen, act, within, cleanup } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { routes } from '@/router'
@@ -7,9 +7,11 @@ import { setMatBinding } from '@/lib/auth'
 import { beep } from '@/lib/sounds'
 import { fakeFetch, FakeEventSource, sampleMatch, sampleSnapshot } from './fakes'
 
+const T0 = Date.parse('2026-10-03T16:00:00.000Z')
+
 vi.mock('@/lib/sounds', () => ({ beep: vi.fn(), unlockAudio: vi.fn() }))
 beforeEach(() => { localStorage.clear(); setMatBinding({ eventId: 1, matId: 1, matNumber: 1, eventName: 'Fall Duels', token: 'mat-tok' }) })
-afterEach(() => { vi.unstubAllGlobals(); FakeEventSource.instances = [] })
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); FakeEventSource.instances = [] })
 
 function mount() {
   vi.stubGlobal('EventSource', FakeEventSource)
@@ -76,5 +78,82 @@ describe('ScorerPage', () => {
     act(() => es.emit('snapshot', sampleSnapshot({ mats: [{ id: 1, number: 1, current: expired, onDeck: [], bound: true }], matches: [expired] })))
     expect(await screen.findByRole('dialog')).toHaveTextContent('Time is up')
     expect(beep).toHaveBeenCalled()
+  })
+
+  it('keeps an in-progress End match tie pick when the clock expires under it', async () => {
+    fakeFetch(() => ({ json: {} }))
+    const es = mount()
+    act(() => es.emit('snapshot', sampleSnapshot()))
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'End match' }))
+    let sheet = await screen.findByRole('dialog')
+    expect(sheet).toHaveTextContent('End the match?')
+    // Picking a winner on a tie swaps the sheet from the two toggles to a decided summary,
+    // so once picked, "Mateo Rivera wins" is the signal the pick stuck (the toggle is gone).
+    await user.click(within(sheet).getByRole('button', { name: /Mateo Rivera/ }))
+    expect(within(sheet).getByText(/Mateo Rivera wins/)).toBeInTheDocument()
+    expect(within(sheet).getByRole('button', { name: 'Confirm' })).toBeEnabled()
+
+    // The clock reaches zero while the sheet from End match is still open and mid-pick.
+    const expired = sampleMatch({ clock: { elapsedMs: 300_000, startedAt: null, lengthMs: 300_000 } })
+    act(() => es.emit('snapshot', sampleSnapshot({ mats: [{ id: 1, number: 1, current: expired, onDeck: [], bound: true }], matches: [expired] })))
+
+    expect(beep).toHaveBeenCalled()
+    sheet = screen.getByRole('dialog')
+    expect(sheet).toHaveTextContent('End the match?')
+    expect(within(sheet).getByText(/Mateo Rivera wins/)).toBeInTheDocument()
+    expect(within(sheet).getByRole('button', { name: 'Confirm' })).toBeEnabled()
+  })
+
+  it('does not auto-retry a 409 sequence conflict, and sends the corrected seq on the next tap', async () => {
+    let scoreAttempts = 0
+    const f = fakeFetch(url => {
+      if (url !== '/api/matches/10/events') return { json: {} }
+      scoreAttempts++
+      if (scoreAttempts === 1) {
+        return { status: 409, json: { error: { code: 'sequence', message: 'stale sequence', currentSeq: 7, match: sampleMatch({ lastSeq: 7 }) } } }
+      }
+      return { json: { match: sampleMatch({ lastSeq: 8 }), version: 5 } }
+    })
+    const es = mount()
+    act(() => es.emit('snapshot', sampleSnapshot()))
+    const left = screen.getByRole('region', { name: 'Mateo Rivera' })
+    const takedown = within(left).getByRole('button', { name: /Takedown/ })
+    const user = userEvent.setup()
+
+    await user.click(takedown)
+    await screen.findByRole('alert')
+    expect(scoreAttempts).toBe(1)
+
+    await user.click(takedown)
+    await vi.waitFor(() => expect(scoreAttempts).toBe(2))
+    const indices = f.calls.map((c, i) => (c.url === '/api/matches/10/events' ? i : -1)).filter(i => i >= 0)
+    expect(indices).toHaveLength(2)
+    expect(f.body(indices[1])).toMatchObject({ type: 'score', athleteId: 100, actionKey: 'takedown', lastSeq: 7 })
+  })
+
+  it('clears the expiry flash after its timeout', () => {
+    vi.useFakeTimers({ now: T0 })
+    fakeFetch(() => ({ json: {} }))
+    const es = mount()
+    const expired = sampleMatch({ clock: { elapsedMs: 300_000, startedAt: null, lengthMs: 300_000 } })
+    act(() => es.emit('snapshot', sampleSnapshot({ mats: [{ id: 1, number: 1, current: expired, onDeck: [], bound: true }], matches: [expired] })))
+    const center = screen.getByText('0:00').closest('div')!
+    expect(center).toHaveClass('bg-warn/10')
+    act(() => { vi.advanceTimersByTime(1500) })
+    expect(center).not.toHaveClass('bg-warn/10')
+  })
+
+  it('heartbeats at mount, again after 20 seconds, and stops after unmount', () => {
+    vi.useFakeTimers({ now: T0 })
+    const f = fakeFetch(() => ({ json: {} }))
+    mount()
+    const heartbeats = () => f.calls.filter(c => c.url === '/api/mats/1/heartbeat')
+    expect(heartbeats()).toHaveLength(1)
+    act(() => { vi.advanceTimersByTime(20_000) })
+    expect(heartbeats()).toHaveLength(2)
+    cleanup()
+    act(() => { vi.advanceTimersByTime(20_000) })
+    expect(heartbeats()).toHaveLength(2)
   })
 })
