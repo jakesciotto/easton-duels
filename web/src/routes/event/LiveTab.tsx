@@ -13,6 +13,7 @@ import { ResultDialog } from './ResultDialog'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
+import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 interface ConnectInfo { url: string; matCode: string }
 
@@ -21,6 +22,7 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
   const { snapshot, connected } = useSnapshot(eventId)
   const [connect, setConnect] = useState<ConnectInfo | null>(null)
   const [editing, setEditing] = useState<MatchView | null>(null)
+  const [finishOpen, setFinishOpen] = useState(false)
 
   useEffect(() => {
     let ignore = false
@@ -31,9 +33,20 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
   const status = useAdminMutation(eventId, (s: 'live' | 'done') => adminApi(`/api/events/${eventId}`, { method: 'PATCH', body: { status: s } }))
   const act = useAdminMutation(eventId, (v: { id: number; action: 'reopen' | 'skip' }) => adminApi(`/api/matches/${v.id}/${v.action}`, { method: 'POST' }))
   // Only the most recently started action's error stays visible.
-  const runStatus = (s: 'live' | 'done') => { act.reset(); status.mutate(s) }
+  const runStart = () => { act.reset(); status.mutate('live') }
   const runAct = (v: { id: number; action: 'reopen' | 'skip' }) => { status.reset(); act.mutate(v) }
-  const error = status.error ?? act.error
+  // Cancel, the backdrop, Escape, and a successful finish all close through here, so a
+  // failed finish's message never outlives the dialog it was shown in.
+  const closeFinish = () => {
+    setFinishOpen(false)
+    status.reset()
+  }
+  const runFinish = () => {
+    act.reset()
+    status.mutate('done', { onSuccess: closeFinish })
+  }
+  // While the dialog is open a failed finish is shown inside it only.
+  const error = (finishOpen ? null : status.error) ?? act.error
   const matUrl = connect ? `${connect.url}/mat?event=${eventId}` : ''
 
   const teamColor = (teamId: number | null) => detail.teams.find(t => t.id === teamId)?.color ?? detail.teams[0].color
@@ -61,15 +74,9 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
               <span className="label">Event status</span>
               <Badge variant={statusVariant}>{detail.event.status}</Badge>
             </div>
-            {detail.event.status === 'setup' && <Button onClick={() => runStatus('live')} disabled={status.isPending}>Start event</Button>}
+            {detail.event.status === 'setup' && <Button onClick={runStart} disabled={status.isPending}>Start event</Button>}
             {detail.event.status === 'live' && (
-              <Button
-                variant="destructive"
-                onClick={() => { if (confirm('Finish the event? The board shows the final result.')) runStatus('done') }}
-                disabled={status.isPending}
-              >
-                Finish event
-              </Button>
+              <Button variant="destructive" onClick={() => setFinishOpen(true)} disabled={status.isPending}>Finish event</Button>
             )}
             {error && <p role="alert" className="text-[13px] text-destructive">{error.message}</p>}
           </CardContent>
@@ -140,9 +147,9 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
               </tr>
             </thead>
             <tbody>
-              {(snapshot?.matches ?? []).filter(m => m.status !== 'pending').map((m, i) => (
-                <tr key={m.id} aria-label={`Match ${i + 1}`} className="border-b border-border last:border-0">
-                  <td className="px-3 py-2 font-mono tabular text-faint">{i + 1}</td>
+              {(snapshot?.matches ?? []).filter(m => m.status !== 'pending').map(m => (
+                <tr key={m.id} aria-label={`Match ${m.orderIndex + 1}`} className="border-b border-border last:border-0">
+                  <td className="px-3 py-2 font-mono tabular text-faint">{m.orderIndex + 1}</td>
                   <td className="px-3 py-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <TeamDot color={teamColor(m.a.teamId)} name={m.a.name} />
@@ -172,6 +179,19 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
         </div>
       </div>
 
+      <Dialog open={finishOpen} onOpenChange={o => { if (o) setFinishOpen(true); else closeFinish() }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Finish the event?</DialogTitle></DialogHeader>
+          <DialogBody>
+            <p className="text-sm text-soft">The board switches to the final result. Matches that are still running stay where they are.</p>
+            {status.error && <p role="alert" className="text-[13px] text-destructive">{status.error.message}</p>}
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={closeFinish}>Cancel</Button>
+            <Button type="button" variant="destructive" disabled={status.isPending} onClick={runFinish}>Finish event</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <ResultDialog detail={detail} match={editing} open={editing !== null} onOpenChange={o => { if (!o) setEditing(null) }} />
     </div>
   )
