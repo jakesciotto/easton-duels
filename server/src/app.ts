@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import type { AppContext, Env } from './context.js'
 import { attachAuth, errorJson } from './auth/middleware.js'
+import { lanIp } from './lib/lanIp.js'
 import { SeqConflict, MatchStateError, DecisionRequired } from './match/events.js'
 import { authRoutes } from './routes/auth.js'
 import { boardRoutes } from './routes/board.js'
@@ -22,6 +23,8 @@ export function createApp(ctx: AppContext) {
   })
   app.use('/api/*', attachAuth)
   app.get('/api/health', c => c.json({ ok: true, version: VERSION }))
+  // Public: the address an iPad has to type, for pages served to a laptop on localhost.
+  app.get('/api/lan', c => c.json({ url: `http://${lanIp()}:${c.get('ctx').port}` }))
   app.route('/api', authRoutes)
   app.route('/api', boardRoutes)
   app.route('/api', eventRoutes)
