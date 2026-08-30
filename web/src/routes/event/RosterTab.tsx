@@ -166,17 +166,19 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
       <PasteRosterDialog detail={detail} open={pasteOpen} onOpenChange={setPasteOpen} />
       <SyncRosterDialog detail={detail} open={syncOpen} onOpenChange={setSyncOpen} />
       <Dialog open={removing !== null} onOpenChange={o => { if (!o) closeRemove() }}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Remove {removing ? athleteName(removing) : ''}?</DialogTitle></DialogHeader>
-          <DialogBody>
-            <p className="text-sm text-soft">This takes the kid off this event's roster. Kids already placed in a match cannot be removed.</p>
-            {remove.error && <p role="alert" className="text-[13px] text-destructive">{remove.error.message}</p>}
-          </DialogBody>
-          <DialogFooter>
-            <Button type="button" variant="secondary" onClick={closeRemove}>Cancel</Button>
-            <Button type="button" variant="destructive" disabled={remove.isPending} onClick={runRemove}>Remove</Button>
-          </DialogFooter>
-        </DialogContent>
+        {removing && (
+          <DialogContent>
+            <DialogHeader><DialogTitle>Remove {athleteName(removing)}?</DialogTitle></DialogHeader>
+            <DialogBody>
+              <p className="text-sm text-soft">This takes the kid off this event's roster. Kids already placed in a match cannot be removed.</p>
+              {remove.error && <p role="alert" className="text-[13px] text-destructive">{remove.error.message}</p>}
+            </DialogBody>
+            <DialogFooter>
+              <Button type="button" variant="secondary" onClick={closeRemove}>Cancel</Button>
+              <Button type="button" variant="destructive" disabled={remove.isPending} onClick={runRemove}>Remove</Button>
+            </DialogFooter>
+          </DialogContent>
+        )}
       </Dialog>
       <div className="grid gap-4 lg:grid-cols-3">
         <Column title={teamA.name} roleLabel="Team A" color={teamA.color} teamId={teamA.id} kids={byTeam(teamA.id)} selected={selected} onSelect={onSelect} onPatch={(id, body) => patch.mutate({ id, body })} onMove={onMove} onRemove={setRemoving} />
