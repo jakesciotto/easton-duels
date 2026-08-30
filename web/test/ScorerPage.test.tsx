@@ -50,6 +50,32 @@ describe('ScorerPage', () => {
     expect(f.body(f.calls.findIndex(c => c.url === '/api/matches/10/end'))).toMatchObject({ lastSeq: 1 })
   })
 
+  it('keeps the confirm sheet open when the undo behind Cancel fails', async () => {
+    let undos = 0
+    fakeFetch(url => {
+      if (url !== '/api/matches/10/events/last') {
+        return { json: { match: sampleMatch({ lastSeq: 1, pendingTerminal: { athleteId: 200, actionKey: 'pin' } }), version: 2 } }
+      }
+      undos++
+      if (undos === 1) return { status: 409, json: { error: { code: 'match_state', message: 'nothing to undo' } } }
+      return { json: { match: sampleMatch({ lastSeq: 2 }), version: 4 } }
+    })
+    const es = mount()
+    act(() => es.emit('snapshot', sampleSnapshot()))
+    const user = userEvent.setup()
+    await user.click(within(screen.getByRole('region', { name: 'Olivia Kim' })).getByRole('button', { name: 'Pin' }))
+    const sheet = await screen.findByRole('dialog')
+
+    // The terminal is still pending on the server, so a failed undo has to leave the sheet up.
+    await user.click(within(sheet).getByRole('button', { name: 'Cancel' }))
+    expect(await within(sheet).findByRole('alert')).toHaveTextContent('nothing to undo')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+    await user.click(within(sheet).getByRole('button', { name: 'Cancel' }))
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(undos).toBe(2)
+  })
+
   it('asks for a decision on a tie and sends the picked winner', async () => {
     const f = fakeFetch(() => ({ json: { match: sampleMatch({ status: 'done' }), version: 3 } }))
     const es = mount()
