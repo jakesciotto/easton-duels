@@ -124,12 +124,19 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
   const pendingCount = pendingIds.length
   const hasPending = pendingCount > 0
 
+  // Every path that closes the confirm dialog (Cancel, backdrop/Escape via
+  // onOpenChange, and a successful regenerate) routes through here, so a failed
+  // generate's error never outlives the dialog it was shown in.
+  const closeConfirm = () => {
+    setConfirmOpen(false)
+    generate.reset()
+  }
   const runGenerate = () => {
     resetExcept('generate')
     generate.mutate(undefined, {
       onSuccess: r => {
         setSummary(`${r.created} matches created. ${r.unpairedA.length + r.unpairedB.length} kids unpaired.`)
-        setConfirmOpen(false)
+        closeConfirm()
       },
     })
   }
@@ -176,7 +183,10 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
 
   const inMatch = new Set(detail.matches.flatMap(m => [m.athleteAId, m.athleteBId]))
   const unpaired = detail.teams.map(t => ({ team: t, kids: detail.athletes.filter(a => a.teamId === t.id && !inMatch.has(a.id)) }))
-  const error = generate.error ?? patch.error ?? del.error ?? reorder.error
+  // While the confirm dialog is open, a failed generate is shown inside the
+  // dialog only; the outer banner picks it back up once the dialog is closed
+  // (closeConfirm resets it, so a successful or cancelled close leaves nothing).
+  const error = (confirmOpen ? null : generate.error) ?? patch.error ?? del.error ?? reorder.error
 
   return (
     <div className="grid gap-4">
@@ -186,7 +196,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
         {summary && <span aria-live="polite" className="text-[13px] text-faint">{summary}</span>}
         {error && <p role="alert" className="text-[13px] text-destructive">{error.message}</p>}
       </div>
-      <Dialog open={confirmOpen} onOpenChange={o => { setConfirmOpen(o); if (!o) generate.reset() }}>
+      <Dialog open={confirmOpen} onOpenChange={o => { if (o) setConfirmOpen(true); else closeConfirm() }}>
         <DialogContent>
           <DialogHeader><DialogTitle>Replace {pendingCount} pending {pendingCount === 1 ? 'match' : 'matches'}?</DialogTitle></DialogHeader>
           <DialogBody>
@@ -194,7 +204,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
             {generate.error && <p role="alert" className="text-[13px] text-destructive">{generate.error.message}</p>}
           </DialogBody>
           <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => setConfirmOpen(false)}>Cancel</Button>
+            <Button type="button" variant="secondary" onClick={closeConfirm}>Cancel</Button>
             <Button type="button" variant="destructive" disabled={generate.isPending} onClick={runGenerate}>Regenerate</Button>
           </DialogFooter>
         </DialogContent>

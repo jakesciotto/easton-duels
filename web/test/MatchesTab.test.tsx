@@ -35,9 +35,9 @@ const detail: EventDetail = {
   ],
 }
 
-function mount() {
+function mount(d: EventDetail = detail) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  render(<QueryClientProvider client={qc}><MatchesTab detail={detail} /></QueryClientProvider>)
+  render(<QueryClientProvider client={qc}><MatchesTab detail={d} /></QueryClientProvider>)
 }
 
 describe('MatchesTab', () => {
@@ -68,6 +68,35 @@ describe('MatchesTab', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(f.calls.some(c => c.url === '/api/events/7/matches/generate')).toBe(false)
+  })
+
+  it('generates immediately with no confirm dialog when there are no pending matches', async () => {
+    const noPending: EventDetail = {
+      ...detail,
+      matches: detail.matches.map(m => ({ ...m, status: 'done', winnerAthleteId: m.athleteAId, winType: 'points' })),
+    }
+    const f = fakeFetch(() => ({ json: { created: 3, unpairedA: [], unpairedB: [] } }))
+    mount(noPending)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/events/7/matches/generate')).toBe(true))
+    expect(await screen.findByText(/3 matches created/)).toBeInTheDocument()
+  })
+
+  it('cancelling the confirm dialog clears a failed generate error from both the dialog and the banner', async () => {
+    fakeFetch(() => ({ status: 500, json: { error: { code: 'internal', message: 'internal error' } } }))
+    mount()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Regenerate' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Regenerate' }))
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('internal error')
+    // Only the dialog's own alert is present while it's open, not a second copy in the outer banner.
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('swaps a kid through the picker and moves a pending row down, past the other pending row', async () => {
