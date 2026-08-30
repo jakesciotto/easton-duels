@@ -12,13 +12,17 @@ import { List, ListRow } from '@/components/ui/list'
 export default function MatPickPage() {
   const [params] = useSearchParams()
   const navigate = useNavigate()
-  const [eventId, setEventId] = useState(params.get('event') ?? '')
+  const eventParam = params.get('event')
+  const eventQueryId = eventParam ? Number(eventParam) : null
+  const [eventId, setEventId] = useState(eventParam ?? '')
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [matId, setMatId] = useState<number | null>(null)
   const [code, setCode] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [binding, setBinding] = useState(() => getMatBinding())
+  const boundToCurrentEvent = binding !== null && (eventQueryId === null || binding.eventId === eventQueryId)
+  const otherEventBinding = binding !== null && !boundToCurrentEvent ? binding : null
 
   useEffect(() => {
     if (!eventId) return
@@ -49,7 +53,7 @@ export default function MatPickPage() {
     }
   }
 
-  if (binding) {
+  if (binding && boundToCurrentEvent) {
     return (
       <main className="grid min-h-dvh place-items-center p-6">
         <Card className="w-full max-w-sm">
@@ -71,7 +75,20 @@ export default function MatPickPage() {
       <Card className="w-full max-w-md">
         <CardContent className="grid gap-4">
           <h1 className="text-[22px] font-semibold tracking-[-0.035em]">Pick your mat</h1>
-          {!params.get('event') && (
+          {otherEventBinding && (
+            <div className="flex items-center gap-3 rounded-lg border border-border bg-card p-2.5 pl-3.5 text-[13px] text-soft">
+              <span>This device is bound to {otherEventBinding.eventName}, mat {otherEventBinding.matNumber}.</span>
+              <Button
+                size="sm"
+                variant="destructive"
+                className="ml-auto shrink-0"
+                onClick={() => { clearMatBinding(); setBinding(null) }}
+              >
+                Unbind this device
+              </Button>
+            </div>
+          )}
+          {!eventParam && (
             <div className="grid gap-1.5">
               <Label htmlFor="ev">Event number</Label>
               <Input
@@ -84,25 +101,29 @@ export default function MatPickPage() {
             </div>
           )}
           {snapshot && <p className="text-[13px] text-soft">{snapshot.event.name}</p>}
-          {snapshot && snapshot.mats.length > 0 && (
-            <List>
-              {snapshot.mats.map(m => (
-                <ListRow key={m.id} className="flex items-center justify-between gap-3">
-                  <span className="font-medium">Mat {m.number}</span>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="secondary"
-                    aria-pressed={matId === m.id}
-                    aria-label={`Bind mat ${m.number}`}
-                    onClick={() => setMatId(m.id)}
-                    className="aria-pressed:bg-primary aria-pressed:text-primary-foreground"
-                  >
-                    Bind
-                  </Button>
-                </ListRow>
-              ))}
-            </List>
+          {snapshot && (
+            snapshot.mats.length > 0 ? (
+              <List>
+                {snapshot.mats.map(m => (
+                  <ListRow key={m.id} className="flex items-center justify-between gap-3">
+                    <span className="font-medium">Mat {m.number}</span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      aria-pressed={matId === m.id}
+                      aria-label={`Bind mat ${m.number}`}
+                      onClick={() => setMatId(m.id)}
+                      className="aria-pressed:bg-primary aria-pressed:text-primary-foreground"
+                    >
+                      Bind
+                    </Button>
+                  </ListRow>
+                ))}
+              </List>
+            ) : (
+              <p className="text-[13px] text-faint">This event has no mats yet.</p>
+            )
           )}
           <form onSubmit={bind} className="grid gap-3">
             <Label htmlFor="code">Mat code</Label>

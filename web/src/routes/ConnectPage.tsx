@@ -19,7 +19,7 @@ export default function ConnectPage() {
           {target ? (
             <>
               <QrCode text={target} size={240} />
-              <p className="break-all font-mono text-sm text-soft">{target}</p>
+              <p className="break-all font-mono text-2xl text-foreground">{target}</p>
               <p className="text-[13px] text-faint">Scan, pick your mat, and enter the mat code from the organizer.</p>
             </>
           ) : (
