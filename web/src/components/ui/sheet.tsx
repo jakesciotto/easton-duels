@@ -93,7 +93,10 @@ function SheetBody({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="sheet-body"
-      className={cn("grid gap-4 overflow-y-auto px-5 py-4", className)}
+      className={cn(
+        "grid max-h-[calc(100dvh-10rem)] gap-4 overflow-y-auto px-5 py-4",
+        className
+      )}
       {...props}
     />
   )
