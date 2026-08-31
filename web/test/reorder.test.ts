@@ -7,4 +7,10 @@ describe('moveId', () => {
     expect(moveId([1, 2, 3, 4], 3, 0)).toEqual([4, 1, 2, 3])
     expect(moveId([1, 2, 3], 1, 1)).toEqual([1, 2, 3])
   })
+  it('is a no-op when from or to is out of range', () => {
+    expect(moveId([1, 2, 3], -1, 1)).toEqual([1, 2, 3])
+    expect(moveId([1, 2, 3], 1, 3)).toEqual([1, 2, 3])
+    expect(moveId([1, 2, 3], 3, 0)).toEqual([1, 2, 3])
+    expect(moveId([1, 2, 3], 0, -1)).toEqual([1, 2, 3])
+  })
 })
