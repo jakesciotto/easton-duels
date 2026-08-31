@@ -15,7 +15,7 @@ async function build(): Promise<App> {
   const app = createApp({
     port: 0, db, secret: await getOrCreateSecret(db),
     adminPin: validateAdminPin(process.env.ADMIN_PIN),
-    roster: rosterFromEnv(process.env),
+    roster: rosterFromEnv(process.env, { syncBudgetMs: 280_000 }),
     publicUrl: process.env.PUBLIC_URL,
   })
   app.all('*', c => c.json({ error: { code: 'not_found', message: 'not found' } }, 404))

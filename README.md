@@ -40,6 +40,10 @@ Set these as Vercel project environment variables:
 - `WL_KIDS_CATEGORY`: optional. Overrides the default kids and IBJJF belts filter.
 - `WL_SYNC_MAX_POLLS`: optional. Caps roster sync polling so a sync fits inside the function's
   `maxDuration`.
+- `SYNC_DEADLINE_MS`: optional. Wall-clock budget for one roster sync across every location,
+  default 280000 in cloud mode. When it runs out the sync answers with the `wl_error` envelope
+  naming how many locations finished, instead of being killed at `maxDuration`. LAN mode has no
+  budget unless this is set.
 - `LEADERBOARD_SUPABASE_URL`, `LEADERBOARD_SUPABASE_KEY`: the easton-leaderboard Supabase project,
   for the ERP join. Leave both empty to skip it.
 

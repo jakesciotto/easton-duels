@@ -29,12 +29,21 @@ rosterRoutes.post('/events/:eventId/roster/sync', requireAdmin, validate('json',
   const { kBusinesses } = c.req.valid('json')
   const warnings: string[] = []
   const records: WlBeltRecord[] = []
+  // One report per location, each of which can poll for minutes. Without an overall budget
+  // a multi-location sync outlives the function's time limit and the admin dialog sees a
+  // platform timeout instead of an envelope it can render.
+  const deadline = roster.syncBudgetMs === null ? null : Date.now() + roster.syncBudgetMs
+  let done = 0
   try {
     const byK = new Map((await roster.wl.listLocations()).map(l => [l.kBusiness, l]))
     for (const k of kBusinesses) {
       const loc = byK.get(k)
       if (!loc) return errorJson(c, 422, 'validation', `unknown location ${k}`)
+      if (deadline !== null && Date.now() > deadline) {
+        return errorJson(c, 503, 'wl_error', `roster sync ran out of time after ${done} of ${kBusinesses.length} locations; sync fewer at once`)
+      }
       records.push(...await roster.wl.fetchKidsBeltRecords(k, loc.title))
+      done += 1
     }
   } catch (e) {
     return errorJson(c, 503, 'wl_error', e instanceof Error ? e.message : 'WellnessLiving request failed')

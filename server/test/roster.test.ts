@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { deriveKidsBelt, kidsQuery } from '../src/roster/belts.js'
 import { ageFromAgeGroup, weightFromWeightClass } from '../src/roster/parse.js'
 import { makeCompetitorId } from '../src/roster/slug.js'
@@ -76,10 +76,17 @@ describe('buildCandidates', () => {
 
 describe('rosterFromEnv', () => {
   it('builds clients only when every variable is present', () => {
-    expect(rosterFromEnv({})).toEqual({ wl: null, leaderboard: null })
+    expect(rosterFromEnv({})).toEqual({ wl: null, leaderboard: null, syncBudgetMs: null })
     const full = rosterFromEnv({ WL_CLIENT_ID: 'a', WL_CLIENT_SECRET: 'b', WL_BUSINESS: '1', LEADERBOARD_SUPABASE_URL: 'https://x.supabase.co', LEADERBOARD_SUPABASE_KEY: 'k' })
     expect(full.wl).not.toBeNull()
     expect(full.leaderboard).toEqual({ url: 'https://x.supabase.co', key: 'k' })
+  })
+
+  it('takes the sync budget from the environment, then from the caller default', () => {
+    expect(rosterFromEnv({ SYNC_DEADLINE_MS: '90000' }, { syncBudgetMs: 280_000 }).syncBudgetMs).toBe(90_000)
+    expect(rosterFromEnv({}, { syncBudgetMs: 280_000 }).syncBudgetMs).toBe(280_000)
+    expect(rosterFromEnv({ SYNC_DEADLINE_MS: 'soon' }, { syncBudgetMs: 280_000 }).syncBudgetMs).toBe(280_000)
+    expect(rosterFromEnv({ SYNC_DEADLINE_MS: '0' }).syncBudgetMs).toBeNull()
   })
 })
 
@@ -100,7 +107,7 @@ describe('roster routes', () => {
   })
 
   it('returns candidates and a warning when the leaderboard is off', async () => {
-    const { app, db, adminToken } = await createTestApp({ roster: { wl: fakeWl, leaderboard: null } })
+    const { app, db, adminToken } = await createTestApp({ roster: { wl: fakeWl, leaderboard: null, syncBudgetMs: null } })
     const s = await seedEvent(db)
     const locs = await call(app, 'GET', `/api/events/${s.eventId}/wl-locations`, undefined, adminToken)
     expect(locs.body[0].kBusiness).toBe('100001')
@@ -109,5 +116,46 @@ describe('roster routes', () => {
     expect(r.body.candidates[0]).toMatchObject({ wlUid: '9', belt: 'grey', wlLocation: 'North', erp: null })
     expect(r.body.warnings[0]).toMatch(/not configured/)
     expect((await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['1'] }, adminToken)).status).toBe(422)
+  })
+
+  it('gives up between locations once the sync budget is spent', async () => {
+    // Real start point: the admin token's expiry is checked against this same clock.
+    const clock = { ms: Date.now() }
+    const slowWl = {
+      async listLocations() {
+        return ['100001', '100002', '100003'].map((kBusiness, i) => ({ kBusiness, title: `Site ${i + 1}`, city: 'Northtown' }))
+      },
+      async fetchKidsBeltRecords(kBusiness: string, location: string) {
+        clock.ms += 200_000
+        return [{ uid: kBusiness, kBusiness, location, firstName: 'Zoe', lastName: 'Martin', rankTitle: 'Grey Belt', categoryTitle: 'Kids IBJJF Belts', promotedAt: null }]
+      },
+    }
+    const { app, db, adminToken } = await createTestApp({ roster: { wl: slowWl, leaderboard: null, syncBudgetMs: 280_000 } })
+    const s = await seedEvent(db)
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => clock.ms)
+    try {
+      const r = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['100001', '100002', '100003'] }, adminToken)
+      expect(r.status).toBe(503)
+      expect(r.body.error.code).toBe('wl_error')
+      expect(r.body.error.message).toContain('2 of 3 locations')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('syncs every location when no budget is set', async () => {
+    const slowWl = {
+      async listLocations() {
+        return ['100001', '100002'].map((kBusiness, i) => ({ kBusiness, title: `Site ${i + 1}`, city: 'Northtown' }))
+      },
+      async fetchKidsBeltRecords(kBusiness: string, location: string) {
+        return [{ uid: kBusiness, kBusiness, location, firstName: 'Zoe', lastName: `Martin${kBusiness}`, rankTitle: 'Grey Belt', categoryTitle: 'Kids IBJJF Belts', promotedAt: null }]
+      },
+    }
+    const { app, db, adminToken } = await createTestApp({ roster: { wl: slowWl, leaderboard: null, syncBudgetMs: null } })
+    const s = await seedEvent(db)
+    const r = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['100001', '100002'] }, adminToken)
+    expect(r.status).toBe(200)
+    expect(r.body.candidates).toHaveLength(2)
   })
 })

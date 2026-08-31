@@ -10,7 +10,7 @@ export async function createTestApp(overrides: Partial<AppContext> = {}) {
   const db = overrides.db ?? await freshDb()
   const ctx: AppContext = {
     port: 0, db, secret: TEST_SECRET, adminPin: TEST_PIN,
-    roster: { wl: null, leaderboard: null },
+    roster: { wl: null, leaderboard: null, syncBudgetMs: null },
     ...overrides,
   }
   const app = createApp(ctx)
