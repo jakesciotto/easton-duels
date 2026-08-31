@@ -36,6 +36,21 @@ export default async function handler(req: { url?: string }, res: { statusCode: 
   } catch (e) {
     out.clientError = String(e).slice(0, 200)
   }
+  const steps: Record<string, unknown> = {}
+  try {
+    const { createDb, dbUrlFromEnv, initDb, getOrCreateSecret } = await import('../server/src/db/client.js')
+    const { checkLimit } = await import('../server/src/auth/dbRateLimit.js')
+    const opts = dbUrlFromEnv(process.env)
+    steps.url = opts.url.slice(0, 12)
+    steps.hasToken = typeof opts.authToken === 'string' && opts.authToken.length > 0
+    const db = createDb(opts)
+    try { await initDb(db, opts); steps.initDb = 'ok' } catch (e) { steps.initDb = String(e).slice(0, 120) }
+    try { steps.secretLen = (await getOrCreateSecret(db)).length } catch (e) { steps.secret = String(e).slice(0, 120) }
+    try { steps.checkLimit = await checkLimit(db, 'pin', 'diag-probe', Date.now()) } catch (e) { steps.checkLimit = String(e).slice(0, 200) }
+  } catch (e) {
+    steps.import = String(e).slice(0, 200)
+  }
+  out.appPath = steps
   res.statusCode = 200
   res.setHeader('content-type', 'application/json')
   res.end(JSON.stringify(out))
