@@ -33,5 +33,18 @@ async function buildApp() {
 export const config = { api: { bodyParser: false } }
 
 export default async function handler(req: unknown, res: unknown) {
+  // Temporary incident branch: report this function's own env view, secret-free.
+  const r = req as { url?: string }
+  const w = res as { statusCode: number; setHeader: (k: string, v: string) => void; end: (b: string) => void }
+  if (r.url?.includes('__envtail=1')) {
+    const key = new URL(r.url, 'http://x').searchParams.get('key')
+    if (key && key === process.env.ADMIN_PIN) {
+      const t = process.env.TURSO_AUTH_TOKEN ?? ''
+      w.statusCode = 200
+      w.setHeader('content-type', 'application/json')
+      w.end(JSON.stringify({ fn: 'index', node: process.version, urlHost: (process.env.TURSO_DATABASE_URL ?? '').replace('libsql://', ''), tokenLen: t.length, tokenTail: t.slice(-6) }))
+      return
+    }
+  }
   return handle(await buildApp())(req as never, res as never)
 }
