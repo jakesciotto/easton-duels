@@ -13,16 +13,33 @@ vi.mock('@/lib/sounds', () => ({ beep: vi.fn(), unlockAudio: vi.fn() }))
 beforeEach(() => { localStorage.clear(); setMatBinding({ eventId: 1, matId: 1, matNumber: 1, eventName: 'Fall Duels', token: 'mat-tok' }) })
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); FakeEventSource.instances = [] })
 
-function mount() {
+// The scorer route is lazy-loaded, so mounting needs to flush until the chunk resolves and the
+// component's effect creates the stream. Fake timers (used by some tests below) don't intercept
+// promise microtasks, but they do intercept setTimeout, so the flush picks the timer-aware form.
+async function flushOnce() {
+  if (vi.isFakeTimers()) {
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+  } else {
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+  }
+}
+
+async function mount() {
   vi.stubGlobal('EventSource', FakeEventSource)
   render(<RouterProvider router={createMemoryRouter(routes, { initialEntries: ['/mat/1'] })} />)
+  // Wait for the route's Suspense fallback to be replaced by the real page (not just for the
+  // EventSource side effect to exist) -- under heavier parallel test load the two can land in
+  // different ticks, and querying the DOM while the fallback is still up finds its "Loading"
+  // status text instead of the real page's.
+  for (let i = 0; i < 50 && screen.queryByRole('status', { name: 'Loading' }); i++) await flushOnce()
+  for (let i = 0; i < 50 && FakeEventSource.instances.length === 0; i++) await flushOnce()
   return FakeEventSource.instances[0]
 }
 
 describe('ScorerPage', () => {
   it('disables scoring until the stream connects, then posts a tap with the match seq', async () => {
     const f = fakeFetch(() => ({ json: { match: sampleMatch({ lastSeq: 1, a: { ...sampleMatch().a, score: 2 } }), version: 2 } }))
-    const es = mount()
+    const es = await mount()
     expect(await screen.findByRole('status')).toHaveTextContent(/Reconnecting/)
     act(() => es.emit('snapshot', sampleSnapshot()))
     const left = screen.getByRole('region', { name: 'Mateo Rivera' })
@@ -39,7 +56,7 @@ describe('ScorerPage', () => {
     const f = fakeFetch(url => url.endsWith('/end')
       ? { json: { match: sampleMatch({ status: 'done', result: { winnerAthleteId: 200, winType: 'submission' } }), version: 3 } }
       : { json: { match: sampleMatch({ lastSeq: 1, pendingTerminal: { athleteId: 200, actionKey: 'pin' } }), version: 2 } })
-    const es = mount()
+    const es = await mount()
     act(() => es.emit('snapshot', sampleSnapshot()))
     const user = userEvent.setup()
     await user.click(within(screen.getByRole('region', { name: 'Olivia Kim' })).getByRole('button', { name: 'Pin' }))
@@ -60,7 +77,7 @@ describe('ScorerPage', () => {
       if (undos === 1) return { status: 409, json: { error: { code: 'match_state', message: 'nothing to undo' } } }
       return { json: { match: sampleMatch({ lastSeq: 2 }), version: 4 } }
     })
-    const es = mount()
+    const es = await mount()
     act(() => es.emit('snapshot', sampleSnapshot()))
     const user = userEvent.setup()
     await user.click(within(screen.getByRole('region', { name: 'Olivia Kim' })).getByRole('button', { name: 'Pin' }))
@@ -78,7 +95,7 @@ describe('ScorerPage', () => {
 
   it('asks for a decision on a tie and sends the picked winner', async () => {
     const f = fakeFetch(() => ({ json: { match: sampleMatch({ status: 'done' }), version: 3 } }))
-    const es = mount()
+    const es = await mount()
     act(() => es.emit('snapshot', sampleSnapshot()))
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'End match' }))
@@ -90,16 +107,16 @@ describe('ScorerPage', () => {
     expect(f.body(f.calls.findIndex(c => c.url === '/api/matches/10/end'))).toMatchObject({ lastSeq: 0, winnerAthleteId: 100 })
   })
 
-  it('shows the empty state when the mat has no match', () => {
+  it('shows the empty state when the mat has no match', async () => {
     fakeFetch(() => ({ json: {} }))
-    const es = mount()
+    const es = await mount()
     act(() => es.emit('snapshot', sampleSnapshot({ mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: true }], matches: [] })))
     expect(screen.getByText(/No match on this mat/)).toBeInTheDocument()
   })
 
   it('beeps and opens the confirm sheet once the server confirms the clock has expired', async () => {
     fakeFetch(() => ({ json: {} }))
-    const es = mount()
+    const es = await mount()
     const expired = sampleMatch({ clock: { elapsedMs: 300_000, startedAt: null, lengthMs: 300_000 } })
     act(() => es.emit('snapshot', sampleSnapshot({ mats: [{ id: 1, number: 1, current: expired, onDeck: [], bound: true }], matches: [expired] })))
     expect(await screen.findByRole('dialog')).toHaveTextContent('Time is up')
@@ -108,7 +125,7 @@ describe('ScorerPage', () => {
 
   it('keeps an in-progress End match tie pick when the clock expires under it', async () => {
     fakeFetch(() => ({ json: {} }))
-    const es = mount()
+    const es = await mount()
     act(() => es.emit('snapshot', sampleSnapshot()))
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'End match' }))
@@ -141,7 +158,7 @@ describe('ScorerPage', () => {
       }
       return { json: { match: sampleMatch({ lastSeq: 8 }), version: 5 } }
     })
-    const es = mount()
+    const es = await mount()
     act(() => es.emit('snapshot', sampleSnapshot()))
     const left = screen.getByRole('region', { name: 'Mateo Rivera' })
     const takedown = within(left).getByRole('button', { name: /Takedown/ })
@@ -158,10 +175,10 @@ describe('ScorerPage', () => {
     expect(f.body(indices[1])).toMatchObject({ type: 'score', athleteId: 100, actionKey: 'takedown', lastSeq: 7 })
   })
 
-  it('clears the expiry flash after its timeout', () => {
+  it('clears the expiry flash after its timeout', async () => {
     vi.useFakeTimers({ now: T0 })
     fakeFetch(() => ({ json: {} }))
-    const es = mount()
+    const es = await mount()
     const expired = sampleMatch({ clock: { elapsedMs: 300_000, startedAt: null, lengthMs: 300_000 } })
     act(() => es.emit('snapshot', sampleSnapshot({ mats: [{ id: 1, number: 1, current: expired, onDeck: [], bound: true }], matches: [expired] })))
     const center = screen.getByText('0:00').closest('div')!
@@ -170,10 +187,10 @@ describe('ScorerPage', () => {
     expect(center).not.toHaveClass('bg-warn/10')
   })
 
-  it('heartbeats at mount, again after 20 seconds, and stops after unmount', () => {
+  it('heartbeats at mount, again after 20 seconds, and stops after unmount', async () => {
     vi.useFakeTimers({ now: T0 })
     const f = fakeFetch(() => ({ json: {} }))
-    mount()
+    await mount()
     const heartbeats = () => f.calls.filter(c => c.url === '/api/mats/1/heartbeat')
     expect(heartbeats()).toHaveLength(1)
     act(() => { vi.advanceTimersByTime(20_000) })
