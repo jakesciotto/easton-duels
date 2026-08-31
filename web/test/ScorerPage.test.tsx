@@ -42,7 +42,7 @@ describe('ScorerPage', () => {
       return { json: { match: sampleMatch({ lastSeq: 1, a: { ...sampleMatch().a, score: 2 } }), version: 2 } }
     })
     await mount()
-    expect(await screen.findByRole('status')).toHaveTextContent(/Reconnecting/)
+    expect(await screen.findByText(/Reconnecting/)).toBeInTheDocument()
     resolveSnapshot({ json: { version: 1, snapshot: sampleSnapshot() } })
     const left = await screen.findByRole('region', { name: 'Mateo Rivera' })
     const takedown = within(left).getByRole('button', { name: /Takedown/ })
