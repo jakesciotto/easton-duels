@@ -1,14 +1,16 @@
 import { handle } from '@hono/node-server/vercel'
-import { createApp } from '../server/src/app.js'
-import { createDb, dbUrlFromEnv, initDb, getOrCreateSecret } from '../server/src/db/client.js'
-import { validateAdminPin } from '../server/src/auth/pin.js'
-import { rosterFromEnv } from '../server/src/roster/config.js'
 
-type App = ReturnType<typeof createApp>
+// Dynamic imports on purpose: the bundler's static compilation of this module graph ships
+// a client-library copy whose Turso requests fail with 401, while the same modules loaded
+// at runtime work (proven by the diag function during the 2026-08-31 incident). Loading at
+// runtime keeps one canonical copy from node_modules.
+type App = Awaited<ReturnType<typeof buildApp>>
 
-let ready: Promise<App> | null = null
-
-async function build(): Promise<App> {
+async function buildApp() {
+  const { createApp } = await import('../server/src/app.js')
+  const { createDb, dbUrlFromEnv, initDb, getOrCreateSecret } = await import('../server/src/db/client.js')
+  const { validateAdminPin } = await import('../server/src/auth/pin.js')
+  const { rosterFromEnv } = await import('../server/src/roster/config.js')
   const opts = dbUrlFromEnv(process.env)
   const db = createDb(opts)
   await initDb(db, opts)
@@ -22,11 +24,14 @@ async function build(): Promise<App> {
   return app
 }
 
+let ready: Promise<App> | null = null
+
+
 // A rejected boot must not be cached. An unmigrated database, a missing ADMIN_PIN, or two
 // instances racing on the token secret would otherwise poison this warm instance for its
 // whole life, so the next invocation gets a fresh attempt instead.
 function getApp(): Promise<App> {
-  ready ??= build().catch(e => {
+  ready ??= buildApp().catch(e => {
     ready = null
     throw e
   })
