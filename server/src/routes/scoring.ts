@@ -11,6 +11,7 @@ import { signToken, tokenExpiry } from '../auth/tokens.js'
 import { appendMatchEvent, endMatch, undoLastMatchEvent, loadMatch, latestEndedAt, bumpVersion, SeqConflict } from '../match/events.js'
 import { advanceMat, reopenMatch, setResult, skipMatch } from '../match/mats.js'
 import { toMatchView } from '../live/snapshot.js'
+import { heartbeatMat } from '../live/bound.js'
 
 export const scoringRoutes = new Hono<Env>()
 
@@ -61,12 +62,9 @@ scoringRoutes.post('/mats/:matId/heartbeat', requireMatOrAdmin(c => Number(c.req
   const { db, hub } = c.get('ctx')
   const mat = await db.select().from(mats).where(eq(mats.id, Number(c.req.param('matId')))).get()
   if (!mat) return errorJson(c, 404, 'not_found', 'mat not found')
-  const wasBound = hub.isBound(mat.id)
-  hub.heartbeat(mat.id)
-  if (!wasBound) {
-    await bumpVersion(db, mat.eventId)
-    await hub.broadcast(mat.eventId)
-  }
+  const wasBound = mat.bound
+  await heartbeatMat(db, mat.id, mat.eventId, Date.now())
+  if (!wasBound) await hub.broadcast(mat.eventId)
   return c.json({ ok: true })
 })
 

@@ -4,20 +4,14 @@ import { buildSnapshot } from './snapshot.js'
 
 export type Sender = (snapshot: Snapshot) => void
 
-const BOUND_WINDOW_MS = 60_000
-
 export class Hub {
   private subs = new Map<number, Set<Sender>>()
   private versions = new Map<number, number>()
-  private heartbeats = new Map<number, number>()
 
   constructor(private readonly db: Db, private readonly now: () => number = Date.now) {}
 
   snapshot(eventId: number): Promise<Snapshot> {
-    return buildSnapshot(this.db, eventId, {
-      nowMs: this.now(),
-      isBound: id => this.isBound(id),
-    })
+    return buildSnapshot(this.db, eventId, { nowMs: this.now() })
   }
 
   async subscribe(eventId: number, send: Sender): Promise<() => void> {
@@ -52,15 +46,6 @@ export class Hub {
       for (const send of dead) set.delete(send)
     }
     return snap
-  }
-
-  heartbeat(matId: number): void {
-    this.heartbeats.set(matId, this.now())
-  }
-
-  isBound(matId: number): boolean {
-    const t = this.heartbeats.get(matId)
-    return t !== undefined && this.now() - t < BOUND_WINDOW_MS
   }
 
   subscriberCount(eventId: number): number {

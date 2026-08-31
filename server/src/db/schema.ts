@@ -64,6 +64,8 @@ export const mats = sqliteTable('mats', {
   eventId: integer('event_id').notNull().references(() => events.id, { onDelete: 'cascade' }),
   number: integer('number').notNull(),
   currentMatchId: integer('current_match_id'),
+  lastHeartbeatAt: text('last_heartbeat_at'),
+  bound: integer('bound', { mode: 'boolean' }).notNull().default(false),
 }, t => [uniqueIndex('mats_event_number_idx').on(t.eventId, t.number)])
 
 export const matches = sqliteTable('matches', {

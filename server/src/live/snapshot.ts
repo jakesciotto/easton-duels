@@ -6,7 +6,6 @@ import { MatchStateError, endedAtByMatch } from '../match/events.js'
 
 export interface SnapshotOptions {
   nowMs: number
-  isBound: (matId: number) => boolean
 }
 
 export function toMatchView(m: MatchRow, athleteById: Map<number, AthleteRow>, endedAt: string | null): MatchView {
@@ -75,7 +74,7 @@ export async function buildSnapshot(db: DbLike, eventId: number, opts: SnapshotO
   const matViews: MatView[] = matRows.map(mat => {
     const current = mat.currentMatchId !== null ? views.find(v => v.id === mat.currentMatchId) ?? null : null
     const onDeck = views.filter(v => v.matId === mat.id && v.status === 'pending' && v.id !== current?.id).slice(0, 2)
-    return { id: mat.id, number: mat.number, current, onDeck, bound: opts.isBound(mat.id) }
+    return { id: mat.id, number: mat.number, current, onDeck, bound: mat.bound }
   })
   return {
     version: ev.version,

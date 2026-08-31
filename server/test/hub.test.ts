@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { freshDb, seedEvent } from './fixtures.js'
 import { Hub } from '../src/live/hub.js'
+import { heartbeatMat } from '../src/live/bound.js'
 import { bumpVersion } from '../src/match/events.js'
 import type { Snapshot } from '../src/shared/types.js'
 
@@ -38,18 +39,12 @@ describe('Hub', () => {
     expect((await hub.snapshot(b.eventId)).version).toBe(0)
   })
 
-  it('reports a mat as bound for 60 seconds after a heartbeat', async () => {
+  it('reflects a mat row bound flag in the snapshot', async () => {
     const db = await freshDb()
     const s = await seedEvent(db)
-    let now = 10_000
-    const hub = new Hub(db, () => now)
-    expect(hub.isBound(s.matIds[0])).toBe(false)
-    hub.heartbeat(s.matIds[0])
-    now += 59_000
-    expect(hub.isBound(s.matIds[0])).toBe(true)
+    const hub = new Hub(db, () => 10_000)
+    await heartbeatMat(db, s.matIds[0], s.eventId, 10_000)
     expect((await hub.snapshot(s.eventId)).mats[0].bound).toBe(true)
-    now += 2_000
-    expect(hub.isBound(s.matIds[0])).toBe(false)
   })
 
   it('drops a subscriber that throws and keeps serving the others', async () => {

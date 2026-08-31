@@ -1,16 +1,19 @@
 import { describe, it, expect } from 'vitest'
+import { eq } from 'drizzle-orm'
 import { freshDb, seedEvent } from './fixtures.js'
 import { buildSnapshot } from '../src/live/snapshot.js'
 import { appendMatchEvent, endMatch, bumpVersion } from '../src/match/events.js'
 import { advanceMat, reopenMatch } from '../src/match/mats.js'
+import { mats } from '../src/db/schema.js'
 
-const opts = { nowMs: Date.parse('2026-08-27T18:00:00.000Z'), isBound: (id: number) => id === 1 }
+const opts = { nowMs: Date.parse('2026-08-27T18:00:00.000Z') }
 const T = (s: number) => new Date(Date.parse('2026-08-27T18:00:00.000Z') + s * 1000).toISOString()
 
 describe('buildSnapshot', () => {
   it('shapes event, teams, rulesets, mats, and matches', async () => {
     const db = await freshDb()
     const s = await seedEvent(db, { live: true })
+    await db.update(mats).set({ bound: true }).where(eq(mats.id, s.matIds[0])).run()
     const snap = await buildSnapshot(db, s.eventId, opts)
     expect(snap.version).toBe(0)
     expect(snap.now).toBe('2026-08-27T18:00:00.000Z')
