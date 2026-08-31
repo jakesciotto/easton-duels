@@ -33,6 +33,11 @@ function retrying401Fetch(base: typeof fetch): typeof fetch {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     let res = await base(input as RequestInfo, init)
     for (let i = 0; i < RETRY_401 && res.status === 401; i++) {
+      try {
+        const body = (await res.clone().text()).slice(0, 160)
+        const reqId = res.headers.get('x-request-id') ?? res.headers.get('fly-request-id') ?? ''
+        console.warn(`libsql 401 from ${res.url} body=${JSON.stringify(body)} reqId=${reqId}`)
+      } catch { /* body unavailable */ }
       await new Promise(r => setTimeout(r, 150 * (i + 1)))
       console.warn(`libsql 401, retry ${i + 1} of ${RETRY_401} on a fresh connection`)
       try {
