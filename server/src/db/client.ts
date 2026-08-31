@@ -20,11 +20,31 @@ export function dbUrlFromEnv(env: Record<string, string | undefined>): { url: st
   return { url: `file:${path.join(env.DATA_DIR ?? './data', 'duels.db')}` }
 }
 
-export function createDb(opts: { url: string; authToken?: string }) {
+// Turso intermittently rejects correctly-authorized requests with 401 from serverless
+// egress (2026-08-31 incident: identical requests flap by instance while residential
+// egress always passes). A short retry at the fetch layer absorbs the flap; real auth
+// failures still surface after the retries. Remote URLs only; file databases skip it.
+const RETRY_401 = 2
+function retrying401Fetch(base: typeof fetch): typeof fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    let res = await base(input as RequestInfo, init)
+    for (let i = 0; i < RETRY_401 && res.status === 401; i++) {
+      await new Promise(r => setTimeout(r, 150 * (i + 1)))
+      console.warn(`libsql 401, retry ${i + 1} of ${RETRY_401}`)
+      res = await base(input as RequestInfo, init)
+    }
+    return res
+  }) as typeof fetch
+}
+
+export function createDb(opts: { url: string; authToken?: string; fetchFn?: typeof fetch }) {
   if (opts.url.startsWith('file:') && !opts.url.includes(':memory:')) {
     fs.mkdirSync(path.dirname(opts.url.slice('file:'.length)), { recursive: true })
   }
-  const client = createClient(opts)
+  const base = opts.fetchFn ?? (globalThis.fetch as typeof fetch)
+  const client = opts.url.startsWith('file:')
+    ? createClient({ url: opts.url, authToken: opts.authToken })
+    : createClient({ url: opts.url, authToken: opts.authToken, fetch: retrying401Fetch(base) })
   return drizzle(client, { schema })
 }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { dbUrlFromEnv, getOrCreateSecret } from '../src/db/client.js'
+import { createDb, dbUrlFromEnv, getOrCreateSecret } from '../src/db/client.js'
 import { events, teams, athletes, settings } from '../src/db/schema.js'
 import { eq } from 'drizzle-orm'
 import { freshDb } from './fixtures.js'
@@ -55,5 +55,18 @@ describe('dbUrlFromEnv', () => {
   })
   it('falls back to the DATA_DIR file', () => {
     expect(dbUrlFromEnv({ DATA_DIR: './d' }).url).toBe('file:d/duels.db')
+  })
+})
+
+describe('createDb retry wiring', () => {
+  it('retries 401 responses through the injected fetch and stops at the budget', async () => {
+    let calls = 0
+    const always401 = (async () => {
+      calls += 1
+      return new Response('unauthorized', { status: 401 })
+    }) as unknown as typeof fetch
+    const db = createDb({ url: 'libsql://example.invalid', authToken: 't', fetchFn: always401 })
+    await expect(db.select().from(settings).all()).rejects.toThrow()
+    expect(calls).toBe(3)
   })
 })
