@@ -25,13 +25,27 @@ export function dbUrlFromEnv(env: Record<string, string | undefined>): { url: st
 // egress always passes). A short retry at the fetch layer absorbs the flap; real auth
 // failures still surface after the retries. Remote URLs only; file databases skip it.
 const RETRY_401 = 2
+// Retries ride a forced-fresh connection: the 2026-08-31 incident showed 401s sticking to
+// a kept-alive pooled connection (same-socket retries kept failing while other instances
+// passed), so each retry gets its own undici Agent and closes it afterwards. When undici
+// is unavailable the retry falls back to the shared pool.
 function retrying401Fetch(base: typeof fetch): typeof fetch {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     let res = await base(input as RequestInfo, init)
     for (let i = 0; i < RETRY_401 && res.status === 401; i++) {
       await new Promise(r => setTimeout(r, 150 * (i + 1)))
-      console.warn(`libsql 401, retry ${i + 1} of ${RETRY_401}`)
-      res = await base(input as RequestInfo, init)
+      console.warn(`libsql 401, retry ${i + 1} of ${RETRY_401} on a fresh connection`)
+      try {
+        const { Agent } = await import('undici')
+        const agent = new Agent({ connections: 1, pipelining: 0 })
+        try {
+          res = await base(input as RequestInfo, { ...init, dispatcher: agent } as RequestInit)
+        } finally {
+          await agent.close()
+        }
+      } catch {
+        res = await base(input as RequestInfo, init)
+      }
     }
     return res
   }) as typeof fetch
