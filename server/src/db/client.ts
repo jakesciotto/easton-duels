@@ -25,18 +25,31 @@ export function dbUrlFromEnv(env: Record<string, string | undefined>): { url: st
 // egress always passes). A short retry at the fetch layer absorbs the flap; real auth
 // failures still surface after the retries. Remote URLs only; file databases skip it.
 const RETRY_401 = 2
-// Retries ride a forced-fresh connection: the 2026-08-31 incident showed 401s sticking to
-// a kept-alive pooled connection (same-socket retries kept failing while other instances
-// passed), so each retry gets its own undici Agent and closes it afterwards. When undici
-// is unavailable the retry falls back to the shared pool.
-function retrying401Fetch(base: typeof fetch): typeof fetch {
+// The libsql client intermittently emits requests WITHOUT its configured Authorization
+// header (2026-08-31 incident: Turso answered "empty JWT token" while the env held the
+// token and the client was constructed with it). This wrapper enforces the header on
+// every outgoing request, logs when it has to inject, and retries 401s on a fresh
+// undici connection with properly cloned requests.
+function guardedFetch(token: string | undefined, base: typeof fetch): typeof fetch {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
-    let res = await base(input as RequestInfo, init)
+    let template = input instanceof Request ? input : new Request(input as RequestInfo, init)
+    if (token && !template.headers.get('authorization')) {
+      console.warn('libsql auth-inject: outgoing request had no authorization header')
+      const h = new Headers(template.headers)
+      h.set('authorization', `Bearer ${token}`)
+      template = new Request(template, { headers: h })
+    }
+    const attempt = async (viaAgent?: unknown) => {
+      const req = template.clone()
+      return viaAgent
+        ? base(req, { dispatcher: viaAgent } as RequestInit)
+        : base(req)
+    }
+    let res = await attempt()
     for (let i = 0; i < RETRY_401 && res.status === 401; i++) {
       try {
         const body = (await res.clone().text()).slice(0, 160)
-        const reqId = res.headers.get('x-request-id') ?? res.headers.get('fly-request-id') ?? ''
-        console.warn(`libsql 401 from ${res.url} body=${JSON.stringify(body)} reqId=${reqId}`)
+        console.warn(`libsql 401 from ${res.url} body=${JSON.stringify(body)}`)
       } catch { /* body unavailable */ }
       await new Promise(r => setTimeout(r, 150 * (i + 1)))
       console.warn(`libsql 401, retry ${i + 1} of ${RETRY_401} on a fresh connection`)
@@ -44,12 +57,12 @@ function retrying401Fetch(base: typeof fetch): typeof fetch {
         const { Agent } = await import('undici')
         const agent = new Agent({ connections: 1, pipelining: 0 })
         try {
-          res = await base(input as RequestInfo, { ...init, dispatcher: agent } as RequestInit)
+          res = await attempt(agent)
         } finally {
           await agent.close()
         }
       } catch {
-        res = await base(input as RequestInfo, init)
+        res = await attempt()
       }
     }
     return res
@@ -63,7 +76,7 @@ export function createDb(opts: { url: string; authToken?: string; fetchFn?: type
   const base = opts.fetchFn ?? (globalThis.fetch as typeof fetch)
   const client = opts.url.startsWith('file:')
     ? createClient({ url: opts.url, authToken: opts.authToken })
-    : createClient({ url: opts.url, authToken: opts.authToken, fetch: retrying401Fetch(base) })
+    : createClient({ url: opts.url, authToken: opts.authToken, fetch: guardedFetch(opts.authToken, base) })
   return drizzle(client, { schema })
 }
 
