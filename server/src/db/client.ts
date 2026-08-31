@@ -32,34 +32,22 @@ const RETRY_401 = 2
 // undici connection with properly cloned requests.
 function guardedFetch(token: string | undefined, base: typeof fetch): typeof fetch {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
-    let template = input instanceof Request ? input : new Request(input as RequestInfo, init)
-    if (token && !template.headers.get('authorization')) {
-      console.warn('libsql auth-inject: outgoing request had no authorization header')
-      const h = new Headers(template.headers)
-      h.set('authorization', `Bearer ${token}`)
-      template = new Request(template, { headers: h })
-    }
-    // Redirects are followed manually: the fetch spec strips the authorization header on
-    // cross-origin redirects, and Turso's balancer can redirect serverless egress, which
-    // produced "empty JWT token" rejections while the header was present at this layer.
+    // Decompose to primitives once and rebuild every attempt from scratch: passing Request
+    // objects through undici (clone, reconstruct) intermittently lost the authorization
+    // header under the serverless runtime (2026-08-31 incident, "empty JWT token" with the
+    // header present at this layer and redirected=false). Plain string-and-bytes inits
+    // leave nothing shared for the runtime to drop.
+    const template = input instanceof Request ? input : new Request(input as RequestInfo, init)
+    const urlStr = template.url
+    const method = template.method
+    const headers: Record<string, string> = {}
+    template.headers.forEach((v, k) => { headers[k] = v })
+    if (token) headers['authorization'] = `Bearer ${token}`
+    const bodyBytes = method === 'GET' || method === 'HEAD' ? undefined : new Uint8Array(await template.clone().arrayBuffer())
     const attempt = async (viaAgent?: unknown) => {
-      let req = template.clone()
-      for (let hop = 0; hop < 3; hop++) {
-        const init: RequestInit = { redirect: 'manual', ...(viaAgent ? ({ dispatcher: viaAgent } as RequestInit) : {}) }
-        const res = await base(req, init)
-        if (res.status < 300 || res.status >= 400) return res
-        const loc = res.headers.get('location')
-        if (!loc) return res
-        console.warn(`libsql redirect ${res.status} -> ${loc.slice(0, 80)}, re-attaching authorization`)
-        const h = new Headers(template.headers)
-        if (token) h.set('authorization', `Bearer ${token}`)
-        req = new Request(new URL(loc, req.url), {
-          method: template.method,
-          headers: h,
-          body: template.method === 'GET' || template.method === 'HEAD' ? undefined : await template.clone().arrayBuffer(),
-        })
-      }
-      return base(template.clone())
+      const plain: RequestInit = { method, headers: { ...headers }, body: bodyBytes ? bodyBytes.slice() : undefined, redirect: 'follow' }
+      if (viaAgent) (plain as RequestInit & { dispatcher: unknown }).dispatcher = viaAgent
+      return base(urlStr, plain)
     }
     let res = await attempt()
     for (let i = 0; i < RETRY_401 && res.status === 401; i++) {
