@@ -17,6 +17,18 @@ import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTi
 
 interface ConnectInfo { url: string; matCode: string }
 
+function ScoreLine({ match, teamColor }: { match: MatchView; teamColor: (teamId: number | null) => string }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <TeamDot color={teamColor(match.a.teamId)} name={match.a.name} />
+      <span className="font-mono tabular text-soft">{match.a.score}</span>
+      <span className="text-xs text-faint">to</span>
+      <span className="font-mono tabular text-soft">{match.b.score}</span>
+      <TeamDot color={teamColor(match.b.teamId)} name={match.b.name} />
+    </div>
+  )
+}
+
 export function LiveTab({ detail }: { detail: EventDetail }) {
   const eventId = detail.event.id
   const { snapshot, connected } = useSnapshot(eventId)
@@ -107,17 +119,7 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
                   <tr key={m.id} aria-label={`Mat ${m.number}`} className="border-b border-border last:border-0">
                     <td className="px-3 py-2.5 font-semibold">Mat {m.number}</td>
                     <td className="px-3 py-2.5">
-                      {current ? (
-                        <div className="flex flex-wrap items-center gap-2">
-                          <TeamDot color={teamColor(current.a.teamId)} name={current.a.name} />
-                          <span className="font-mono tabular text-soft">{current.a.score}</span>
-                          <span className="text-xs text-faint">to</span>
-                          <span className="font-mono tabular text-soft">{current.b.score}</span>
-                          <TeamDot color={teamColor(current.b.teamId)} name={current.b.name} />
-                        </div>
-                      ) : (
-                        <span className="text-faint">Idle</span>
-                      )}
+                      {current ? <ScoreLine match={current} teamColor={teamColor} /> : <span className="text-faint">Idle</span>}
                     </td>
                     <td className="px-3 py-2.5">{current ? <Clock clock={current.clock} serverNow={snapshot?.now ?? null} /> : <span className="text-faint">-</span>}</td>
                     <td className="px-3 py-2.5"><Badge variant={m.bound ? 'live' : 'default'}>{m.bound ? 'scorer connected' : 'no scorer'}</Badge></td>
@@ -154,15 +156,7 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
               {(snapshot?.matches ?? []).filter(m => m.status !== 'pending').map(m => (
                 <tr key={m.id} aria-label={`Match ${m.orderIndex + 1}`} className="border-b border-border last:border-0">
                   <td className="px-3 py-2.5 font-mono tabular text-faint">{m.orderIndex + 1}</td>
-                  <td className="px-3 py-2.5">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <TeamDot color={teamColor(m.a.teamId)} name={m.a.name} />
-                      <span className="font-mono tabular text-soft">{m.a.score}</span>
-                      <span className="text-xs text-faint">to</span>
-                      <span className="font-mono tabular text-soft">{m.b.score}</span>
-                      <TeamDot color={teamColor(m.b.teamId)} name={m.b.name} />
-                    </div>
-                  </td>
+                  <td className="px-3 py-2.5"><ScoreLine match={m} teamColor={teamColor} /></td>
                   <td className="px-3 py-2.5"><Badge variant={m.status === 'live' ? 'live' : 'done'}>{m.status}</Badge></td>
                   <td className="px-3 py-2.5 text-soft">{m.result ? `${m.result.winnerAthleteId === m.a.athleteId ? m.a.name : m.b.name} ${winTypeLabel(m.result.winType)}` : ''}</td>
                   <td className="px-3 py-2.5">
