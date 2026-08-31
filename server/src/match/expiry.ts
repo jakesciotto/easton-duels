@@ -1,55 +1,7 @@
-import { and, eq, isNotNull } from 'drizzle-orm'
+import { LibsqlError } from '@libsql/client'
 import type { DbLike } from '../db/client.js'
-import { matches, type MatchRow } from '../db/schema.js'
+import type { MatchRow } from '../db/schema.js'
 import { appendMatchEvent, loadMatch, MatchStateError, SeqConflict } from './events.js'
-
-export type ExpireHandler = (matchId: number, atIso: string) => void | Promise<void>
-
-export class ExpiryScheduler {
-  private timers = new Map<number, NodeJS.Timeout>()
-
-  constructor(private readonly onExpire: ExpireHandler, private readonly now: () => number = Date.now) {}
-
-  schedule(matchId: number, expiresAtMs: number): void {
-    this.cancel(matchId)
-    const delay = Math.max(0, expiresAtMs - this.now())
-    const timer = setTimeout(() => {
-      this.timers.delete(matchId)
-      this.onExpire(matchId, new Date(expiresAtMs).toISOString())
-    }, delay)
-    this.timers.set(matchId, timer)
-  }
-
-  cancel(matchId: number): void {
-    const timer = this.timers.get(matchId)
-    if (timer) {
-      clearTimeout(timer)
-      this.timers.delete(matchId)
-    }
-  }
-
-  sync(match: MatchRow): void {
-    if (match.status === 'live' && match.clockStartedAt) {
-      this.schedule(match.id, Date.parse(match.clockStartedAt) + (match.lengthSec * 1000 - match.clockElapsedMs))
-    } else {
-      this.cancel(match.id)
-    }
-  }
-
-  async rebuild(db: DbLike): Promise<void> {
-    const running = await db.select().from(matches).where(and(eq(matches.status, 'live'), isNotNull(matches.clockStartedAt))).all()
-    for (const m of running) this.sync(m)
-  }
-
-  clear(): void {
-    for (const timer of this.timers.values()) clearTimeout(timer)
-    this.timers.clear()
-  }
-
-  pendingCount(): number {
-    return this.timers.size
-  }
-}
 
 // Returns the match when it wrote the expiry pause, null when nothing needed writing.
 export async function expireClock(db: DbLike, matchId: number, atIso: string): Promise<MatchRow | null> {
@@ -60,6 +12,9 @@ export async function expireClock(db: DbLike, matchId: number, atIso: string): P
     return r.duplicate ? null : r.match
   } catch (e) {
     if (e instanceof SeqConflict || e instanceof MatchStateError) return null
+    // Another writer holds the file lock, most likely a concurrent expiry call for the
+    // same match. Treat it like a duplicate: the next poll re-checks and catches up.
+    if (e instanceof LibsqlError && e.code === 'SQLITE_BUSY') return null
     throw e
   }
 }

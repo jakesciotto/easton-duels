@@ -102,17 +102,15 @@ describe('scoring flow', () => {
     expect(r.body.match.result).toEqual({ winnerAthleteId: s.b1, winType: 'submission' })
   })
 
-  it('runs the clock and lets the scheduler expire it', async () => {
-    const { app, db, expiry } = await createTestApp()
+  it('runs the clock and lets clock_pause stop it', async () => {
+    const { app, db } = await createTestApp()
     const s = await seedEvent(db, { live: true })
     const token = matToken(s.eventId, s.matIds[0])
     const base = `/api/matches/${s.matchIds[0]}`
     const r = await call(app, 'POST', `${base}/events`, { id: 'clk-0001', type: 'clock_start', lastSeq: 0 }, token)
     expect(r.body.match.clock.startedAt).not.toBeNull()
-    expect(expiry.pendingCount()).toBe(1)
     const p = await call(app, 'POST', `${base}/events`, { id: 'clk-0002', type: 'clock_pause', lastSeq: 1 }, token)
     expect(p.body.match.clock.startedAt).toBeNull()
-    expect(expiry.pendingCount()).toBe(0)
   })
 
   it('blocks scoring while the event is in setup and with the wrong mat token', async () => {

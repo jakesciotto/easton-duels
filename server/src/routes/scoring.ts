@@ -10,6 +10,7 @@ import { pinMatches } from '../auth/pin.js'
 import { signToken, tokenExpiry } from '../auth/tokens.js'
 import { appendMatchEvent, endMatch, undoLastMatchEvent, loadMatch, latestEndedAt, bumpVersion, SeqConflict } from '../match/events.js'
 import { advanceMat, reopenMatch, setResult, skipMatch } from '../match/mats.js'
+import { expireOverdue } from '../match/lazyExpiry.js'
 import { toMatchView, buildSnapshot } from '../live/snapshot.js'
 import { heartbeatMat } from '../live/bound.js'
 
@@ -27,11 +28,18 @@ async function matchView(c: Context<Env>, match: MatchRow) {
 }
 
 export async function respond(c: Context<Env>, match: MatchRow, bump = true) {
-  const { db, expiry } = c.get('ctx')
-  expiry.sync(match)
+  const { db } = c.get('ctx')
   if (bump) await bumpVersion(db, match.eventId)
   const snap = await buildSnapshot(db, match.eventId, { nowMs: Date.now() })
   return c.json({ match: snap.matches.find(m => m.id === match.id) ?? await matchView(c, match), version: snap.version })
+}
+
+// Choke point for the three mat-scoring writes (events, undo, end): expiry runs at
+// write entry so a clock that ran out gets closed before the response reflects it.
+// Admin CRUD routes (reopen, skip, result) call respond() directly and skip this.
+async function respondToScoringEvent(c: Context<Env>, match: MatchRow, bump = true) {
+  await expireOverdue(c.get('ctx').db, match.eventId, Date.now())
+  return respond(c, match, bump)
 }
 
 async function seqConflict(c: Context<Env>, matchId: number, err: SeqConflict) {
@@ -80,7 +88,7 @@ scoringRoutes.post('/matches/:matchId/events', requireMatOrAdmin(matIdFromMatch)
   const matchId = Number(c.req.param('matchId'))
   try {
     const r = await appendMatchEvent(c.get('ctx').db, { ...c.req.valid('json'), matchId })
-    return await respond(c, r.match, !r.duplicate)
+    return await respondToScoringEvent(c, r.match, !r.duplicate)
   } catch (e) {
     if (e instanceof SeqConflict) return seqConflict(c, matchId, e)
     throw e
@@ -90,7 +98,7 @@ scoringRoutes.post('/matches/:matchId/events', requireMatOrAdmin(matIdFromMatch)
 scoringRoutes.delete('/matches/:matchId/events/last', requireMatOrAdmin(matIdFromMatch), validate('json', z.object({ lastSeq: z.number().int().min(0) })), async c => {
   const matchId = Number(c.req.param('matchId'))
   try {
-    return await respond(c, await undoLastMatchEvent(c.get('ctx').db, { matchId, lastSeq: c.req.valid('json').lastSeq }))
+    return await respondToScoringEvent(c, await undoLastMatchEvent(c.get('ctx').db, { matchId, lastSeq: c.req.valid('json').lastSeq }))
   } catch (e) {
     if (e instanceof SeqConflict) return seqConflict(c, matchId, e)
     throw e
@@ -103,7 +111,7 @@ scoringRoutes.post('/matches/:matchId/end', requireMatOrAdmin(matIdFromMatch), v
   try {
     const r = await endMatch(db, { ...c.req.valid('json'), matchId })
     if (r.match.matId !== null) await advanceMat(db, r.match.matId)
-    return await respond(c, r.match, !r.duplicate)
+    return await respondToScoringEvent(c, r.match, !r.duplicate)
   } catch (e) {
     if (e instanceof SeqConflict) return seqConflict(c, matchId, e)
     throw e
