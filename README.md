@@ -47,6 +47,8 @@ Set these as Vercel project environment variables:
 - `LEADERBOARD_SUPABASE_URL`, `LEADERBOARD_SUPABASE_KEY`: the easton-leaderboard Supabase project,
   for the ERP join. Leave both empty to skip it.
 
+An explicit `DB_PATH` always wins over `TURSO_DATABASE_URL`, so local runs and e2e never touch the remote database by accident.
+
 Cloud mode never migrates at boot. Before any deploy that includes a new migration, run
 `npm run db:migrate` with `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` pointed at the Turso
 database, and let it finish before that deploy goes out. Deploying code that expects a migration

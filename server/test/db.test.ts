@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { getOrCreateSecret } from '../src/db/client.js'
+import { dbUrlFromEnv, getOrCreateSecret } from '../src/db/client.js'
 import { events, teams, athletes, settings } from '../src/db/schema.js'
 import { eq } from 'drizzle-orm'
 import { freshDb } from './fixtures.js'
@@ -41,5 +41,19 @@ describe('db', () => {
     const [a, b] = await Promise.all([getOrCreateSecret(db), getOrCreateSecret(db)])
     expect(a).toBe(b)
     expect(await db.select().from(settings).all()).toHaveLength(1)
+  })
+})
+
+describe('dbUrlFromEnv', () => {
+  it('prefers an explicit DB_PATH over Turso credentials', () => {
+    const r = dbUrlFromEnv({ DB_PATH: '/tmp/x.db', TURSO_DATABASE_URL: 'libsql://example.invalid', TURSO_AUTH_TOKEN: 't' })
+    expect(r).toEqual({ url: 'file:/tmp/x.db' })
+  })
+  it('uses Turso when no DB_PATH is set', () => {
+    const r = dbUrlFromEnv({ TURSO_DATABASE_URL: 'libsql://example.invalid', TURSO_AUTH_TOKEN: 't', DATA_DIR: './data' })
+    expect(r).toEqual({ url: 'libsql://example.invalid', authToken: 't' })
+  })
+  it('falls back to the DATA_DIR file', () => {
+    expect(dbUrlFromEnv({ DATA_DIR: './d' }).url).toBe('file:d/duels.db')
   })
 })

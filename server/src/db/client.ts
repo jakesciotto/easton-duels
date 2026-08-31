@@ -12,10 +12,12 @@ export type Db = ReturnType<typeof createDb>
 export type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
 export type DbLike = Db | Tx
 
+// An explicit DB_PATH wins over Turso: e2e and any local run that names its own file must
+// never be redirected to the remote database just because .env carries cloud credentials.
 export function dbUrlFromEnv(env: Record<string, string | undefined>): { url: string; authToken?: string } {
+  if (env.DB_PATH) return { url: `file:${env.DB_PATH}` }
   if (env.TURSO_DATABASE_URL) return { url: env.TURSO_DATABASE_URL, authToken: env.TURSO_AUTH_TOKEN }
-  const dbPath = env.DB_PATH ?? path.join(env.DATA_DIR ?? './data', 'duels.db')
-  return { url: `file:${dbPath}` }
+  return { url: `file:${path.join(env.DATA_DIR ?? './data', 'duels.db')}` }
 }
 
 export function createDb(opts: { url: string; authToken?: string }) {
