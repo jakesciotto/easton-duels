@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { freshDb, seedEvent } from './fixtures.js'
 import { buildSnapshot } from '../src/live/snapshot.js'
-import { appendMatchEvent, endMatch } from '../src/match/events.js'
+import { appendMatchEvent, endMatch, bumpVersion } from '../src/match/events.js'
 import { advanceMat, reopenMatch } from '../src/match/mats.js'
 
-const opts = { version: 3, nowMs: Date.parse('2026-08-27T18:00:00.000Z'), isBound: (id: number) => id === 1 }
+const opts = { nowMs: Date.parse('2026-08-27T18:00:00.000Z'), isBound: (id: number) => id === 1 }
 const T = (s: number) => new Date(Date.parse('2026-08-27T18:00:00.000Z') + s * 1000).toISOString()
 
 describe('buildSnapshot', () => {
@@ -12,7 +12,7 @@ describe('buildSnapshot', () => {
     const db = await freshDb()
     const s = await seedEvent(db, { live: true })
     const snap = await buildSnapshot(db, s.eventId, opts)
-    expect(snap.version).toBe(3)
+    expect(snap.version).toBe(0)
     expect(snap.now).toBe('2026-08-27T18:00:00.000Z')
     expect(snap.event).toEqual({ id: s.eventId, name: 'Fall Duels', date: '2026-10-03', status: 'live', matCount: 2 })
     expect(snap.teams.map(t => [t.name, t.wins, t.points])).toEqual([['Boulder', 0, 0], ['Denver', 0, 0]])
@@ -56,6 +56,15 @@ describe('buildSnapshot', () => {
 
   it('throws on an unknown event', async () => {
     await expect(buildSnapshot(await freshDb(), 999, opts)).rejects.toThrow(/not found/)
+  })
+
+  it('bumps the event version on a write and exposes it in the snapshot', async () => {
+    const db = await freshDb()
+    const s = await seedEvent(db, { matCount: 1, live: true })
+    const before = (await buildSnapshot(db, s.eventId, opts)).version
+    await bumpVersion(db, s.eventId)
+    const after = (await buildSnapshot(db, s.eventId, opts)).version
+    expect(after).toBe(before + 1)
   })
 
   it('exposes endedAt from the end event and updates it after a reopen and re-end', async () => {

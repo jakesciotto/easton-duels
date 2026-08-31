@@ -8,6 +8,7 @@ import { validateAdminPin } from './auth/pin.js'
 import { RateLimiter } from './auth/rateLimit.js'
 import { Hub } from './live/hub.js'
 import { ExpiryScheduler, expireClock } from './match/expiry.js'
+import { bumpVersion } from './match/events.js'
 import { rosterFromEnv } from './roster/config.js'
 import { lanIp } from './lib/lanIp.js'
 import { loadDotEnv } from './lib/env.js'
@@ -25,7 +26,10 @@ const main = async () => {
   const hub = new Hub(db)
   const expiry = new ExpiryScheduler(async (matchId, at) => {
     const m = await expireClock(db, matchId, at)
-    if (m) await hub.broadcast(m.eventId)
+    if (m) {
+      await bumpVersion(db, m.eventId)
+      await hub.broadcast(m.eventId)
+    }
   })
   await expiry.rebuild(db)
 

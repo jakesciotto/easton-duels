@@ -9,7 +9,7 @@ import { lanIp } from '../lib/lanIp.js'
 import { errorJson, requireAdmin } from '../auth/middleware.js'
 import { randomMatCode } from '../auth/pin.js'
 import { startEvent } from '../match/mats.js'
-import { MatchStateError } from '../match/events.js'
+import { MatchStateError, bumpVersion } from '../match/events.js'
 import { DEFAULT_ACTIONS, DEFAULT_TERMINALS, DEFAULT_LENGTH_SEC, TEAM_COLOR_KEYS, type TeamColor } from '../shared/types.js'
 
 const colorSchema = z.enum(TEAM_COLOR_KEYS as [TeamColor, ...TeamColor[]])
@@ -86,6 +86,7 @@ eventRoutes.post('/events', requireAdmin, validate('json', createEventSchema), a
     await tx.insert(teams).values(body.teams.map((t, i) => ({ eventId: ev.id, name: t.name, color: t.color, position: i }))).run()
     await tx.insert(mats).values(Array.from({ length: body.matCount }, (_, i) => ({ eventId: ev.id, number: i + 1 }))).run()
     await tx.insert(rulesets).values({ eventId: ev.id, name: 'Default', defaultLengthSec: DEFAULT_LENGTH_SEC, actions: DEFAULT_ACTIONS, terminals: DEFAULT_TERMINALS }).run()
+    await bumpVersion(tx, ev.id)
     return eventDetail(tx, ev.id)
   })
   await hub.broadcast(detail!.event.id)
@@ -112,6 +113,7 @@ eventRoutes.patch('/events/:eventId', requireAdmin, validate('json', patchEventS
       if (ev.status !== 'live') throw new MatchStateError('only a live event can finish')
       await tx.update(events).set({ status: 'done' }).where(eq(events.id, eventId)).run()
     }
+    await bumpVersion(tx, eventId)
   })
   await hub.broadcast(eventId)
   return c.json(await eventDetail(db, eventId))
@@ -135,6 +137,7 @@ eventRoutes.patch('/events/:eventId/teams/:teamId', requireAdmin, validate('json
   if (!team || team.eventId !== eventId) return errorJson(c, 404, 'not_found', 'team not found')
   const fields = c.req.valid('json')
   if (Object.keys(fields).length > 0) await db.update(teams).set(fields).where(eq(teams.id, teamId)).run()
+  await bumpVersion(db, eventId)
   await hub.broadcast(eventId)
   return c.json(await eventDetail(db, eventId))
 })

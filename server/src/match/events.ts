@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
 import type { DbLike } from '../db/client.js'
 import { events, matches, matchEvents, rulesets, type MatchRow, type MatchEventRow, type RulesetRow } from '../db/schema.js'
 import { deriveMatch, deriveOutcome } from './derive.js'
@@ -48,6 +48,10 @@ export interface EndInput {
 export interface AppendResult { duplicate: boolean; match: MatchRow }
 
 type Insert = typeof matchEvents.$inferInsert
+
+export async function bumpVersion(db: DbLike, eventId: number): Promise<void> {
+  await db.update(events).set({ version: sql`${events.version} + 1` }).where(eq(events.id, eventId)).run()
+}
 
 export async function loadMatch(db: DbLike, matchId: number): Promise<MatchRow> {
   const row = await db.select().from(matches).where(eq(matches.id, matchId)).get()

@@ -8,7 +8,7 @@ import { validate } from '../lib/validate.js'
 import { clientIp, errorJson, requireAdmin, requireMatOrAdmin } from '../auth/middleware.js'
 import { pinMatches } from '../auth/pin.js'
 import { signToken, tokenExpiry } from '../auth/tokens.js'
-import { appendMatchEvent, endMatch, undoLastMatchEvent, loadMatch, latestEndedAt, SeqConflict } from '../match/events.js'
+import { appendMatchEvent, endMatch, undoLastMatchEvent, loadMatch, latestEndedAt, bumpVersion, SeqConflict } from '../match/events.js'
 import { advanceMat, reopenMatch, setResult, skipMatch } from '../match/mats.js'
 import { toMatchView } from '../live/snapshot.js'
 
@@ -26,8 +26,9 @@ async function matchView(c: Context<Env>, match: MatchRow) {
 }
 
 export async function respond(c: Context<Env>, match: MatchRow, bump = true) {
-  const { hub, expiry } = c.get('ctx')
+  const { db, hub, expiry } = c.get('ctx')
   expiry.sync(match)
+  if (bump) await bumpVersion(db, match.eventId)
   const snap = bump ? await hub.broadcast(match.eventId) : await hub.snapshot(match.eventId)
   return c.json({ match: snap.matches.find(m => m.id === match.id) ?? await matchView(c, match), version: snap.version })
 }
@@ -62,7 +63,10 @@ scoringRoutes.post('/mats/:matId/heartbeat', requireMatOrAdmin(c => Number(c.req
   if (!mat) return errorJson(c, 404, 'not_found', 'mat not found')
   const wasBound = hub.isBound(mat.id)
   hub.heartbeat(mat.id)
-  if (!wasBound) await hub.broadcast(mat.eventId)
+  if (!wasBound) {
+    await bumpVersion(db, mat.eventId)
+    await hub.broadcast(mat.eventId)
+  }
   return c.json({ ok: true })
 })
 

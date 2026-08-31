@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
+import { eq } from 'drizzle-orm'
 import { freshDb, seedEvent } from './fixtures.js'
-import { appendMatchEvent, endMatch, undoLastMatchEvent, loadEvents, latestEndedAt, endedAtByMatch, SeqConflict, MatchStateError, DecisionRequired } from '../src/match/events.js'
+import { appendMatchEvent, endMatch, undoLastMatchEvent, loadEvents, latestEndedAt, endedAtByMatch, bumpVersion, SeqConflict, MatchStateError, DecisionRequired } from '../src/match/events.js'
+import { events } from '../src/db/schema.js'
 
 const T = (s: number) => new Date(Date.parse('2026-08-27T18:00:00.000Z') + s * 1000).toISOString()
 
@@ -137,6 +139,19 @@ describe('latestEndedAt and endedAtByMatch', () => {
     expect(map.get(first)).toBe(T(0))
     expect(map.has(second)).toBe(false)
     expect(await endedAtByMatch(db, [])).toEqual(new Map())
+  })
+})
+
+describe('bumpVersion', () => {
+  it('increments the event version by one, starting from zero', async () => {
+    const db = await freshDb()
+    const s = await seedEvent(db)
+    const read = () => db.select({ version: events.version }).from(events).where(eq(events.id, s.eventId)).get()
+    expect((await read())?.version).toBe(0)
+    await bumpVersion(db, s.eventId)
+    expect((await read())?.version).toBe(1)
+    await bumpVersion(db, s.eventId)
+    expect((await read())?.version).toBe(2)
   })
 })
 

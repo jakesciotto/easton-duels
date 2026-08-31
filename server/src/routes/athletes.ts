@@ -7,6 +7,7 @@ import { events, teams, athletes, matches } from '../db/schema.js'
 import { validate } from '../lib/validate.js'
 import { errorJson, requireAdmin } from '../auth/middleware.js'
 import { eventDetail } from './events.js'
+import { bumpVersion } from '../match/events.js'
 import { KIDS_BELTS } from '../shared/types.js'
 import type { RosterCandidate } from '../roster/types.js'
 
@@ -97,6 +98,7 @@ athleteRoutes.post('/events/:eventId/athletes', requireAdmin, validate('json', a
   } else {
     await upsertCandidates(db, eventId, body.candidates)
   }
+  await bumpVersion(db, eventId)
   await hub.broadcast(eventId)
   return c.json((await eventDetail(db, eventId))!.athletes, 201)
 })
@@ -117,6 +119,7 @@ athleteRoutes.patch('/athletes/:athleteId', requireAdmin, validate('json', patch
   if (p.age !== undefined) Object.assign(update, { age: p.age, ageSource: p.age === null ? null : 'manual' })
   if (p.weightLbs !== undefined) Object.assign(update, { weightLbs: p.weightLbs, weightSource: p.weightLbs === null ? null : 'manual' })
   if (Object.keys(update).length > 0) await db.update(athletes).set(update).where(eq(athletes.id, id)).run()
+  await bumpVersion(db, existing.eventId)
   await hub.broadcast(existing.eventId)
   return c.json(await db.select().from(athletes).where(eq(athletes.id, id)).get())
 })
@@ -127,6 +130,7 @@ athleteRoutes.post('/events/:eventId/athletes/assign', requireAdmin, validate('j
   const { ids, teamId } = c.req.valid('json')
   if (!await teamBelongs(db, eventId, teamId)) return errorJson(c, 422, 'validation', 'teamId is not on this event')
   await db.update(athletes).set({ teamId }).where(and(eq(athletes.eventId, eventId), inArray(athletes.id, ids))).run()
+  await bumpVersion(db, eventId)
   await hub.broadcast(eventId)
   return c.json((await eventDetail(db, eventId))!.athletes)
 })
@@ -139,6 +143,7 @@ athleteRoutes.delete('/athletes/:athleteId', requireAdmin, async c => {
   const used = await db.select({ id: matches.id }).from(matches).where(or(eq(matches.athleteAId, id), eq(matches.athleteBId, id))).get()
   if (used) return errorJson(c, 409, 'match_state', 'athlete is in a match; delete the match first')
   await db.delete(athletes).where(eq(athletes.id, id)).run()
+  await bumpVersion(db, existing.eventId)
   await hub.broadcast(existing.eventId)
   return c.body(null, 204)
 })

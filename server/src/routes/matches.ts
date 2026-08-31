@@ -8,6 +8,7 @@ import { errorJson, requireAdmin } from '../auth/middleware.js'
 import { generateMatches } from '../matchmaker/generate.js'
 import { resolvePair, leastLoadedMat } from '../match/pairs.js'
 import { eventDetail } from './events.js'
+import { bumpVersion } from '../match/events.js'
 
 const createSchema = z.object({
   athleteAId: z.number().int(),
@@ -24,6 +25,7 @@ matchRoutes.post('/events/:eventId/matches/generate', requireAdmin, async c => {
   const { db, hub } = c.get('ctx')
   const eventId = Number(c.req.param('eventId'))
   const result = await generateMatches(db, eventId)
+  await bumpVersion(db, eventId)
   await hub.broadcast(eventId)
   return c.json(result)
 })
@@ -49,6 +51,7 @@ matchRoutes.post('/events/:eventId/matches', requireAdmin, validate('json', crea
     matId: body.matId === undefined ? await leastLoadedMat(db, eventId) : body.matId,
     orderIndex: (max?.m ?? -1) + 1,
   }).returning().get()
+  await bumpVersion(db, eventId)
   await hub.broadcast(eventId)
   return c.json(row, 201)
 })
@@ -78,6 +81,7 @@ matchRoutes.patch('/matches/:matchId', requireAdmin, validate('json', patchSchem
     update.matId = body.matId
   }
   if (Object.keys(update).length > 0) await db.update(matches).set(update).where(eq(matches.id, id)).run()
+  await bumpVersion(db, existing.eventId)
   await hub.broadcast(existing.eventId)
   return c.json(await db.select().from(matches).where(eq(matches.id, id)).get())
 })
@@ -91,6 +95,7 @@ matchRoutes.delete('/matches/:matchId', requireAdmin, async c => {
   await db.transaction(async tx => {
     await tx.update(mats).set({ currentMatchId: null }).where(eq(mats.currentMatchId, id)).run()
     await tx.delete(matches).where(eq(matches.id, id)).run()
+    await bumpVersion(tx, existing.eventId)
   })
   await hub.broadcast(existing.eventId)
   return c.body(null, 204)
@@ -105,6 +110,7 @@ matchRoutes.post('/events/:eventId/matches/reorder', requireAdmin, validate('jso
   if (!same) return errorJson(c, 422, 'validation', 'ids must be every match of the event exactly once')
   await db.transaction(async tx => {
     for (const [i, id] of ids.entries()) await tx.update(matches).set({ orderIndex: i }).where(eq(matches.id, id)).run()
+    await bumpVersion(tx, eventId)
   })
   await hub.broadcast(eventId)
   return c.json((await eventDetail(db, eventId))!.matches)

@@ -17,6 +17,7 @@ export const events = sqliteTable('events', {
   maxWeightGap: integer('max_weight_gap').notNull().default(10),
   sameGender: integer('same_gender', { mode: 'boolean' }).notNull().default(false),
   createdAt: text('created_at').notNull(),
+  version: integer('version').notNull().default(0),
 })
 
 export const teams = sqliteTable('teams', {

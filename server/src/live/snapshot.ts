@@ -5,7 +5,6 @@ import type { Snapshot, MatchView, MatchSide, MatView, TeamView, TeamColor } fro
 import { MatchStateError, endedAtByMatch } from '../match/events.js'
 
 export interface SnapshotOptions {
-  version: number
   nowMs: number
   isBound: (matId: number) => boolean
 }
@@ -79,7 +78,7 @@ export async function buildSnapshot(db: DbLike, eventId: number, opts: SnapshotO
     return { id: mat.id, number: mat.number, current, onDeck, bound: opts.isBound(mat.id) }
   })
   return {
-    version: opts.version,
+    version: ev.version,
     now: new Date(opts.nowMs).toISOString(),
     event: { id: ev.id, name: ev.name, date: ev.date, status: ev.status, matCount: ev.matCount },
     teams: teamViews,

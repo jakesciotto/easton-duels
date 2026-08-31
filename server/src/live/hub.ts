@@ -15,7 +15,6 @@ export class Hub {
 
   snapshot(eventId: number): Promise<Snapshot> {
     return buildSnapshot(this.db, eventId, {
-      version: this.versions.get(eventId) ?? 0,
       nowMs: this.now(),
       isBound: id => this.isBound(id),
     })

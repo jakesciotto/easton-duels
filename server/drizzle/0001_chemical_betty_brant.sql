@@ -1,0 +1,1 @@
+ALTER TABLE `events` ADD `version` integer DEFAULT 0 NOT NULL;
