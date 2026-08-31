@@ -64,11 +64,24 @@ export default async function handler(req: unknown, res: unknown) {
         out.appClient = 'ok'
       } catch (e) { out.appClient = String(e).slice(0, 160) }
       try {
+        const calls: unknown[] = []
+        const spyFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+          const rq = new Request(input as RequestInfo, init)
+          const auth = rq.headers.get('authorization') ?? ''
+          calls.push({ url: rq.url, method: rq.method, authLen: auth.length, authTail: auth.slice(-6), hdrs: [...rq.headers.keys()].join(',') })
+          const rs = await globalThis.fetch(rq)
+          calls.push({ status: rs.status })
+          return rs
+        }
         const { createClient } = await import('@libsql/client')
-        const c = createClient({ url, authToken: t, fetch: globalThis.fetch })
+        const c = createClient({ url, authToken: t, fetch: spyFetch as typeof fetch })
         await c.execute('select 1')
         out.injectedFetch = 'ok'
-      } catch (e) { out.injectedFetch = String(e).slice(0, 160) }
+        out.spy = calls.slice(0, 6)
+      out.spy = calls.slice(0, 6)
+      } catch (e) {
+        out.injectedFetch = String(e).slice(0, 120)
+      }
       try {
         out.isoFetch = import.meta.resolve('@libsql/isomorphic-fetch')
       } catch (e) { out.isoFetch = String(e).slice(0, 120) }
