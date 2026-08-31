@@ -40,9 +40,32 @@ export default async function handler(req: unknown, res: unknown) {
     const key = new URL(r.url, 'http://x').searchParams.get('key')
     if (key && key === process.env.ADMIN_PIN) {
       const t = process.env.TURSO_AUTH_TOKEN ?? ''
+      const url = process.env.TURSO_DATABASE_URL ?? ''
+      const out: Record<string, unknown> = { fn: 'index', node: process.version, tokenLen: t.length, tokenTail: t.slice(-6) }
+      try {
+        const r = await fetch(url.replace('libsql://', 'https://') + '/v2/pipeline', {
+          method: 'POST',
+          headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ requests: [{ type: 'execute', stmt: { sql: 'select 1' } }, { type: 'close' }] }),
+        })
+        out.rawPipeline = r.status
+      } catch (e) { out.rawPipeline = String(e).slice(0, 120) }
+      try {
+        const { createClient } = await import('@libsql/client')
+        const c = createClient({ url, authToken: t })
+        await c.execute('select 1')
+        out.directClient = 'ok'
+      } catch (e) { out.directClient = String(e).slice(0, 160) }
+      try {
+        const { createDb, dbUrlFromEnv, initDb } = await import('../server/src/db/client.js')
+        const opts = dbUrlFromEnv(process.env)
+        const db = createDb(opts)
+        await initDb(db, opts)
+        out.appClient = 'ok'
+      } catch (e) { out.appClient = String(e).slice(0, 160) }
       w.statusCode = 200
       w.setHeader('content-type', 'application/json')
-      w.end(JSON.stringify({ fn: 'index', node: process.version, urlHost: (process.env.TURSO_DATABASE_URL ?? '').replace('libsql://', ''), tokenLen: t.length, tokenTail: t.slice(-6) }))
+      w.end(JSON.stringify(out))
       return
     }
   }
