@@ -28,9 +28,9 @@ async function matchView(c: Context<Env>, match: MatchRow) {
   return toMatchView(match, new Map(kids.map(a => [a.id, a])), await latestEndedAt(db, match.id))
 }
 
-export async function respond(c: Context<Env>, match: MatchRow, bump = true) {
+// Every caller bumps the version inside its own write transaction, so this only reads.
+export async function respond(c: Context<Env>, match: MatchRow) {
   const { db } = c.get('ctx')
-  if (bump) await bumpVersion(db, match.eventId)
   const snap = await buildSnapshot(db, match.eventId, { nowMs: Date.now() })
   return c.json({ match: snap.matches.find(m => m.id === match.id) ?? await matchView(c, match), version: snap.version })
 }
@@ -38,9 +38,9 @@ export async function respond(c: Context<Env>, match: MatchRow, bump = true) {
 // Choke point for the three mat-scoring writes (events, undo, end): expiry runs at
 // write entry so a clock that ran out gets closed before the response reflects it.
 // Admin CRUD routes (reopen, skip, result) call respond() directly and skip this.
-async function respondToScoringEvent(c: Context<Env>, match: MatchRow, bump = true) {
+async function respondToScoringEvent(c: Context<Env>, match: MatchRow) {
   await expireOverdue(c.get('ctx').db, match.eventId, Date.now())
-  return respond(c, match, bump)
+  return respond(c, match)
 }
 
 async function seqConflict(c: Context<Env>, matchId: number, err: SeqConflict) {
@@ -87,10 +87,15 @@ const eventBody = z.object({
 })
 
 scoringRoutes.post('/matches/:matchId/events', requireMatOrAdmin(matIdFromMatch), validate('json', eventBody), async c => {
+  const { db } = c.get('ctx')
   const matchId = Number(c.req.param('matchId'))
   try {
-    const r = await appendMatchEvent(c.get('ctx').db, { ...c.req.valid('json'), matchId })
-    return await respondToScoringEvent(c, r.match, !r.duplicate)
+    const r = await db.transaction(async tx => {
+      const appended = await appendMatchEvent(tx, { ...c.req.valid('json'), matchId })
+      if (!appended.duplicate) await bumpVersion(tx, appended.match.eventId)
+      return appended
+    })
+    return await respondToScoringEvent(c, r.match)
   } catch (e) {
     if (e instanceof SeqConflict) return seqConflict(c, matchId, e)
     throw e
@@ -98,9 +103,15 @@ scoringRoutes.post('/matches/:matchId/events', requireMatOrAdmin(matIdFromMatch)
 })
 
 scoringRoutes.delete('/matches/:matchId/events/last', requireMatOrAdmin(matIdFromMatch), validate('json', z.object({ lastSeq: z.number().int().min(0) })), async c => {
+  const { db } = c.get('ctx')
   const matchId = Number(c.req.param('matchId'))
   try {
-    return await respondToScoringEvent(c, await undoLastMatchEvent(c.get('ctx').db, { matchId, lastSeq: c.req.valid('json').lastSeq }))
+    const match = await db.transaction(async tx => {
+      const undone = await undoLastMatchEvent(tx, { matchId, lastSeq: c.req.valid('json').lastSeq })
+      await bumpVersion(tx, undone.eventId)
+      return undone
+    })
+    return await respondToScoringEvent(c, match)
   } catch (e) {
     if (e instanceof SeqConflict) return seqConflict(c, matchId, e)
     throw e
@@ -111,9 +122,17 @@ scoringRoutes.post('/matches/:matchId/end', requireMatOrAdmin(matIdFromMatch), v
   const { db } = c.get('ctx')
   const matchId = Number(c.req.param('matchId'))
   try {
-    const r = await endMatch(db, { ...c.req.valid('json'), matchId })
-    if (r.match.matId !== null) await advanceMat(db, r.match.matId)
-    return await respondToScoringEvent(c, r.match, !r.duplicate)
+    // advanceMat sits outside the idempotency guard so a retry whose advance never landed
+    // still advances the mat. The bump is therefore unconditional: on a replay the advance
+    // is real visible state, and a version pinned to the duplicate flag would hide it from
+    // every poller. A spurious bump costs one snapshot rebuild.
+    const r = await db.transaction(async tx => {
+      const ended = await endMatch(tx, { ...c.req.valid('json'), matchId })
+      if (ended.match.matId !== null) await advanceMat(tx, ended.match.matId)
+      await bumpVersion(tx, ended.match.eventId)
+      return ended
+    })
+    return await respondToScoringEvent(c, r.match)
   } catch (e) {
     if (e instanceof SeqConflict) return seqConflict(c, matchId, e)
     throw e
@@ -121,13 +140,28 @@ scoringRoutes.post('/matches/:matchId/end', requireMatOrAdmin(matIdFromMatch), v
 })
 
 scoringRoutes.post('/matches/:matchId/reopen', requireAdmin, async c => {
-  return respond(c, await reopenMatch(c.get('ctx').db, Number(c.req.param('matchId'))))
+  const { db } = c.get('ctx')
+  return respond(c, await db.transaction(async tx => {
+    const match = await reopenMatch(tx, Number(c.req.param('matchId')))
+    await bumpVersion(tx, match.eventId)
+    return match
+  }))
 })
 
 scoringRoutes.post('/matches/:matchId/skip', requireAdmin, async c => {
-  return respond(c, await skipMatch(c.get('ctx').db, Number(c.req.param('matchId'))))
+  const { db } = c.get('ctx')
+  return respond(c, await db.transaction(async tx => {
+    const match = await skipMatch(tx, Number(c.req.param('matchId')))
+    await bumpVersion(tx, match.eventId)
+    return match
+  }))
 })
 
 scoringRoutes.post('/matches/:matchId/result', requireAdmin, validate('json', z.object({ winnerAthleteId: z.number().int(), winType: z.enum(['submission', 'points', 'decision']) })), async c => {
-  return respond(c, await setResult(c.get('ctx').db, Number(c.req.param('matchId')), c.req.valid('json')))
+  const { db } = c.get('ctx')
+  return respond(c, await db.transaction(async tx => {
+    const match = await setResult(tx, Number(c.req.param('matchId')), c.req.valid('json'))
+    await bumpVersion(tx, match.eventId)
+    return match
+  }))
 })

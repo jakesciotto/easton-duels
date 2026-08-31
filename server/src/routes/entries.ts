@@ -6,6 +6,7 @@ import { events, matches } from '../db/schema.js'
 import { validate } from '../lib/validate.js'
 import { errorJson, requireAdmin } from '../auth/middleware.js'
 import { enterResult, createEntry } from '../match/entry.js'
+import { bumpVersion } from '../match/events.js'
 import { resolvePair } from '../match/pairs.js'
 import { respond } from './scoring.js'
 
@@ -32,8 +33,12 @@ entryRoutes.post('/matches/:matchId/entry', requireAdmin, validate('json', entry
   if (!match) return errorJson(c, 404, 'not_found', 'match not found')
   const body = c.req.valid('json')
   if (body.winnerAthleteId !== match.athleteAId && body.winnerAthleteId !== match.athleteBId) return errorJson(c, 422, 'validation', 'winner must be one of the two athletes')
-  const { duplicate, match: updated } = await enterResult(db, matchId, body)
-  return respond(c, updated, !duplicate)
+  const { match: updated } = await db.transaction(async tx => {
+    const r = await enterResult(tx, matchId, body)
+    if (!r.duplicate) await bumpVersion(tx, r.match.eventId)
+    return r
+  })
+  return respond(c, updated)
 })
 
 entryRoutes.post('/events/:eventId/entries', requireAdmin, validate('json', createSchema), async c => {
@@ -44,7 +49,11 @@ entryRoutes.post('/events/:eventId/entries', requireAdmin, validate('json', crea
   const pair = await resolvePair(db, eventId, body.athleteAId, body.athleteBId)
   if (typeof pair === 'string') return errorJson(c, 422, 'validation', pair)
   if (body.winnerAthleteId !== pair.a && body.winnerAthleteId !== pair.b) return errorJson(c, 422, 'validation', 'winner must be one of the two athletes')
-  const { duplicate, match } = await createEntry(db, eventId, body)
-  const res = await respond(c, match, !duplicate)
+  const { duplicate, match } = await db.transaction(async tx => {
+    const r = await createEntry(tx, eventId, body)
+    if (!r.duplicate) await bumpVersion(tx, eventId)
+    return r
+  })
+  const res = await respond(c, match)
   return duplicate ? res : new Response(res.body, { status: 201, headers: res.headers })
 })

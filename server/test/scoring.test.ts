@@ -87,7 +87,9 @@ describe('scoring flow', () => {
     const version = (await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)).body.version
     const replay = await call(app, 'POST', `/api/matches/${first}/end`, body, token)
     expect(replay.status).toBe(200)
-    expect(replay.body.version).toBe(version)
+    // The replay advanced the mat, so it has to bump: a version pinned to the duplicate
+    // flag would leave every poller short-circuiting on the finished match.
+    expect(replay.body.version).toBe(version + 1)
     expect((await db.select().from(mats).where(eq(mats.id, s.matIds[0])).get())?.currentMatchId).toBe(second)
   })
 
