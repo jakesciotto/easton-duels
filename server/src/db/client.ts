@@ -41,10 +41,15 @@ export async function migrateDb(db: Db, folder = defaultMigrations): Promise<voi
 
 const SECRET_KEY = 'token_secret'
 
+// Two instances cold-starting at once both find no row, so the insert has to tolerate the
+// loser's primary key conflict and read back whichever secret actually landed.
 export async function getOrCreateSecret(db: DbLike): Promise<string> {
   const row = await db.select().from(schema.settings).where(eq(schema.settings.key, SECRET_KEY)).get()
   if (row) return row.value
-  const value = randomBytes(32).toString('base64url')
-  await db.insert(schema.settings).values({ key: SECRET_KEY, value }).run()
-  return value
+  await db.insert(schema.settings)
+    .values({ key: SECRET_KEY, value: randomBytes(32).toString('base64url') })
+    .onConflictDoNothing().run()
+  const created = await db.select().from(schema.settings).where(eq(schema.settings.key, SECRET_KEY)).get()
+  if (!created) throw new Error('token secret is missing after insert')
+  return created.value
 }

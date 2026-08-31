@@ -143,5 +143,7 @@ eventRoutes.get('/events/:eventId/connect', requireAdmin, async c => {
   const ctx = c.get('ctx')
   const ev = await ctx.db.select().from(events).where(eq(events.id, Number(c.req.param('eventId')))).get()
   if (!ev) return errorJson(c, 404, 'not_found', 'event not found')
-  return c.json({ url: `http://${lanIp()}:${ctx.port}`, matCode: ev.matCode })
+  // Mirrors /api/lan: in cloud mode the QR code and the typed address have to point at the
+  // deployed origin, not at the container's own private interface.
+  return c.json({ url: ctx.publicUrl ?? `http://${lanIp()}:${ctx.port}`, matCode: ev.matCode })
 })

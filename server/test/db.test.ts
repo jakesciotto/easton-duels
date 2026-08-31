@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { getOrCreateSecret } from '../src/db/client.js'
-import { events, teams, athletes } from '../src/db/schema.js'
+import { events, teams, athletes, settings } from '../src/db/schema.js'
 import { eq } from 'drizzle-orm'
 import { freshDb } from './fixtures.js'
 
@@ -34,5 +34,12 @@ describe('db', () => {
     const b = await getOrCreateSecret(db)
     expect(a).toBe(b)
     expect(a.length).toBeGreaterThan(30)
+  })
+
+  it('survives two callers racing to create the secret', async () => {
+    const db = await freshDb()
+    const [a, b] = await Promise.all([getOrCreateSecret(db), getOrCreateSecret(db)])
+    expect(a).toBe(b)
+    expect(await db.select().from(settings).all()).toHaveLength(1)
   })
 })

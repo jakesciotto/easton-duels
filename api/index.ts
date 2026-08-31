@@ -4,7 +4,11 @@ import { createDb, dbUrlFromEnv, initDb, getOrCreateSecret } from '../server/src
 import { validateAdminPin } from '../server/src/auth/pin.js'
 import { rosterFromEnv } from '../server/src/roster/config.js'
 
-const ready = (async () => {
+type App = ReturnType<typeof createApp>
+
+let ready: Promise<App> | null = null
+
+async function build(): Promise<App> {
   const opts = dbUrlFromEnv(process.env)
   const db = createDb(opts)
   await initDb(db, opts)
@@ -16,8 +20,19 @@ const ready = (async () => {
   })
   app.all('*', c => c.json({ error: { code: 'not_found', message: 'not found' } }, 404))
   return app
-})()
+}
+
+// A rejected boot must not be cached. An unmigrated database, a missing ADMIN_PIN, or two
+// instances racing on the token secret would otherwise poison this warm instance for its
+// whole life, so the next invocation gets a fresh attempt instead.
+function getApp(): Promise<App> {
+  ready ??= build().catch(e => {
+    ready = null
+    throw e
+  })
+  return ready
+}
 
 export default async function handler(req: unknown, res: unknown) {
-  return handle(await ready)(req as never, res as never)
+  return handle(await getApp())(req as never, res as never)
 }
