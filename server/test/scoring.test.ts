@@ -6,7 +6,7 @@ import { mats } from '../src/db/schema.js'
 import { endMatch } from '../src/match/events.js'
 
 describe('bind and heartbeat', () => {
-  it('issues a mat token for the right code and locks after twenty attempts', async () => {
+  it('issues a mat token for the right code and locks after twenty failed codes', async () => {
     const { app, db } = await createTestApp()
     const s = await seedEvent(db)
     const bad = await call(app, 'POST', `/api/events/${s.eventId}/mats/${s.matIds[0]}/bind`, { code: '9999' })
@@ -19,6 +19,9 @@ describe('bind and heartbeat', () => {
     expect((await call(app, 'POST', `/api/mats/${s.matIds[1]}/heartbeat`, {}, ok.body.token)).status).toBe(403)
     expect((await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)).body.snapshot.mats[0].bound).toBe(true)
     for (let i = 0; i < 18; i++) await call(app, 'POST', `/api/events/${s.eventId}/mats/${s.matIds[0]}/bind`, { code: '9999' })
+    // Nineteen wrong codes so far, and the correct ones in between never spent the budget.
+    expect((await call(app, 'POST', `/api/events/${s.eventId}/mats/${s.matIds[0]}/bind`, { code: '0420' })).status).toBe(200)
+    await call(app, 'POST', `/api/events/${s.eventId}/mats/${s.matIds[0]}/bind`, { code: '9999' })
     expect((await call(app, 'POST', `/api/events/${s.eventId}/mats/${s.matIds[0]}/bind`, { code: '0420' })).status).toBe(429)
   })
 

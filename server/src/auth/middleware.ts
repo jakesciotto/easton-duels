@@ -10,7 +10,14 @@ export function errorJson(c: Context, status: Status, code: string, message: str
   return c.json({ error: { code, message, ...extra } }, status)
 }
 
+// Behind a proxy (Vercel, any reverse proxy on the LAN) the TCP peer is the proxy, so
+// every caller would share one rate-limit bucket. The forwarded headers carry the real
+// client; the leftmost entry of x-forwarded-for is the original caller.
 export function clientIp(c: Context): string {
+  const forwarded = c.req.header('x-forwarded-for')?.split(',')[0]?.trim()
+  if (forwarded) return forwarded
+  const real = c.req.header('x-real-ip')?.trim()
+  if (real) return real
   try {
     return getConnInfo(c).remote.address ?? 'unknown'
   } catch {

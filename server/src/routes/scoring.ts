@@ -6,7 +6,7 @@ import type { Env } from '../context.js'
 import { events, mats, matches, athletes, type MatchRow } from '../db/schema.js'
 import { validate } from '../lib/validate.js'
 import { clientIp, errorJson, requireAdmin, requireMatOrAdmin } from '../auth/middleware.js'
-import { checkLimit } from '../auth/dbRateLimit.js'
+import { checkLimit, recordFailure } from '../auth/dbRateLimit.js'
 import { pinMatches } from '../auth/pin.js'
 import { signToken, tokenExpiry } from '../auth/tokens.js'
 import { appendMatchEvent, endMatch, undoLastMatchEvent, loadMatch, latestEndedAt, bumpVersion, SeqConflict } from '../match/events.js'
@@ -58,6 +58,7 @@ scoringRoutes.post('/events/:eventId/mats/:matId/bind', validate('json', z.objec
   const mat = await ctx.db.select().from(mats).where(and(eq(mats.id, matId), eq(mats.eventId, eventId))).get()
   if (!ev || !mat) return errorJson(c, 404, 'not_found', 'event or mat not found')
   if (!pinMatches(c.req.valid('json').code, ev.matCode)) {
+    await recordFailure(ctx.db, 'bind', ip, Date.now())
     return errorJson(c, 401, 'bad_code', 'wrong mat code')
   }
   return c.json({

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { Hono } from 'hono'
 import { signToken, verifyToken, tokenExpiry } from '../src/auth/tokens.js'
 import { pinMatches, validateAdminPin, randomMatCode } from '../src/auth/pin.js'
-import { attachAuth, requireAdmin, requireMatOrAdmin } from '../src/auth/middleware.js'
+import { attachAuth, requireAdmin, requireMatOrAdmin, clientIp } from '../src/auth/middleware.js'
 import type { Env, AppContext } from '../src/context.js'
 
 const SECRET = 'test-secret'
@@ -36,6 +36,28 @@ describe('pin', () => {
   })
   it('makes 4-digit mat codes', () => {
     for (let i = 0; i < 20; i++) expect(randomMatCode()).toMatch(/^\d{4}$/)
+  })
+})
+
+describe('clientIp', () => {
+  function build() {
+    const app = new Hono()
+    app.get('/ip', c => c.json({ ip: clientIp(c) }))
+    return app
+  }
+
+  it('prefers the leftmost x-forwarded-for entry, then x-real-ip', async () => {
+    const app = build()
+    const forwarded = await app.request('/ip', { headers: { 'x-forwarded-for': ' 203.0.113.7 , 70.41.3.18 ', 'x-real-ip': '198.51.100.5' } })
+    expect(await forwarded.json()).toEqual({ ip: '203.0.113.7' })
+    const real = await app.request('/ip', { headers: { 'x-real-ip': ' 198.51.100.5 ' } })
+    expect(await real.json()).toEqual({ ip: '198.51.100.5' })
+  })
+
+  it('falls back when no proxy header is present', async () => {
+    const app = build()
+    const r = await app.request('/ip')
+    expect((await r.json()).ip).toBe('unknown')
   })
 })
 
