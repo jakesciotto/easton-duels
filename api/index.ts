@@ -96,6 +96,10 @@ export default async function handler(req: unknown, res: unknown) {
         await c.execute('select 1')
         out.afterAppImport = 'ok'
       } catch (e) { out.afterAppImport = String(e).slice(0, 160) }
+      out.tokenTailAtBuild = (process.env.TURSO_AUTH_TOKEN ?? '').slice(-6)
+      out.urlAtBuild = (process.env.TURSO_DATABASE_URL ?? '').slice(-14)
+      out.dbPathAtBuild = process.env.DB_PATH ?? null
+      out.dataDirAtBuild = process.env.DATA_DIR ?? null
       try {
         await buildApp()
         out.buildApp = 'ok'
