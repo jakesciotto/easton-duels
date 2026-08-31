@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import { ApiError } from '@/lib/api'
 import type { EventDetail } from '@/lib/types'
@@ -37,10 +37,16 @@ export function SyncRosterDialog({ detail, open, onOpenChange }: { detail: Event
   const [pulling, setPulling] = useState(false)
   const already = useMemo(() => new Set(detail.athletes.map(a => a.wlUid).filter((uid): uid is string => uid !== null)), [detail.athletes])
   const add = useAdminMutation(eventId, (cands: Candidate[]) => adminApi(`/api/events/${eventId}/athletes`, { method: 'POST', body: { candidates: cands } }))
+  // pull() runs from a button click, not the effect below, so a plain boolean ignore flag isn't
+  // enough: closing then reopening before a pull resolves would reset the flag along with
+  // everything else, and the stale response would land anyway. A generation counter that only
+  // ever increases survives any number of closes and reopens across the same pull.
+  const generation = useRef(0)
 
   useEffect(() => {
     if (!open) return
     let ignore = false
+    generation.current += 1
     setError(null)
     setLocations(null)
     setPicked(new Set())
@@ -48,6 +54,7 @@ export function SyncRosterDialog({ detail, open, onOpenChange }: { detail: Event
     setWarnings([])
     setSelected(new Set())
     setSearch('')
+    setPulling(false)
     add.reset()
     adminApi<Location[]>(`/api/events/${eventId}/wl-locations`)
       .then(locs => {
@@ -60,17 +67,19 @@ export function SyncRosterDialog({ detail, open, onOpenChange }: { detail: Event
   }, [open, eventId])
 
   const pull = async () => {
+    const myGeneration = generation.current
     setPulling(true)
     setError(null)
     try {
       const r = await adminApi<{ candidates: Candidate[]; warnings: string[] }>(`/api/events/${eventId}/roster/sync`, { method: 'POST', body: { kBusinesses: [...picked] } })
+      if (generation.current !== myGeneration) return
       setCandidates(r.candidates)
       setWarnings(r.warnings)
       setSelected(new Set())
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Could not reach the server')
+      if (generation.current === myGeneration) setError(e instanceof ApiError ? e.message : 'Could not reach the server')
     } finally {
-      setPulling(false)
+      if (generation.current === myGeneration) setPulling(false)
     }
   }
 
