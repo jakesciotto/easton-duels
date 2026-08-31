@@ -8,7 +8,7 @@ import { validate } from '../lib/validate.js'
 import { clientIp, errorJson, requireAdmin, requireMatOrAdmin } from '../auth/middleware.js'
 import { pinMatches } from '../auth/pin.js'
 import { signToken, tokenExpiry } from '../auth/tokens.js'
-import { appendMatchEvent, endMatch, undoLastMatchEvent, loadMatch, SeqConflict } from '../match/events.js'
+import { appendMatchEvent, endMatch, undoLastMatchEvent, loadMatch, latestEndedAt, SeqConflict } from '../match/events.js'
 import { advanceMat, reopenMatch, setResult, skipMatch } from '../match/mats.js'
 import { toMatchView } from '../live/snapshot.js'
 
@@ -22,7 +22,7 @@ const matIdFromMatch = (c: Context<Env>): number | null => {
 function matchView(c: Context<Env>, match: MatchRow) {
   const db = c.get('ctx').db
   const kids = db.select().from(athletes).where(eq(athletes.eventId, match.eventId)).all()
-  return toMatchView(match, new Map(kids.map(a => [a.id, a])))
+  return toMatchView(match, new Map(kids.map(a => [a.id, a])), latestEndedAt(db, match.id))
 }
 
 export function respond(c: Context<Env>, match: MatchRow, bump = true) {

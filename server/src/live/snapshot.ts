@@ -2,7 +2,7 @@ import { asc, eq } from 'drizzle-orm'
 import type { DbLike } from '../db/client.js'
 import { events, teams, athletes, rulesets, mats, matches, type MatchRow, type AthleteRow } from '../db/schema.js'
 import type { Snapshot, MatchView, MatchSide, MatView, TeamView, TeamColor } from '../shared/types.js'
-import { MatchStateError } from '../match/events.js'
+import { MatchStateError, endedAtByMatch } from '../match/events.js'
 
 export interface SnapshotOptions {
   version: number
@@ -10,7 +10,7 @@ export interface SnapshotOptions {
   isBound: (matId: number) => boolean
 }
 
-export function toMatchView(m: MatchRow, athleteById: Map<number, AthleteRow>): MatchView {
+export function toMatchView(m: MatchRow, athleteById: Map<number, AthleteRow>, endedAt: string | null): MatchView {
   const side = (id: number, score: number): MatchSide => {
     const a = athleteById.get(id)
     return {
@@ -37,6 +37,7 @@ export function toMatchView(m: MatchRow, athleteById: Map<number, AthleteRow>): 
     pendingTerminal: m.pendingTerminalAthleteId !== null && m.pendingTerminalKey !== null
       ? { athleteId: m.pendingTerminalAthleteId, actionKey: m.pendingTerminalKey }
       : null,
+    endedAt,
     lastSeq: m.lastSeq,
   }
 }
@@ -50,7 +51,8 @@ export function buildSnapshot(db: DbLike, eventId: number, opts: SnapshotOptions
   const rulesetRows = db.select().from(rulesets).where(eq(rulesets.eventId, eventId)).orderBy(asc(rulesets.id)).all()
   const matRows = db.select().from(mats).where(eq(mats.eventId, eventId)).orderBy(asc(mats.number)).all()
   const matchRows = db.select().from(matches).where(eq(matches.eventId, eventId)).orderBy(asc(matches.orderIndex), asc(matches.id)).all()
-  const views = matchRows.map(m => toMatchView(m, athleteById))
+  const endedAtById = endedAtByMatch(db, matchRows.map(m => m.id))
+  const views = matchRows.map(m => toMatchView(m, athleteById, endedAtById.get(m.id) ?? null))
 
   const tally = new Map<number, { wins: number; points: number }>(teamRows.map(t => [t.id, { wins: 0, points: 0 }]))
   const add = (teamId: number | null, wins: number, points: number) => {

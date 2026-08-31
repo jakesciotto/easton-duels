@@ -40,7 +40,7 @@ export function sampleMatch(over: Partial<MatchView> = {}): MatchView {
     a: { athleteId: 100, name: 'Mateo Rivera', teamId: 1, belt: 'grey', weightLbs: 62, score: 0 },
     b: { athleteId: 200, name: 'Olivia Kim', teamId: 2, belt: 'grey-white', weightLbs: 60, score: 0 },
     clock: { elapsedMs: 0, startedAt: null, lengthMs: 300_000 },
-    result: null, pendingTerminal: null, lastSeq: 0, ...over,
+    result: null, pendingTerminal: null, endedAt: null, lastSeq: 0, ...over,
   }
 }
 

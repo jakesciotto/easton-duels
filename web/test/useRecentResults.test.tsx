@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
-import { useRecentResults } from '@/routes/board/useRecentResults'
+import { useRecentResults, sortDoneMatches } from '@/routes/board/useRecentResults'
 import { sampleMatch, sampleSnapshot } from './fakes'
 
 afterEach(() => vi.useRealTimers())
@@ -47,5 +47,26 @@ describe('useRecentResults', () => {
     // unrelated snapshot above, the entry would still be showing at t0+10.1s.
     act(() => { vi.advanceTimersByTime(1_100) })
     expect(result.current.size).toBe(0)
+  })
+})
+
+describe('sortDoneMatches', () => {
+  it('sorts by endedAt descending, tie breaks on id descending, and puts a null endedAt last', () => {
+    const m = (id: number, endedAt: string | null) => sampleMatch({ id, status: 'done', endedAt })
+    const sorted = sortDoneMatches([
+      m(1, '2026-10-03T16:00:10.000Z'),
+      m(2, null),
+      m(3, '2026-10-03T16:00:30.000Z'),
+      m(4, '2026-10-03T16:00:30.000Z'),
+      m(5, null),
+    ])
+    expect(sorted.map(x => x.id)).toEqual([4, 3, 1, 5, 2])
+  })
+
+  it('does not mutate the input array', () => {
+    const input = [sampleMatch({ id: 1, status: 'done', endedAt: null }), sampleMatch({ id: 2, status: 'done', endedAt: null })]
+    const sorted = sortDoneMatches(input)
+    expect(sorted).not.toBe(input)
+    expect(input.map(x => x.id)).toEqual([1, 2])
   })
 })

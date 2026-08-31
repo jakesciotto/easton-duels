@@ -2,9 +2,10 @@ import { describe, it, expect } from 'vitest'
 import { freshDb, seedEvent } from './fixtures.js'
 import { buildSnapshot } from '../src/live/snapshot.js'
 import { appendMatchEvent, endMatch } from '../src/match/events.js'
-import { advanceMat } from '../src/match/mats.js'
+import { advanceMat, reopenMatch } from '../src/match/mats.js'
 
 const opts = { version: 3, nowMs: Date.parse('2026-08-27T18:00:00.000Z'), isBound: (id: number) => id === 1 }
+const T = (s: number) => new Date(Date.parse('2026-08-27T18:00:00.000Z') + s * 1000).toISOString()
 
 describe('buildSnapshot', () => {
   it('shapes event, teams, rulesets, mats, and matches', () => {
@@ -55,5 +56,25 @@ describe('buildSnapshot', () => {
 
   it('throws on an unknown event', () => {
     expect(() => buildSnapshot(freshDb(), 999, opts)).toThrow(/not found/)
+  })
+
+  it('exposes endedAt from the end event and updates it after a reopen and re-end', () => {
+    const db = freshDb()
+    const s = seedEvent(db, { matCount: 1, live: true })
+    const [first] = s.matchIds
+    expect(buildSnapshot(db, s.eventId, opts).matches[0].endedAt).toBeNull()
+
+    endMatch(db, { id: 'end1', matchId: first, lastSeq: 0, winnerAthleteId: s.a1, at: T(0) })
+    expect(buildSnapshot(db, s.eventId, opts).matches.find(m => m.id === first)?.endedAt).toBe(T(0))
+
+    const reopened = reopenMatch(db, first)
+    // Reopening does not add a new end event, so the last known end time still shows
+    // until the match is scored and ended again.
+    expect(buildSnapshot(db, s.eventId, opts).matches.find(m => m.id === first)?.endedAt).toBe(T(0))
+
+    endMatch(db, { id: 'end2', matchId: first, lastSeq: reopened.lastSeq, winnerAthleteId: s.b1, at: T(120) })
+    const rematched = buildSnapshot(db, s.eventId, opts).matches.find(m => m.id === first)
+    expect(rematched?.endedAt).toBe(T(120))
+    expect(rematched?.result).toEqual({ winnerAthleteId: s.b1, winType: 'decision' })
   })
 })

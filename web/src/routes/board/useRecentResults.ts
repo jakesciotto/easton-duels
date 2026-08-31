@@ -4,6 +4,18 @@ import type { MatchView, Snapshot } from '@shared/types'
 export interface RecentResult { match: MatchView; at: number }
 const HOLD_MS = 10_000
 
+// Newest finish first. A match without an endedAt (finished before the field existed)
+// sorts after every match that has one, tie broken by id descending either way.
+export function sortDoneMatches(matches: MatchView[]): MatchView[] {
+  return [...matches].sort((x, y) => {
+    if (x.endedAt === null && y.endedAt === null) return y.id - x.id
+    if (x.endedAt === null) return 1
+    if (y.endedAt === null) return -1
+    if (x.endedAt !== y.endedAt) return x.endedAt < y.endedAt ? 1 : -1
+    return y.id - x.id
+  })
+}
+
 function sameEntries(a: Map<number, RecentResult>, b: Map<number, RecentResult>): boolean {
   if (a.size !== b.size) return false
   for (const [id, r] of a) {

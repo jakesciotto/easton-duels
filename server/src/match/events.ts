@@ -1,4 +1,4 @@
-import { asc, desc, eq } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 import type { DbLike } from '../db/client.js'
 import { events, matches, matchEvents, rulesets, type MatchRow, type MatchEventRow, type RulesetRow } from '../db/schema.js'
 import { deriveMatch, deriveOutcome } from './derive.js'
@@ -57,6 +57,29 @@ export function loadMatch(db: DbLike, matchId: number): MatchRow {
 
 export function loadEvents(db: DbLike, matchId: number): MatchEventRow[] {
   return db.select().from(matchEvents).where(eq(matchEvents.matchId, matchId)).orderBy(asc(matchEvents.seq)).all()
+}
+
+// endedAt is not stored on the match row: it is read back from the latest `end` event so a
+// reopen followed by a re-end always reflects the newest end, and it works for matches that
+// finished before this field existed.
+export function latestEndedAt(db: DbLike, matchId: number): string | null {
+  const row = db.select({ at: matchEvents.at }).from(matchEvents)
+    .where(and(eq(matchEvents.matchId, matchId), eq(matchEvents.type, 'end')))
+    .orderBy(desc(matchEvents.seq)).limit(1).get()
+  return row?.at ?? null
+}
+
+export function endedAtByMatch(db: DbLike, matchIds: number[]): Map<number, string> {
+  if (matchIds.length === 0) return new Map()
+  const rows = db.select({ matchId: matchEvents.matchId, seq: matchEvents.seq, at: matchEvents.at }).from(matchEvents)
+    .where(and(inArray(matchEvents.matchId, matchIds), eq(matchEvents.type, 'end')))
+    .all()
+  const latest = new Map<number, { seq: number; at: string }>()
+  for (const r of rows) {
+    const prev = latest.get(r.matchId)
+    if (!prev || r.seq > prev.seq) latest.set(r.matchId, { seq: r.seq, at: r.at })
+  }
+  return new Map([...latest].map(([id, v]) => [id, v.at]))
 }
 
 export function loadRuleset(db: DbLike, rulesetId: number): RulesetRow {

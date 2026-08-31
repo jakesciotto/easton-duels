@@ -38,6 +38,7 @@ export interface MatchView {
   clock: ClockState
   result: MatchResult | null
   pendingTerminal: PendingTerminal | null
+  endedAt: string | null
   lastSeq: number
 }
 

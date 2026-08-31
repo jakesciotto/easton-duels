@@ -6,7 +6,7 @@ import { HeroScore } from './board/HeroScore'
 import { MatTile } from './board/MatTile'
 import { ResultTile } from './board/ResultTile'
 import { OnDeckStrip } from './board/OnDeckStrip'
-import { useRecentResults } from './board/useRecentResults'
+import { useRecentResults, sortDoneMatches } from './board/useRecentResults'
 
 export default function BoardPage() {
   const { eventId } = useParams()
@@ -43,7 +43,7 @@ export default function BoardPage() {
   }
 
   const anyActive = mats.some(m => m.current !== null || recent.has(m.id))
-  const done = matches.filter(m => m.status === 'done').sort((x, y) => y.id - x.id)
+  const done = sortDoneMatches(matches.filter(m => m.status === 'done'))
   const fallback = !anyActive && done.length > 0
   const tiles = fallback ? done.slice(0, 4) : []
   const columns = Math.min(4, Math.max(1, fallback ? tiles.length : mats.length))

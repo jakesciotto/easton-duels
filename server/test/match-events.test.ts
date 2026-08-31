@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { freshDb, seedEvent } from './fixtures.js'
-import { appendMatchEvent, endMatch, undoLastMatchEvent, loadEvents, SeqConflict, MatchStateError, DecisionRequired } from '../src/match/events.js'
+import { appendMatchEvent, endMatch, undoLastMatchEvent, loadEvents, latestEndedAt, endedAtByMatch, SeqConflict, MatchStateError, DecisionRequired } from '../src/match/events.js'
 
 const T = (s: number) => new Date(Date.parse('2026-08-27T18:00:00.000Z') + s * 1000).toISOString()
 
@@ -117,6 +117,26 @@ describe('endMatch', () => {
     expect(r.match.clockStartedAt).toBeNull()
     expect(r.match.clockElapsedMs).toBe(90_000)
     expect(loadEvents(db, matchId).map(e => e.type)).toEqual(['clock_start', 'score', 'clock_pause', 'end'])
+  })
+})
+
+describe('latestEndedAt and endedAtByMatch', () => {
+  it('reads the latest end event and stays null before one exists', () => {
+    const { db, s, matchId } = liveMatch()
+    expect(latestEndedAt(db, matchId)).toBeNull()
+    endMatch(db, { id: 'end1', matchId, lastSeq: 0, winnerAthleteId: s.a1, at: T(0) })
+    expect(latestEndedAt(db, matchId)).toBe(T(0))
+  })
+
+  it('batches the latest end time per match, leaving an unfinished match out', () => {
+    const db = freshDb()
+    const s = seedEvent(db, { matCount: 1, live: true })
+    const [first, second] = s.matchIds
+    endMatch(db, { id: 'end1', matchId: first, lastSeq: 0, winnerAthleteId: s.a1, at: T(0) })
+    const map = endedAtByMatch(db, [first, second])
+    expect(map.get(first)).toBe(T(0))
+    expect(map.has(second)).toBe(false)
+    expect(endedAtByMatch(db, [])).toEqual(new Map())
   })
 })
 
