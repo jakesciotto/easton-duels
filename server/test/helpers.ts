@@ -1,6 +1,5 @@
 import { createApp } from '../src/app.js'
 import type { AppContext } from '../src/context.js'
-import { RateLimiter } from '../src/auth/rateLimit.js'
 import { signToken, tokenExpiry } from '../src/auth/tokens.js'
 import { freshDb } from './fixtures.js'
 
@@ -10,7 +9,7 @@ export const TEST_PIN = '123456'
 export async function createTestApp(overrides: Partial<AppContext> = {}) {
   const db = overrides.db ?? await freshDb()
   const ctx: AppContext = {
-    port: 0, db, secret: TEST_SECRET, adminPin: TEST_PIN, limiter: new RateLimiter(),
+    port: 0, db, secret: TEST_SECRET, adminPin: TEST_PIN,
     roster: { wl: null, leaderboard: null },
     ...overrides,
   }

@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest'
 import { Hono } from 'hono'
 import { signToken, verifyToken, tokenExpiry } from '../src/auth/tokens.js'
 import { pinMatches, validateAdminPin, randomMatCode } from '../src/auth/pin.js'
-import { RateLimiter } from '../src/auth/rateLimit.js'
 import { attachAuth, requireAdmin, requireMatOrAdmin } from '../src/auth/middleware.js'
 import type { Env, AppContext } from '../src/context.js'
 
@@ -40,33 +39,11 @@ describe('pin', () => {
   })
 })
 
-describe('RateLimiter', () => {
-  it('blocks after five failures inside the window and frees after it', () => {
-    const rl = new RateLimiter(5, 60_000)
-    for (let i = 0; i < 5; i++) {
-      expect(rl.isBlocked('ip', i * 1000)).toBe(false)
-      rl.recordFailure('ip', i * 1000)
-    }
-    expect(rl.isBlocked('ip', 5_000)).toBe(true)
-    expect(rl.isBlocked('other', 5_000)).toBe(false)
-    expect(rl.isBlocked('ip', 61_000)).toBe(false)
-  })
-  it('evicts an idle key once its failures age out, and still counts a failure recorded after that', () => {
-    const rl = new RateLimiter(5, 60_000)
-    rl.recordFailure('ip', 0)
-    expect(rl.size()).toBe(1)
-    expect(rl.isBlocked('ip', 61_000)).toBe(false)
-    expect(rl.size()).toBe(0)
-    rl.recordFailure('ip', 61_000)
-    expect(rl.size()).toBe(1)
-  })
-})
-
 describe('middleware', () => {
   function build() {
     const app = new Hono<Env>()
     app.use('*', async (c, next) => {
-      c.set('ctx', { port: 0, db: null as never, secret: SECRET, adminPin: '123456', limiter: new RateLimiter() } as unknown as AppContext)
+      c.set('ctx', { port: 0, db: null as never, secret: SECRET, adminPin: '123456' } as unknown as AppContext)
       await next()
     })
     app.use('*', attachAuth)

@@ -13,9 +13,9 @@ describe('POST /api/auth/admin', () => {
     expect(bad.body.error.code).toBe('bad_pin')
   })
 
-  it('rate limits after five failures', async () => {
+  it('rate limits after ten attempts', async () => {
     const { app } = await createTestApp()
-    for (let i = 0; i < 5; i++) await call(app, 'POST', '/api/auth/admin', { pin: '000000' })
+    for (let i = 0; i < 10; i++) await call(app, 'POST', '/api/auth/admin', { pin: '000000' })
     const r = await call(app, 'POST', '/api/auth/admin', { pin: TEST_PIN })
     expect(r.status).toBe(429)
   })

@@ -22,6 +22,13 @@
       "when": 1788201196913,
       "tag": "0002_amusing_living_mummy",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1788202700330,
+      "tag": "0003_clammy_frog_thor",
+      "breakpoints": true
     }
   ]
 }

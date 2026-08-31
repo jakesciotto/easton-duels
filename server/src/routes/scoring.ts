@@ -6,6 +6,7 @@ import type { Env } from '../context.js'
 import { events, mats, matches, athletes, type MatchRow } from '../db/schema.js'
 import { validate } from '../lib/validate.js'
 import { clientIp, errorJson, requireAdmin, requireMatOrAdmin } from '../auth/middleware.js'
+import { checkLimit } from '../auth/dbRateLimit.js'
 import { pinMatches } from '../auth/pin.js'
 import { signToken, tokenExpiry } from '../auth/tokens.js'
 import { appendMatchEvent, endMatch, undoLastMatchEvent, loadMatch, latestEndedAt, bumpVersion, SeqConflict } from '../match/events.js'
@@ -49,14 +50,14 @@ async function seqConflict(c: Context<Env>, matchId: number, err: SeqConflict) {
 scoringRoutes.post('/events/:eventId/mats/:matId/bind', validate('json', z.object({ code: z.string().regex(/^\d{4}$/) })), async c => {
   const ctx = c.get('ctx')
   const ip = clientIp(c)
-  if (ctx.limiter.isBlocked(ip)) return errorJson(c, 429, 'rate_limited', 'too many attempts; wait a minute')
+  const limit = await checkLimit(ctx.db, 'bind', ip, Date.now())
+  if (!limit.allowed) return errorJson(c, 429, 'rate_limited', 'too many attempts; wait a minute')
   const eventId = Number(c.req.param('eventId'))
   const matId = Number(c.req.param('matId'))
   const ev = await ctx.db.select().from(events).where(eq(events.id, eventId)).get()
   const mat = await ctx.db.select().from(mats).where(and(eq(mats.id, matId), eq(mats.eventId, eventId))).get()
   if (!ev || !mat) return errorJson(c, 404, 'not_found', 'event or mat not found')
   if (!pinMatches(c.req.valid('json').code, ev.matCode)) {
-    ctx.limiter.recordFailure(ip)
     return errorJson(c, 401, 'bad_code', 'wrong mat code')
   }
   return c.json({

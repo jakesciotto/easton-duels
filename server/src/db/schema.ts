@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, index, uniqueIndex } from 'drizzle-orm/sqlite-core'
+import { sqliteTable, text, integer, real, index, uniqueIndex, primaryKey } from 'drizzle-orm/sqlite-core'
 import type { RulesetAction, RulesetTerminal, MatchEventPayload } from '../shared/types.js'
 
 export const settings = sqliteTable('settings', {
@@ -93,6 +93,13 @@ export const matches = sqliteTable('matches', {
   index('matches_mat_idx').on(t.matId),
 ])
 
+export const rateLimits = sqliteTable('rate_limits', {
+  scope: text('scope').notNull(),
+  key: text('key').notNull(),
+  windowStart: text('window_start').notNull(),
+  count: integer('count').notNull(),
+}, t => [primaryKey({ columns: [t.scope, t.key] })])
+
 export const matchEvents = sqliteTable('match_events', {
   id: text('id').primaryKey(),
   matchId: integer('match_id').notNull().references(() => matches.id, { onDelete: 'cascade' }),
@@ -112,3 +119,4 @@ export type RulesetRow = typeof rulesets.$inferSelect
 export type MatRow = typeof mats.$inferSelect
 export type MatchRow = typeof matches.$inferSelect
 export type MatchEventRow = typeof matchEvents.$inferSelect
+export type RateLimitRow = typeof rateLimits.$inferSelect
