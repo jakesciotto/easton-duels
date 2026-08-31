@@ -12,7 +12,11 @@ async function j(method, p, body, token) {
   if (token) headers.authorization = `Bearer ${token}`
   const res = await fetch(base + p, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
   const text = await res.text()
-  return { status: res.status, body: text ? JSON.parse(text) : null }
+  try {
+    return { status: res.status, body: text ? JSON.parse(text) : null }
+  } catch {
+    fail(`${method} ${p} returned non-JSON`, { body: text.slice(0, 200) })
+  }
 }
 
 function fail(step, r) {

@@ -33,6 +33,11 @@ function getApp(): Promise<App> {
   return ready
 }
 
+// Vercel's Node runtime pre-parses JSON bodies and drains the request stream before the
+// adapter can read it, so c.req.json() waits forever on POSTs. Turning the platform body
+// parser off hands the raw stream through untouched.
+export const config = { api: { bodyParser: false } }
+
 export default async function handler(req: unknown, res: unknown) {
   return handle(await getApp())(req as never, res as never)
 }
