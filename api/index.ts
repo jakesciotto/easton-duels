@@ -33,6 +33,10 @@ async function buildApp() {
 export const config = { api: { bodyParser: false } }
 
 export default async function handler(req: unknown, res: unknown) {
+  if (!process.env.TURSO_AUTH_TOKEN) console.warn('env-loss: TURSO_AUTH_TOKEN absent this invocation')
+  if (!process.env.NODEJS_HELPERS) console.warn('env-loss: NODEJS_HELPERS absent this invocation')
+  if (!process.env.PUBLIC_URL) console.warn('env-loss: PUBLIC_URL absent this invocation')
+  if (!process.env.TURSO_DATABASE_URL) console.warn('env-loss: TURSO_DATABASE_URL absent this invocation')
   // Temporary incident branch: report this function's own env view, secret-free.
   const r = req as { url?: string }
   const w = res as { statusCode: number; setHeader: (k: string, v: string) => void; end: (b: string) => void }
