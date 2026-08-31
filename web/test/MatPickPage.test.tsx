@@ -4,13 +4,12 @@ import userEvent from '@testing-library/user-event'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { routes } from '@/router'
 import { getMatBinding, setMatBinding } from '@/lib/auth'
-import { fakeFetch, FakeEventSource, sampleSnapshot } from './fakes'
+import { fakeFetch, sampleSnapshot } from './fakes'
 
 beforeEach(() => localStorage.clear())
-afterEach(() => { vi.unstubAllGlobals(); FakeEventSource.instances = [] })
+afterEach(() => vi.unstubAllGlobals())
 
 function mount(path: string) {
-  vi.stubGlobal('EventSource', FakeEventSource)
   const router = createMemoryRouter(routes, { initialEntries: [path] })
   render(<RouterProvider router={router} />)
   return router
@@ -19,7 +18,7 @@ function mount(path: string) {
 describe('MatPickPage', () => {
   it('lists mats from the board, binds with the code, stores the binding, and opens the scorer', async () => {
     const f = fakeFetch((url, init) => {
-      if (url === '/api/events/1/board') return { json: sampleSnapshot({ mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: false }, { id: 2, number: 2, current: null, onDeck: [], bound: false }] }) }
+      if (url === '/api/events/1/snapshot') return { json: { version: 1, snapshot: sampleSnapshot({ mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: false }, { id: 2, number: 2, current: null, onDeck: [], bound: false }] }) } }
       if (url === '/api/events/1/mats/2/bind') return JSON.parse(String(init?.body)).code === '0420'
         ? { json: { token: 'mat-tok', mat: { id: 2, number: 2 }, event: { id: 1, name: 'Fall Duels' } } }
         : { status: 401, json: { error: { code: 'bad_code', message: 'wrong mat code' } } }
@@ -50,11 +49,11 @@ describe('MatPickPage', () => {
 
   it('shows the picker with a notice when the stored binding is for a different event', async () => {
     fakeFetch(url => {
-      if (url === '/api/events/5/board') {
-        return { json: sampleSnapshot({
+      if (url === '/api/events/5/snapshot') {
+        return { json: { version: 1, snapshot: sampleSnapshot({
           event: { id: 5, name: 'Winter Duels', date: '2026-11-01', status: 'live', matCount: 1 },
           mats: [{ id: 3, number: 1, current: null, onDeck: [], bound: false }],
-        }) }
+        }) } }
       }
       return { json: {} }
     })
@@ -68,11 +67,11 @@ describe('MatPickPage', () => {
 
   it('shows a message when the event has no mats', async () => {
     fakeFetch(url => {
-      if (url === '/api/events/9/board') {
-        return { json: sampleSnapshot({
+      if (url === '/api/events/9/snapshot') {
+        return { json: { version: 1, snapshot: sampleSnapshot({
           event: { id: 9, name: 'Empty Duels', date: '2026-12-01', status: 'setup', matCount: 0 },
           mats: [],
-        }) }
+        }) } }
       }
       return { json: {} }
     })
@@ -82,7 +81,7 @@ describe('MatPickPage', () => {
 
   it('surfaces a 429 rate limit error', async () => {
     fakeFetch(url => {
-      if (url === '/api/events/1/board') return { json: sampleSnapshot({ mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: false }, { id: 2, number: 2, current: null, onDeck: [], bound: false }] }) }
+      if (url === '/api/events/1/snapshot') return { json: { version: 1, snapshot: sampleSnapshot({ mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: false }, { id: 2, number: 2, current: null, onDeck: [], bound: false }] }) } }
       if (url === '/api/events/1/mats/2/bind') return { status: 429, json: { error: { code: 'rate_limited', message: 'too many attempts; wait a minute' } } }
       return { json: {} }
     })

@@ -31,7 +31,7 @@ function ScoreLine({ match, teamColor }: { match: MatchView; teamColor: (teamId:
 
 export function LiveTab({ detail }: { detail: EventDetail }) {
   const eventId = detail.event.id
-  const { snapshot, connected } = useSnapshot(eventId)
+  const { snapshot, connected } = useSnapshot(eventId, 2000)
   const [connect, setConnect] = useState<ConnectInfo | null>(null)
   const [editing, setEditing] = useState<MatchView | null>(null)
   const [finishOpen, setFinishOpen] = useState(false)

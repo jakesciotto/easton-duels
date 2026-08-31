@@ -14,24 +14,31 @@ export function fakeFetch(handler: (url: string, init?: RequestInit) => Reply | 
   return { fn, calls, body: (i: number) => JSON.parse(String(calls[i].init?.body)) }
 }
 
-export class FakeEventSource {
-  static instances: FakeEventSource[] = []
-  private listeners = new Map<string, ((e: MessageEvent) => void)[]>()
-  onerror: ((e: Event) => void) | null = null
-  closed = false
-  url: string
-  constructor(url: string) {
-    this.url = url
-    FakeEventSource.instances.push(this)
+// Simulates the versioned snapshot endpoint that useSnapshot polls: `since` equal to the
+// current version returns the lightweight `{ version, now }` shape, anything else returns
+// the full snapshot. The version is server-owned here too -- push() always assigns the next
+// one, so callers never have to keep a sample snapshot's version field in sync by hand.
+export interface SnapshotFeed {
+  push(next: Snapshot): void
+  handle(url: string): Reply | undefined
+}
+
+export function snapshotFeed(initial: Snapshot): SnapshotFeed {
+  let version = initial.version
+  let current: Snapshot = initial
+  return {
+    push(next) {
+      version += 1
+      current = { ...next, version }
+    },
+    handle(url) {
+      const m = /^\/api\/events\/\d+\/snapshot(?:\?since=(-?\d+))?$/.exec(url)
+      if (!m) return undefined
+      const since = m[1] === undefined ? -1 : Number(m[1])
+      if (since === current.version) return { json: { version: current.version, now: current.now } }
+      return { json: { version: current.version, snapshot: current } }
+    },
   }
-  addEventListener(type: string, cb: (e: MessageEvent) => void) {
-    this.listeners.set(type, [...(this.listeners.get(type) ?? []), cb])
-  }
-  close() { this.closed = true }
-  emit(type: string, data: unknown) {
-    for (const cb of this.listeners.get(type) ?? []) cb({ data: JSON.stringify(data) } as MessageEvent)
-  }
-  fail() { this.onerror?.(new Event('error')) }
 }
 
 export function sampleMatch(over: Partial<MatchView> = {}): MatchView {

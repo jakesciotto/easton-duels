@@ -5,17 +5,17 @@ import { createMemoryRouter, RouterProvider } from 'react-router'
 import { routes } from '@/router'
 import { setMatBinding } from '@/lib/auth'
 import { beep } from '@/lib/sounds'
-import { fakeFetch, FakeEventSource, sampleMatch, sampleSnapshot } from './fakes'
+import { fakeFetch, snapshotFeed, sampleMatch, sampleSnapshot } from './fakes'
 
 const T0 = Date.parse('2026-10-03T16:00:00.000Z')
 
 vi.mock('@/lib/sounds', () => ({ beep: vi.fn(), unlockAudio: vi.fn() }))
 beforeEach(() => { localStorage.clear(); setMatBinding({ eventId: 1, matId: 1, matNumber: 1, eventName: 'Fall Duels', token: 'mat-tok' }) })
-afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); FakeEventSource.instances = [] })
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
 
-// The scorer route is lazy-loaded, so mounting needs to flush until the chunk resolves and the
-// component's effect creates the stream. Fake timers (used by some tests below) don't intercept
-// promise microtasks, but they do intercept setTimeout, so the flush picks the timer-aware form.
+// The scorer route is lazy-loaded, so mounting needs to flush until the chunk resolves.
+// Fake timers (used by a couple of tests below) don't intercept promise microtasks, but they
+// do intercept setTimeout, so the flush picks the timer-aware form.
 async function flushOnce() {
   if (vi.isFakeTimers()) {
     await act(async () => { await vi.advanceTimersByTimeAsync(0) })
@@ -25,24 +25,26 @@ async function flushOnce() {
 }
 
 async function mount() {
-  vi.stubGlobal('EventSource', FakeEventSource)
   render(<RouterProvider router={createMemoryRouter(routes, { initialEntries: ['/mat/1'] })} />)
-  // Wait for the route's Suspense fallback to be replaced by the real page (not just for the
-  // EventSource side effect to exist) -- under heavier parallel test load the two can land in
-  // different ticks, and querying the DOM while the fallback is still up finds its "Loading"
-  // status text instead of the real page's.
   for (let i = 0; i < 50 && screen.queryByRole('status', { name: 'Loading' }); i++) await flushOnce()
-  for (let i = 0; i < 50 && FakeEventSource.instances.length === 0; i++) await flushOnce()
-  return FakeEventSource.instances[0]
+  // Let the route's first automatic snapshot poll (initiated once the real component
+  // mounts) settle before returning, so fake-timer tests can query synchronously afterward.
+  for (let i = 0; i < 10; i++) await flushOnce()
 }
 
 describe('ScorerPage', () => {
   it('disables scoring until the stream connects, then posts a tap with the match seq', async () => {
-    const f = fakeFetch(() => ({ json: { match: sampleMatch({ lastSeq: 1, a: { ...sampleMatch().a, score: 2 } }), version: 2 } }))
-    const es = await mount()
+    let resolveSnapshot!: (r: { json: unknown }) => void
+    const pending = new Promise<{ json: unknown }>(resolve => { resolveSnapshot = resolve })
+    let snapshotCalls = 0
+    const f = fakeFetch(url => {
+      if (url.includes('/snapshot')) return snapshotCalls++ === 0 ? pending : { json: { version: 1, now: sampleSnapshot().now } }
+      return { json: { match: sampleMatch({ lastSeq: 1, a: { ...sampleMatch().a, score: 2 } }), version: 2 } }
+    })
+    await mount()
     expect(await screen.findByRole('status')).toHaveTextContent(/Reconnecting/)
-    act(() => es.emit('snapshot', sampleSnapshot()))
-    const left = screen.getByRole('region', { name: 'Mateo Rivera' })
+    resolveSnapshot({ json: { version: 1, snapshot: sampleSnapshot() } })
+    const left = await screen.findByRole('region', { name: 'Mateo Rivera' })
     const takedown = within(left).getByRole('button', { name: /Takedown/ })
     expect(takedown).toBeEnabled()
     await userEvent.setup().click(takedown)
@@ -53,13 +55,14 @@ describe('ScorerPage', () => {
   })
 
   it('opens the confirm sheet after a terminal with the winner preselected and ends the match', async () => {
-    const f = fakeFetch(url => url.endsWith('/end')
+    const feed = snapshotFeed(sampleSnapshot())
+    const f = fakeFetch(url => feed.handle(url) ?? (url.endsWith('/end')
       ? { json: { match: sampleMatch({ status: 'done', result: { winnerAthleteId: 200, winType: 'submission' } }), version: 3 } }
-      : { json: { match: sampleMatch({ lastSeq: 1, pendingTerminal: { athleteId: 200, actionKey: 'pin' } }), version: 2 } })
-    const es = await mount()
-    act(() => es.emit('snapshot', sampleSnapshot()))
+      : { json: { match: sampleMatch({ lastSeq: 1, pendingTerminal: { athleteId: 200, actionKey: 'pin' } }), version: 2 } }))
+    await mount()
     const user = userEvent.setup()
-    await user.click(within(screen.getByRole('region', { name: 'Olivia Kim' })).getByRole('button', { name: 'Pin' }))
+    const olivia = await screen.findByRole('region', { name: 'Olivia Kim' })
+    await user.click(within(olivia).getByRole('button', { name: 'Pin' }))
     const sheet = await screen.findByRole('dialog')
     expect(within(sheet).getByText(/Olivia Kim wins by submission/)).toBeInTheDocument()
     await user.click(within(sheet).getByRole('button', { name: 'Confirm' }))
@@ -69,18 +72,21 @@ describe('ScorerPage', () => {
 
   it('keeps the confirm sheet open when the undo behind Cancel fails', async () => {
     let undos = 0
+    const feed = snapshotFeed(sampleSnapshot())
     fakeFetch(url => {
+      const fromFeed = feed.handle(url)
+      if (fromFeed) return fromFeed
       if (url !== '/api/matches/10/events/last') {
         return { json: { match: sampleMatch({ lastSeq: 1, pendingTerminal: { athleteId: 200, actionKey: 'pin' } }), version: 2 } }
       }
-      undos++
+      undos += 1
       if (undos === 1) return { status: 409, json: { error: { code: 'match_state', message: 'nothing to undo' } } }
       return { json: { match: sampleMatch({ lastSeq: 2 }), version: 4 } }
     })
-    const es = await mount()
-    act(() => es.emit('snapshot', sampleSnapshot()))
+    await mount()
     const user = userEvent.setup()
-    await user.click(within(screen.getByRole('region', { name: 'Olivia Kim' })).getByRole('button', { name: 'Pin' }))
+    const olivia = await screen.findByRole('region', { name: 'Olivia Kim' })
+    await user.click(within(olivia).getByRole('button', { name: 'Pin' }))
     const sheet = await screen.findByRole('dialog')
 
     // The terminal is still pending on the server, so a failed undo has to leave the sheet up.
@@ -94,10 +100,11 @@ describe('ScorerPage', () => {
   })
 
   it('asks for a decision on a tie and sends the picked winner', async () => {
-    const f = fakeFetch(() => ({ json: { match: sampleMatch({ status: 'done' }), version: 3 } }))
-    const es = await mount()
-    act(() => es.emit('snapshot', sampleSnapshot()))
+    const feed = snapshotFeed(sampleSnapshot())
+    const f = fakeFetch(url => feed.handle(url) ?? { json: { match: sampleMatch({ status: 'done' }), version: 3 } })
+    await mount()
     const user = userEvent.setup()
+    await screen.findByRole('region', { name: 'Mateo Rivera' })
     await user.click(screen.getByRole('button', { name: 'End match' }))
     const sheet = await screen.findByRole('dialog')
     expect(within(sheet).getByRole('button', { name: 'Confirm' })).toBeDisabled()
@@ -108,25 +115,26 @@ describe('ScorerPage', () => {
   })
 
   it('shows the empty state when the mat has no match', async () => {
-    fakeFetch(() => ({ json: {} }))
-    const es = await mount()
-    act(() => es.emit('snapshot', sampleSnapshot({ mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: true }], matches: [] })))
-    expect(screen.getByText(/No match on this mat/)).toBeInTheDocument()
+    const feed = snapshotFeed(sampleSnapshot({ mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: true }], matches: [] }))
+    fakeFetch(url => feed.handle(url) ?? { json: {} })
+    await mount()
+    expect(await screen.findByText(/No match on this mat/)).toBeInTheDocument()
   })
 
   it('beeps and opens the confirm sheet once the server confirms the clock has expired', async () => {
-    fakeFetch(() => ({ json: {} }))
-    const es = await mount()
     const expired = sampleMatch({ clock: { elapsedMs: 300_000, startedAt: null, lengthMs: 300_000 } })
-    act(() => es.emit('snapshot', sampleSnapshot({ mats: [{ id: 1, number: 1, current: expired, onDeck: [], bound: true }], matches: [expired] })))
+    const feed = snapshotFeed(sampleSnapshot({ mats: [{ id: 1, number: 1, current: expired, onDeck: [], bound: true }], matches: [expired] }))
+    fakeFetch(url => feed.handle(url) ?? { json: {} })
+    await mount()
     expect(await screen.findByRole('dialog')).toHaveTextContent('Time is up')
     expect(beep).toHaveBeenCalled()
   })
 
   it('keeps an in-progress End match tie pick when the clock expires under it', async () => {
-    fakeFetch(() => ({ json: {} }))
-    const es = await mount()
-    act(() => es.emit('snapshot', sampleSnapshot()))
+    const feed = snapshotFeed(sampleSnapshot())
+    fakeFetch(url => feed.handle(url) ?? { json: {} })
+    await mount()
+    await screen.findByRole('region', { name: 'Mateo Rivera' })
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'End match' }))
     let sheet = await screen.findByRole('dialog')
@@ -138,8 +146,11 @@ describe('ScorerPage', () => {
     expect(within(sheet).getByRole('button', { name: 'Confirm' })).toBeEnabled()
 
     // The clock reaches zero while the sheet from End match is still open and mid-pick.
+    // Push the update and wait out one real poll interval (scorer defaults to 1000ms) --
+    // this test doesn't use fake timers, so userEvent above stays on its normal real clock.
     const expired = sampleMatch({ clock: { elapsedMs: 300_000, startedAt: null, lengthMs: 300_000 } })
-    act(() => es.emit('snapshot', sampleSnapshot({ mats: [{ id: 1, number: 1, current: expired, onDeck: [], bound: true }], matches: [expired] })))
+    feed.push(sampleSnapshot({ mats: [{ id: 1, number: 1, current: expired, onDeck: [], bound: true }], matches: [expired] }))
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 1100)) })
 
     expect(beep).toHaveBeenCalled()
     sheet = screen.getByRole('dialog')
@@ -150,17 +161,19 @@ describe('ScorerPage', () => {
 
   it('does not auto-retry a 409 sequence conflict, and sends the corrected seq on the next tap', async () => {
     let scoreAttempts = 0
+    const feed = snapshotFeed(sampleSnapshot())
     const f = fakeFetch(url => {
+      const fromFeed = feed.handle(url)
+      if (fromFeed) return fromFeed
       if (url !== '/api/matches/10/events') return { json: {} }
-      scoreAttempts++
+      scoreAttempts += 1
       if (scoreAttempts === 1) {
         return { status: 409, json: { error: { code: 'sequence', message: 'stale sequence', currentSeq: 7, match: sampleMatch({ lastSeq: 7 }) } } }
       }
       return { json: { match: sampleMatch({ lastSeq: 8 }), version: 5 } }
     })
-    const es = await mount()
-    act(() => es.emit('snapshot', sampleSnapshot()))
-    const left = screen.getByRole('region', { name: 'Mateo Rivera' })
+    await mount()
+    const left = await screen.findByRole('region', { name: 'Mateo Rivera' })
     const takedown = within(left).getByRole('button', { name: /Takedown/ })
     const user = userEvent.setup()
 
@@ -177,13 +190,13 @@ describe('ScorerPage', () => {
 
   it('clears the expiry flash after its timeout', async () => {
     vi.useFakeTimers({ now: T0 })
-    fakeFetch(() => ({ json: {} }))
-    const es = await mount()
     const expired = sampleMatch({ clock: { elapsedMs: 300_000, startedAt: null, lengthMs: 300_000 } })
-    act(() => es.emit('snapshot', sampleSnapshot({ mats: [{ id: 1, number: 1, current: expired, onDeck: [], bound: true }], matches: [expired] })))
+    const feed = snapshotFeed(sampleSnapshot({ mats: [{ id: 1, number: 1, current: expired, onDeck: [], bound: true }], matches: [expired] }))
+    fakeFetch(url => feed.handle(url) ?? { json: {} })
+    await mount()
     const center = screen.getByText('0:00').closest('div')!
     expect(center).toHaveClass('bg-warn/10')
-    act(() => { vi.advanceTimersByTime(1500) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
     expect(center).not.toHaveClass('bg-warn/10')
   })
 
@@ -193,10 +206,10 @@ describe('ScorerPage', () => {
     await mount()
     const heartbeats = () => f.calls.filter(c => c.url === '/api/mats/1/heartbeat')
     expect(heartbeats()).toHaveLength(1)
-    act(() => { vi.advanceTimersByTime(20_000) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(20_000) })
     expect(heartbeats()).toHaveLength(2)
     cleanup()
-    act(() => { vi.advanceTimersByTime(20_000) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(20_000) })
     expect(heartbeats()).toHaveLength(2)
   })
 })

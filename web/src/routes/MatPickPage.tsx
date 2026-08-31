@@ -28,8 +28,8 @@ export default function MatPickPage() {
     if (!eventId) return
     let ignore = false
     setError(null)
-    api<Snapshot>(`/api/events/${eventId}/board`)
-      .then(s => { if (!ignore) setSnapshot(s) })
+    api<{ version: number; snapshot: Snapshot }>(`/api/events/${eventId}/snapshot`)
+      .then(body => { if (!ignore) setSnapshot(body.snapshot) })
       .catch(e => { if (!ignore) setError(e instanceof ApiError ? e.message : 'Could not reach the server') })
     return () => { ignore = true }
   }, [eventId])
