@@ -50,6 +50,24 @@ export const athletes = sqliteTable('athletes', {
   uniqueIndex('athletes_event_wl_uid_idx').on(t.eventId, t.wlUid),
 ])
 
+export const rosterCandidates = sqliteTable('roster_candidates', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  eventId: integer('event_id').notNull().references(() => events.id, { onDelete: 'cascade' }),
+  wlUid: text('wl_uid').notNull(),
+  firstName: text('first_name').notNull(),
+  lastName: text('last_name').notNull(),
+  belt: text('belt'),
+  wlLocation: text('wl_location'),
+  leaderboardId: text('leaderboard_id'),
+  erp: real('erp'),
+  age: integer('age'),
+  weightLbs: integer('weight_lbs'),
+  gender: text('gender'),
+}, t => [
+  index('roster_candidates_event_idx').on(t.eventId),
+  uniqueIndex('roster_candidates_event_wl_uid_idx').on(t.eventId, t.wlUid),
+])
+
 export const rulesets = sqliteTable('rulesets', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   eventId: integer('event_id').notNull().references(() => events.id, { onDelete: 'cascade' }),
@@ -115,6 +133,7 @@ export const matchEvents = sqliteTable('match_events', {
 export type EventRow = typeof events.$inferSelect
 export type TeamRow = typeof teams.$inferSelect
 export type AthleteRow = typeof athletes.$inferSelect
+export type RosterCandidateRow = typeof rosterCandidates.$inferSelect
 export type RulesetRow = typeof rulesets.$inferSelect
 export type MatRow = typeof mats.$inferSelect
 export type MatchRow = typeof matches.$inferSelect

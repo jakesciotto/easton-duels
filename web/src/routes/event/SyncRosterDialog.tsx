@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import { ApiError } from '@/lib/api'
-import type { EventDetail } from '@/lib/types'
+import type { EventDetail, RosterCandidate } from '@/lib/types'
 import { beltLabel } from '@/lib/format'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -12,31 +12,19 @@ import { List, ListRow } from '@/components/ui/list'
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 interface Location { kBusiness: string; title: string; city: string }
-interface Candidate {
-  wlUid: string
-  firstName: string
-  lastName: string
-  belt: string | null
-  wlLocation: string
-  leaderboardId: string | null
-  erp: number | null
-  age: number | null
-  weightLbs: number | null
-  gender: string | null
-}
 
 export function SyncRosterDialog({ detail, open, onOpenChange }: { detail: EventDetail; open: boolean; onOpenChange: (o: boolean) => void }) {
   const eventId = detail.event.id
   const [locations, setLocations] = useState<Location[] | null>(null)
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
-  const [candidates, setCandidates] = useState<Candidate[] | null>(null)
+  const [candidates, setCandidates] = useState<RosterCandidate[] | null>(null)
   const [warnings, setWarnings] = useState<string[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [search, setSearch] = useState('')
   const [pulling, setPulling] = useState(false)
   const already = useMemo(() => new Set(detail.athletes.map(a => a.wlUid).filter((uid): uid is string => uid !== null)), [detail.athletes])
-  const add = useAdminMutation(eventId, (cands: Candidate[]) => adminApi(`/api/events/${eventId}/athletes`, { method: 'POST', body: { candidates: cands } }))
+  const add = useAdminMutation(eventId, (cands: RosterCandidate[]) => adminApi(`/api/events/${eventId}/athletes`, { method: 'POST', body: { candidates: cands } }))
   // pull() runs from a button click, not the effect below, so a plain boolean ignore flag isn't
   // enough: closing then reopening before a pull resolves would reset the flag along with
   // everything else, and the stale response would land anyway. A generation counter that only
@@ -71,7 +59,7 @@ export function SyncRosterDialog({ detail, open, onOpenChange }: { detail: Event
     setPulling(true)
     setError(null)
     try {
-      const r = await adminApi<{ candidates: Candidate[]; warnings: string[] }>(`/api/events/${eventId}/roster/sync`, { method: 'POST', body: { kBusinesses: [...picked] } })
+      const r = await adminApi<{ candidates: RosterCandidate[]; warnings: string[] }>(`/api/events/${eventId}/roster/sync`, { method: 'POST', body: { kBusinesses: [...picked] } })
       if (generation.current !== myGeneration) return
       setCandidates(r.candidates)
       setWarnings(r.warnings)

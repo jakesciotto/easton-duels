@@ -41,3 +41,10 @@ export interface RosterCandidate {
   weightLbs: number | null
   gender: string | null
 }
+
+// Mirrors roster_candidates: the same fields as RosterCandidate, plus the row's own id
+// and the event it belongs to.
+export interface RosterCandidateRow extends RosterCandidate {
+  id: number
+  eventId: number
+}

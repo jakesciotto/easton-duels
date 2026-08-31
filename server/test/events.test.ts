@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { createTestApp, call } from './helpers.js'
 import { seedEvent } from './fixtures.js'
-import { mats, matches } from '../src/db/schema.js'
+import { mats, matches, rosterCandidates } from '../src/db/schema.js'
 
 const body = { name: 'Fall Duels', date: '2026-10-03', matCount: 2, teams: [{ name: 'Boulder', color: 'red' }, { name: 'Denver', color: 'blue' }] }
 
@@ -29,6 +29,18 @@ describe('events', () => {
     const one = await call(app, 'GET', `/api/events/${r.body.event.id}`, undefined, adminToken)
     expect(one.status).toBe(200)
     expect(one.body.athletes).toEqual([])
+    expect(one.body.candidateCount).toBe(0)
+  })
+
+  it('counts the cached candidate pool on event detail', async () => {
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db, { matches: 0 })
+    await db.insert(rosterCandidates).values([
+      { eventId: s.eventId, wlUid: 'u1', firstName: 'Ana', lastName: 'Reyes' },
+      { eventId: s.eventId, wlUid: 'u2', firstName: 'Kai', lastName: 'Voss' },
+    ]).run()
+    const r = await call(app, 'GET', `/api/events/${s.eventId}`, undefined, adminToken)
+    expect(r.body.candidateCount).toBe(2)
   })
 
   it('422s on a bad colour or mat count', async () => {

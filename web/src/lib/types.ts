@@ -54,8 +54,20 @@ export interface MatchRow {
   lastSeq: number
   why: string | null
 }
-export interface EventDetail { event: EventRow; teams: TeamRow[]; athletes: AthleteRow[]; rulesets: RulesetRow[]; mats: MatRow[]; matches: MatchRow[] }
+export interface EventDetail { event: EventRow; teams: TeamRow[]; athletes: AthleteRow[]; rulesets: RulesetRow[]; mats: MatRow[]; matches: MatchRow[]; candidateCount: number }
 export type EventSummary = EventRow & { teams: TeamRow[] }
+export interface RosterCandidate {
+  wlUid: string
+  firstName: string
+  lastName: string
+  belt: string | null
+  wlLocation: string
+  leaderboardId: string | null
+  erp: number | null
+  age: number | null
+  weightLbs: number | null
+  gender: string | null
+}
 export interface ManualKid {
   firstName: string
   lastName: string

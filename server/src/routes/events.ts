@@ -1,9 +1,9 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
-import { asc, desc, eq } from 'drizzle-orm'
+import { asc, count, desc, eq } from 'drizzle-orm'
 import type { Env } from '../context.js'
 import type { DbLike } from '../db/client.js'
-import { events, teams, athletes, rulesets, mats, matches } from '../db/schema.js'
+import { events, teams, athletes, rulesets, mats, matches, rosterCandidates } from '../db/schema.js'
 import { validate } from '../lib/validate.js'
 import { lanIp } from '../lib/lanIp.js'
 import { errorJson, requireAdmin } from '../auth/middleware.js'
@@ -41,6 +41,7 @@ const patchEventSchema = z.object({
 export async function eventDetail(db: DbLike, eventId: number) {
   const ev = await db.select().from(events).where(eq(events.id, eventId)).get()
   if (!ev) return null
+  const candidateRow = await db.select({ n: count() }).from(rosterCandidates).where(eq(rosterCandidates.eventId, eventId)).get()
   return {
     event: ev,
     teams: await db.select().from(teams).where(eq(teams.eventId, eventId)).orderBy(asc(teams.position)).all(),
@@ -48,6 +49,7 @@ export async function eventDetail(db: DbLike, eventId: number) {
     rulesets: await db.select().from(rulesets).where(eq(rulesets.eventId, eventId)).orderBy(asc(rulesets.id)).all(),
     mats: await db.select().from(mats).where(eq(mats.eventId, eventId)).orderBy(asc(mats.number)).all(),
     matches: await db.select().from(matches).where(eq(matches.eventId, eventId)).orderBy(asc(matches.orderIndex), asc(matches.id)).all(),
+    candidateCount: candidateRow?.n ?? 0,
   }
 }
 

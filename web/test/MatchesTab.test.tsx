@@ -33,6 +33,7 @@ const detail: EventDetail = {
     match(2, { athleteAId: 101, athleteBId: 201, matId: 2, why: 'ERP 5.0 vs 4.8' }),
     match(3, { status: 'done', winnerAthleteId: 100, winType: 'points' }),
   ],
+  candidateCount: 0,
 }
 
 // Adds a 4th pending match that puts Mateo Rivera (100, already Team A in match 1)

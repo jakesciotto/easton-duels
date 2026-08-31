@@ -33,7 +33,7 @@ const candidateSchema = z.object({
 const addSchema = z.union([
   z.object({ manual: manualSchema }),
   z.object({ bulk: z.array(manualSchema).min(1).max(200) }),
-  z.object({ candidates: z.array(candidateSchema).min(1).max(500) }),
+  z.object({ candidates: z.array(candidateSchema).min(1).max(500), teamId: z.number().int().nullable().optional() }),
 ])
 
 const patchSchema = manualSchema.partial()
@@ -44,7 +44,7 @@ async function teamBelongs(db: DbLike, eventId: number, teamId: number | null | 
   return t !== undefined
 }
 
-export async function upsertCandidates(db: DbLike, eventId: number, candidates: RosterCandidate[]): Promise<void> {
+export async function upsertCandidates(db: DbLike, eventId: number, candidates: RosterCandidate[], teamId: number | null = null): Promise<void> {
   await db.transaction(async tx => {
     for (const cand of candidates) {
       const existing = await tx.select().from(athletes).where(and(eq(athletes.eventId, eventId), eq(athletes.wlUid, cand.wlUid))).get()
@@ -53,7 +53,7 @@ export async function upsertCandidates(db: DbLike, eventId: number, candidates: 
       }
       if (!existing) {
         await tx.insert(athletes).values({
-          eventId, firstName: cand.firstName, lastName: cand.lastName, source: 'wl', wlUid: cand.wlUid, ...fromLeaderboard,
+          eventId, firstName: cand.firstName, lastName: cand.lastName, source: 'wl', wlUid: cand.wlUid, teamId, ...fromLeaderboard,
           age: cand.age, ageSource: cand.age === null ? null : 'leaderboard',
           weightLbs: cand.weightLbs, weightSource: cand.weightLbs === null ? null : 'leaderboard',
         }).run()
@@ -101,7 +101,8 @@ athleteRoutes.post('/events/:eventId/athletes', requireAdmin, validate('json', a
       await bumpVersion(tx, eventId)
     })
   } else {
-    await upsertCandidates(db, eventId, body.candidates)
+    if (!await teamBelongs(db, eventId, body.teamId)) return errorJson(c, 422, 'validation', 'teamId is not on this event')
+    await upsertCandidates(db, eventId, body.candidates, body.teamId ?? null)
   }
   return c.json((await eventDetail(db, eventId))!.athletes, 201)
 })

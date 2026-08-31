@@ -25,6 +25,7 @@ const detail: EventDetail = {
   athletes: [kid(100, 1, 'Mateo', 'Rivera'), kid(101, 1, 'Ava', 'Park'), kid(200, 2, 'Olivia', 'Kim'), kid(201, 2, 'Noah', 'Tran')],
   rulesets: [], mats: [],
   matches: [match(1, { status: 'done', pointsA: 4, pointsB: 2, winnerAthleteId: 100, winType: 'points' }), match(2, { athleteAId: 101, athleteBId: 201 })],
+  candidateCount: 0,
 }
 
 function mount(d: EventDetail = detail) {

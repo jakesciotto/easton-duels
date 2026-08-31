@@ -30,6 +30,26 @@ describe('athletes', () => {
     expect(again[0]).toMatchObject({ age: 9, ageSource: 'manual', erp: 5.9 })
   })
 
+  it('assigns a team to inserted candidates but leaves an existing match unchanged, and validates teamId', async () => {
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db, { matches: 0 })
+    const r = await call(app, 'POST', `/api/events/${s.eventId}/athletes`, { candidates: [candidate], teamId: s.teamA }, adminToken)
+    const zoe = r.body.find((a: any) => a.wlUid === 'u100')
+    expect(zoe).toMatchObject({ teamId: s.teamA })
+    // A resync of the same candidate never moves them off a team an admin already set.
+    await call(app, 'PATCH', `/api/athletes/${zoe.id}`, { teamId: null }, adminToken)
+    const again = await call(app, 'POST', `/api/events/${s.eventId}/athletes`, { candidates: [candidate], teamId: s.teamB }, adminToken)
+    expect(again.body.find((a: any) => a.wlUid === 'u100')).toMatchObject({ teamId: null })
+    expect((await call(app, 'POST', `/api/events/${s.eventId}/athletes`, { candidates: [{ ...candidate, wlUid: 'u200' }], teamId: 999 }, adminToken)).status).toBe(422)
+  })
+
+  it('leaves candidates unassigned when no teamId is given, exactly as before', async () => {
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db, { matches: 0 })
+    const r = await call(app, 'POST', `/api/events/${s.eventId}/athletes`, { candidates: [candidate] }, adminToken)
+    expect(r.body.find((a: any) => a.wlUid === 'u100')).toMatchObject({ teamId: null })
+  })
+
   it('assigns teams, patches fields, and refuses to delete a kid in a match', async () => {
     const { app, db, adminToken } = await createTestApp()
     const s = await seedEvent(db)

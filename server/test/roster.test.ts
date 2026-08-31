@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import { eq } from 'drizzle-orm'
 import { deriveKidsBelt, kidsQuery } from '../src/roster/belts.js'
 import { ageFromAgeGroup, weightFromWeightClass } from '../src/roster/parse.js'
 import { makeCompetitorId } from '../src/roster/slug.js'
@@ -6,6 +7,7 @@ import { buildCandidates } from '../src/roster/join.js'
 import { rosterFromEnv } from '../src/roster/config.js'
 import { WlRequestError } from '../src/roster/wl.js'
 import type { WlBeltRecord, LeaderboardCompetitor } from '../src/roster/types.js'
+import { events, rosterCandidates } from '../src/db/schema.js'
 import { createTestApp, call } from './helpers.js'
 import { seedEvent } from './fixtures.js'
 
@@ -171,5 +173,35 @@ describe('roster routes', () => {
     const r = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['100001', '100002'] }, adminToken)
     expect(r.status).toBe(200)
     expect(r.body.candidates).toHaveLength(2)
+  })
+
+  it('replaces the cached pool on every sync instead of accumulating it, and never bumps the event version', async () => {
+    const { app, db, adminToken } = await createTestApp({ roster: { wl: fakeWl, leaderboard: null, syncBudgetMs: null } })
+    const s = await seedEvent(db)
+    const before = (await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)).body.version
+    await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['100001'] }, adminToken)
+    let rows = await db.select().from(rosterCandidates).where(eq(rosterCandidates.eventId, s.eventId)).all()
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ wlUid: '9', belt: 'grey' })
+    // A second sync with a different pull result replaces the first, it does not add to it.
+    const shrunkWl = { ...fakeWl, async fetchKidsBeltRecords() { return [] } }
+    const { app: app2 } = await createTestApp({ db, roster: { wl: shrunkWl, leaderboard: null, syncBudgetMs: null } })
+    await call(app2, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['100001'] }, adminToken)
+    rows = await db.select().from(rosterCandidates).where(eq(rosterCandidates.eventId, s.eventId)).all()
+    expect(rows).toHaveLength(0)
+    const after = (await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)).body.version
+    expect(after).toBe(before)
+  })
+
+  it('serves the cached pool as RosterCandidate[] and drops it when the event is deleted', async () => {
+    const { app, db, adminToken } = await createTestApp({ roster: { wl: fakeWl, leaderboard: null, syncBudgetMs: null } })
+    const s = await seedEvent(db, { matches: 0 })
+    await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['100001'] }, adminToken)
+    const r = await call(app, 'GET', `/api/events/${s.eventId}/candidates`, undefined, adminToken)
+    expect(r.status).toBe(200)
+    expect(r.body).toEqual([{ wlUid: '9', firstName: 'Zoe', lastName: 'Martin', belt: 'grey', wlLocation: 'North', leaderboardId: null, erp: null, age: null, weightLbs: null, gender: null }])
+    expect((await call(app, 'GET', '/api/events/999999/candidates', undefined, adminToken)).status).toBe(404)
+    await db.delete(events).where(eq(events.id, s.eventId)).run()
+    expect(await db.select().from(rosterCandidates).where(eq(rosterCandidates.eventId, s.eventId)).all()).toEqual([])
   })
 })

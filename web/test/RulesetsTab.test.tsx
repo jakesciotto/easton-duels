@@ -12,7 +12,7 @@ afterEach(() => vi.unstubAllGlobals())
 
 const detail: EventDetail = {
   event: { id: 7, name: 'Fall Duels', date: '2026-10-03', matCount: 1, matCode: '0420', status: 'setup', maxAgeGap: 1, maxWeightGap: 10, sameGender: false, createdAt: 'x' },
-  teams: [], athletes: [], mats: [], matches: [],
+  teams: [], athletes: [], mats: [], matches: [], candidateCount: 0,
   rulesets: [{ id: 1, eventId: 7, name: 'Default', defaultLengthSec: 300, actions: [{ key: 'takedown', label: 'Takedown', points: 2 }], terminals: [{ key: 'pin', label: 'Pin', winType: 'submission' }] }],
 }
 

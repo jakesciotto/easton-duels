@@ -1,14 +1,14 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
-import { eq } from 'drizzle-orm'
+import { asc, eq } from 'drizzle-orm'
 import type { Env } from '../context.js'
-import { events } from '../db/schema.js'
+import { events, rosterCandidates } from '../db/schema.js'
 import { validate } from '../lib/validate.js'
 import { errorJson, requireAdmin } from '../auth/middleware.js'
 import { fetchCompetitors } from '../roster/leaderboard.js'
 import { buildCandidates } from '../roster/join.js'
 import { WlRequestError } from '../roster/wl.js'
-import type { WlBeltRecord, LeaderboardCompetitor } from '../roster/types.js'
+import type { WlBeltRecord, LeaderboardCompetitor, RosterCandidate } from '../roster/types.js'
 
 export const rosterRoutes = new Hono<Env>()
 
@@ -63,5 +63,25 @@ rosterRoutes.post('/events/:eventId/roster/sync', requireAdmin, validate('json',
   } else {
     warnings.push('Leaderboard not configured. No ERP join.')
   }
-  return c.json({ candidates: buildCandidates(records, competitors), warnings })
+  const candidates = buildCandidates(records, competitors)
+  // The pool is a cache of the last import, not append-only history: each sync replaces
+  // it wholesale so a competitor who left WL (or was mis-ranked) drops out too. Candidates
+  // are admin-only data outside the live snapshot, so this never bumps the event version.
+  await db.transaction(async tx => {
+    await tx.delete(rosterCandidates).where(eq(rosterCandidates.eventId, eventId)).run()
+    if (candidates.length > 0) await tx.insert(rosterCandidates).values(candidates.map(cand => ({ eventId, ...cand }))).run()
+  })
+  return c.json({ candidates, warnings })
+})
+
+rosterRoutes.get('/events/:eventId/candidates', requireAdmin, async c => {
+  const { db } = c.get('ctx')
+  const eventId = Number(c.req.param('eventId'))
+  if (!await db.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get()) return errorJson(c, 404, 'not_found', 'event not found')
+  const rows = await db.select().from(rosterCandidates).where(eq(rosterCandidates.eventId, eventId)).orderBy(asc(rosterCandidates.lastName), asc(rosterCandidates.firstName)).all()
+  const body: RosterCandidate[] = rows.map(r => ({
+    wlUid: r.wlUid, firstName: r.firstName, lastName: r.lastName, belt: r.belt, wlLocation: r.wlLocation ?? '',
+    leaderboardId: r.leaderboardId, erp: r.erp, age: r.age, weightLbs: r.weightLbs, gender: r.gender,
+  }))
+  return c.json(body)
 })
