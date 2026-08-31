@@ -39,6 +39,15 @@ describe('RosterTab', () => {
     expect(within(pool).getByText((_, el) => el?.textContent === 'ERP 5.2')).toBeInTheDocument()
   })
 
+  it('shows the sync button only before a pool has ever been imported', () => {
+    fakeFetch(() => ({ json: [] }))
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const { rerender } = render(<QueryClientProvider client={qc}><RosterTab detail={detail} /></QueryClientProvider>)
+    expect(screen.getByRole('button', { name: 'Sync from WellnessLiving' })).toBeInTheDocument()
+    rerender(<QueryClientProvider client={qc}><RosterTab detail={{ ...detail, candidateCount: 12 }} /></QueryClientProvider>)
+    expect(screen.queryByRole('button', { name: 'Sync from WellnessLiving' })).not.toBeInTheDocument()
+  })
+
   it('lays out the team grid at two columns on medium screens and three on extra-large', () => {
     fakeFetch(() => ({ json: [] }))
     mount()

@@ -160,10 +160,10 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" onClick={() => setAddOpen(true)}>Add competitor</Button>
         <Button size="sm" variant="secondary" onClick={() => setPasteOpen(true)}>Paste roster</Button>
-        <Button size="sm" variant="secondary" onClick={() => setSyncOpen(true)}>Sync from WellnessLiving</Button>
+        {detail.candidateCount === 0 && <Button size="sm" variant="secondary" onClick={() => setSyncOpen(true)}>Sync from WellnessLiving</Button>}
         {(assign.error || patch.error) && <p role="alert" className="self-center text-[13px] text-destructive">{(assign.error ?? patch.error)?.message}</p>}
       </div>
-      <AddKidDialog detail={detail} open={addOpen} onOpenChange={setAddOpen} />
+      <AddKidDialog detail={detail} open={addOpen} onOpenChange={setAddOpen} onRefresh={() => setSyncOpen(true)} />
       <PasteRosterDialog detail={detail} open={pasteOpen} onOpenChange={setPasteOpen} />
       <SyncRosterDialog detail={detail} open={syncOpen} onOpenChange={setSyncOpen} />
       <Dialog open={removing !== null} onOpenChange={o => { if (!o) closeRemove() }}>
