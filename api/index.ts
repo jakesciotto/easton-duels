@@ -72,6 +72,15 @@ export default async function handler(req: unknown, res: unknown) {
       try {
         out.isoFetch = import.meta.resolve('@libsql/isomorphic-fetch')
       } catch (e) { out.isoFetch = String(e).slice(0, 120) }
+      try {
+        const fetchBefore = globalThis.fetch
+        await import('../server/src/app.js')
+        out.fetchSameAfterApp = fetchBefore === globalThis.fetch
+        const { createClient } = await import('@libsql/client')
+        const c = createClient({ url, authToken: t })
+        await c.execute('select 1')
+        out.afterAppImport = 'ok'
+      } catch (e) { out.afterAppImport = String(e).slice(0, 160) }
       w.statusCode = 200
       w.setHeader('content-type', 'application/json')
       w.end(JSON.stringify(out))
