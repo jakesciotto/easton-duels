@@ -3,6 +3,12 @@ import type { DbLike } from '../db/client.js'
 import type { MatchRow } from '../db/schema.js'
 import { appendMatchEvent, loadMatch, MatchStateError, SeqConflict } from './events.js'
 
+// True when another writer holds the write lock. Transactions open their own connection,
+// so a concurrent expiry pass raises this instead of serialising behind the first one.
+export function isBusy(e: unknown): boolean {
+  return e instanceof LibsqlError && e.code === 'SQLITE_BUSY'
+}
+
 // Returns the match when it wrote the expiry pause, null when nothing needed writing.
 export async function expireClock(db: DbLike, matchId: number, atIso: string): Promise<MatchRow | null> {
   const match = await loadMatch(db, matchId)
@@ -14,7 +20,7 @@ export async function expireClock(db: DbLike, matchId: number, atIso: string): P
     if (e instanceof SeqConflict || e instanceof MatchStateError) return null
     // Another writer holds the file lock, most likely a concurrent expiry call for the
     // same match. Treat it like a duplicate: the next poll re-checks and catches up.
-    if (e instanceof LibsqlError && e.code === 'SQLITE_BUSY') return null
+    if (isBusy(e)) return null
     throw e
   }
 }

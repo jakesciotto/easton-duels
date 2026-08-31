@@ -24,8 +24,11 @@ export const matchRoutes = new Hono<Env>()
 matchRoutes.post('/events/:eventId/matches/generate', requireAdmin, async c => {
   const { db } = c.get('ctx')
   const eventId = Number(c.req.param('eventId'))
-  const result = await generateMatches(db, eventId)
-  await bumpVersion(db, eventId)
+  const result = await db.transaction(async tx => {
+    const generated = await generateMatches(tx, eventId)
+    await bumpVersion(tx, eventId)
+    return generated
+  })
   return c.json(result)
 })
 
@@ -44,13 +47,17 @@ matchRoutes.post('/events/:eventId/matches', requireAdmin, validate('json', crea
     return errorJson(c, 422, 'validation', 'mat is not on this event')
   }
   const max = await db.select({ m: sql<number>`coalesce(max(${matches.orderIndex}), -1)` }).from(matches).where(eq(matches.eventId, eventId)).get()
-  const row = await db.insert(matches).values({
-    eventId, athleteAId: pair.a, athleteBId: pair.b, rulesetId: ruleset.id,
-    lengthSec: body.lengthSec ?? ruleset.defaultLengthSec,
-    matId: body.matId === undefined ? await leastLoadedMat(db, eventId) : body.matId,
-    orderIndex: (max?.m ?? -1) + 1,
-  }).returning().get()
-  await bumpVersion(db, eventId)
+  const matId = body.matId === undefined ? await leastLoadedMat(db, eventId) : body.matId
+  const row = await db.transaction(async tx => {
+    const inserted = await tx.insert(matches).values({
+      eventId, athleteAId: pair.a, athleteBId: pair.b, rulesetId: ruleset.id,
+      lengthSec: body.lengthSec ?? ruleset.defaultLengthSec,
+      matId,
+      orderIndex: (max?.m ?? -1) + 1,
+    }).returning().get()
+    await bumpVersion(tx, eventId)
+    return inserted
+  })
   return c.json(row, 201)
 })
 
@@ -78,8 +85,10 @@ matchRoutes.patch('/matches/:matchId', requireAdmin, validate('json', patchSchem
     if (body.matId !== null && !await db.select({ id: mats.id }).from(mats).where(and(eq(mats.id, body.matId), eq(mats.eventId, existing.eventId))).get()) return errorJson(c, 422, 'validation', 'mat is not on this event')
     update.matId = body.matId
   }
-  if (Object.keys(update).length > 0) await db.update(matches).set(update).where(eq(matches.id, id)).run()
-  await bumpVersion(db, existing.eventId)
+  await db.transaction(async tx => {
+    if (Object.keys(update).length > 0) await tx.update(matches).set(update).where(eq(matches.id, id)).run()
+    await bumpVersion(tx, existing.eventId)
+  })
   return c.json(await db.select().from(matches).where(eq(matches.id, id)).get())
 })
 
