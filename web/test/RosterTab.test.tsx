@@ -39,6 +39,28 @@ describe('RosterTab', () => {
     expect(within(pool).getByText((_, el) => el?.textContent === 'ERP 5.2')).toBeInTheDocument()
   })
 
+  it('lays out the team grid at two columns on medium screens and three on extra-large', () => {
+    fakeFetch(() => ({ json: [] }))
+    mount()
+    const grid = screen.getByRole('region', { name: 'Boulder' }).parentElement
+    expect(grid?.className).toContain('lg:grid-cols-2')
+    expect(grid?.className).toContain('xl:grid-cols-3')
+    expect(grid?.className).not.toContain('lg:grid-cols-3')
+  })
+
+  it('splits each roster row into a name line and a separate wrapping meta line', () => {
+    fakeFetch(() => ({ json: [] }))
+    mount()
+    const pool = screen.getByRole('region', { name: 'Unassigned' })
+    const nameCell = within(pool).getByText('Noah Kid')
+    const nameLine = nameCell.parentElement as HTMLElement
+    expect(within(nameLine).getByRole('button', { name: 'Remove Noah Kid' })).toBeInTheDocument()
+    expect(within(nameLine).queryByText('Grey')).not.toBeInTheDocument()
+    const row = nameLine.parentElement as HTMLElement
+    expect(within(row).getByText('Grey')).toBeInTheDocument()
+    expect(within(row).getByText('missing age')).toBeInTheDocument()
+  })
+
   it('assigns selected kids to a team', async () => {
     const f = fakeFetch(() => ({ json: [] }))
     mount()

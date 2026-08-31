@@ -37,25 +37,25 @@ function KidRow({ kid, selected, onSelect, onPatch, onRemove }: {
 }) {
   const name = athleteName(kid)
   return (
-    <ListRow draggable onDragStart={e => e.dataTransfer.setData('text/plain', String(kid.id))} className="flex items-center gap-3">
-      <Checkbox aria-label={`Select ${name}`} checked={selected} onCheckedChange={checked => onSelect(checked)} />
-      <div className="min-w-0 flex-1">
-        <div className="truncate font-medium">{name}</div>
-        <div className="flex flex-wrap items-center gap-2 text-[13px] text-faint">
-          <span>{beltLabel(kid.belt)}</span>
-          {kid.gender && <span>{kid.gender}</span>}
-          {kid.erp !== null && <Badge>ERP <span className="font-mono tabular-nums">{kid.erp.toFixed(1)}</span></Badge>}
-          {kid.age === null && <Badge variant="warn">missing age</Badge>}
-          {kid.weightLbs === null && <Badge variant="warn">missing weight</Badge>}
-        </div>
+    <ListRow draggable onDragStart={e => e.dataTransfer.setData('text/plain', String(kid.id))} className="grid gap-1.5">
+      <div className="flex items-center gap-3">
+        <Checkbox aria-label={`Select ${name}`} checked={selected} onCheckedChange={checked => onSelect(checked)} />
+        <div className="min-w-0 flex-1 truncate font-medium">{name}</div>
+        <Button size="sm" variant="ghost" aria-label={`Remove ${name}`} onClick={onRemove}>Remove</Button>
       </div>
-      <label className="flex items-center gap-1.5 text-[13px] text-faint">age
-        <NumberCell label={`Age for ${name}`} value={kid.age} source={kid.ageSource} onSave={age => onPatch({ age })} />
-      </label>
-      <label className="flex items-center gap-1.5 text-[13px] text-faint">lb
-        <NumberCell label={`Weight for ${name}`} value={kid.weightLbs} source={kid.weightSource} onSave={weightLbs => onPatch({ weightLbs })} />
-      </label>
-      <Button size="sm" variant="ghost" aria-label={`Remove ${name}`} onClick={onRemove}>Remove</Button>
+      <div className="flex flex-wrap items-center gap-2 pl-6 text-[13px] text-faint">
+        <span>{beltLabel(kid.belt)}</span>
+        {kid.gender && <span>{kid.gender}</span>}
+        {kid.erp !== null && <Badge>ERP <span className="font-mono tabular-nums">{kid.erp.toFixed(1)}</span></Badge>}
+        {kid.age === null && <Badge variant="warn">missing age</Badge>}
+        {kid.weightLbs === null && <Badge variant="warn">missing weight</Badge>}
+        <label className="flex items-center gap-1.5">age
+          <NumberCell label={`Age for ${name}`} value={kid.age} source={kid.ageSource} onSave={age => onPatch({ age })} />
+        </label>
+        <label className="flex items-center gap-1.5">lb
+          <NumberCell label={`Weight for ${name}`} value={kid.weightLbs} source={kid.weightSource} onSave={weightLbs => onPatch({ weightLbs })} />
+        </label>
+      </div>
     </ListRow>
   )
 }
@@ -181,7 +181,7 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
           </DialogContent>
         )}
       </Dialog>
-      <div className="grid items-start gap-4 lg:grid-cols-3">
+      <div className="grid items-start gap-4 lg:grid-cols-2 xl:grid-cols-3">
         <Column title={teamA.name} roleLabel="Team A" color={teamA.color} teamId={teamA.id} kids={byTeam(teamA.id)} selected={selected} onSelect={onSelect} onPatch={(id, body) => patch.mutate({ id, body })} onMove={onMove} onRemove={setRemoving} />
         <Column title="Unassigned" color={null} teamId={null} kids={byTeam(null)} selected={selected} onSelect={onSelect} onPatch={(id, body) => patch.mutate({ id, body })} onMove={onMove} onRemove={setRemoving} />
         <Column title={teamB.name} roleLabel="Team B" color={teamB.color} teamId={teamB.id} kids={byTeam(teamB.id)} selected={selected} onSelect={onSelect} onPatch={(id, body) => patch.mutate({ id, body })} onMove={onMove} onRemove={setRemoving} />
