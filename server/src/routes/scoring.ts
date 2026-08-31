@@ -10,7 +10,7 @@ import { pinMatches } from '../auth/pin.js'
 import { signToken, tokenExpiry } from '../auth/tokens.js'
 import { appendMatchEvent, endMatch, undoLastMatchEvent, loadMatch, latestEndedAt, bumpVersion, SeqConflict } from '../match/events.js'
 import { advanceMat, reopenMatch, setResult, skipMatch } from '../match/mats.js'
-import { toMatchView } from '../live/snapshot.js'
+import { toMatchView, buildSnapshot } from '../live/snapshot.js'
 import { heartbeatMat } from '../live/bound.js'
 
 export const scoringRoutes = new Hono<Env>()
@@ -27,10 +27,10 @@ async function matchView(c: Context<Env>, match: MatchRow) {
 }
 
 export async function respond(c: Context<Env>, match: MatchRow, bump = true) {
-  const { db, hub, expiry } = c.get('ctx')
+  const { db, expiry } = c.get('ctx')
   expiry.sync(match)
   if (bump) await bumpVersion(db, match.eventId)
-  const snap = bump ? await hub.broadcast(match.eventId) : await hub.snapshot(match.eventId)
+  const snap = await buildSnapshot(db, match.eventId, { nowMs: Date.now() })
   return c.json({ match: snap.matches.find(m => m.id === match.id) ?? await matchView(c, match), version: snap.version })
 }
 
@@ -59,12 +59,10 @@ scoringRoutes.post('/events/:eventId/mats/:matId/bind', validate('json', z.objec
 })
 
 scoringRoutes.post('/mats/:matId/heartbeat', requireMatOrAdmin(c => Number(c.req.param('matId'))), async c => {
-  const { db, hub } = c.get('ctx')
+  const { db } = c.get('ctx')
   const mat = await db.select().from(mats).where(eq(mats.id, Number(c.req.param('matId')))).get()
   if (!mat) return errorJson(c, 404, 'not_found', 'mat not found')
-  const wasBound = mat.bound
   await heartbeatMat(db, mat.id, mat.eventId, Date.now())
-  if (!wasBound) await hub.broadcast(mat.eventId)
   return c.json({ ok: true })
 })
 

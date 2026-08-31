@@ -1,7 +1,6 @@
 import type { Db } from './db/client.js'
 import type { TokenPayload } from './auth/tokens.js'
 import type { RateLimiter } from './auth/rateLimit.js'
-import type { Hub } from './live/hub.js'
 import type { ExpiryScheduler } from './match/expiry.js'
 import type { WlLike, LeaderboardConfig } from './roster/types.js'
 
@@ -16,7 +15,6 @@ export interface AppContext {
   secret: string
   adminPin: string
   limiter: RateLimiter
-  hub: Hub
   expiry: ExpiryScheduler
   roster: RosterConfig
 }

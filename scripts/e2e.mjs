@@ -31,25 +31,13 @@ async function waitForHealth() {
   throw new Error('server did not come up')
 }
 
-function sseReader(res) {
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  return async function next() {
-    while (true) {
-      const idx = buffer.indexOf('\n\n')
-      if (idx >= 0) {
-        const chunk = buffer.slice(0, idx)
-        buffer = buffer.slice(idx + 2)
-        if (!chunk.includes('event: snapshot')) continue
-        const data = chunk.split('\n').find(l => l.startsWith('data:'))
-        return JSON.parse(data.slice(5).trim())
-      }
-      const { value, done } = await reader.read()
-      if (done) throw new Error('stream closed')
-      buffer += decoder.decode(value, { stream: true })
-    }
+async function pollSnapshot(eventId, since = -1) {
+  for (let i = 0; i < 50; i++) {
+    const r = await j('GET', `/api/events/${eventId}/snapshot?since=${since}`)
+    if (r.body.snapshot) return r.body
+    await new Promise(res => setTimeout(res, 100))
   }
+  throw new Error('no new snapshot')
 }
 
 try {
@@ -72,23 +60,19 @@ try {
   assert(bind.status === 200, 'mat bound')
   const mat = bind.body.token
 
-  const controller = new AbortController()
-  const stream = await fetch(`${base}/api/events/${eventId}/stream`, { signal: controller.signal })
-  const next = sseReader(stream)
-  const first = await next()
-  assert(first.event.id === eventId, 'first snapshot')
-  const matchId = first.mats[0].current.id
-  const athleteA = first.mats[0].current.a.athleteId
+  let poll = await pollSnapshot(eventId)
+  assert(poll.snapshot.event.id === eventId, 'first snapshot')
+  const matchId = poll.snapshot.mats[0].current.id
+  const athleteA = poll.snapshot.mats[0].current.a.athleteId
 
   const scored = await j('POST', `/api/matches/${matchId}/events`, { id: 'e2e-score-0001', type: 'score', athleteId: athleteA, actionKey: 'mount', lastSeq: 0 }, mat)
   assert(scored.status === 200 && scored.body.match.a.score === 4, 'mount scored')
-  const s1 = await next()
-  assert(s1.teams[0].points === 4, 'team points in stream')
+  poll = await pollSnapshot(eventId, poll.version)
+  assert(poll.snapshot.teams[0].points === 4, 'team points in snapshot')
   const ended = await j('POST', `/api/matches/${matchId}/end`, { id: 'e2e-end-0001', lastSeq: 1 }, mat)
   assert(ended.body.match.status === 'done', 'match done')
-  const s2 = await next()
-  assert(s2.teams[0].wins === 1, 'team win in stream')
-  controller.abort()
+  poll = await pollSnapshot(eventId, poll.version)
+  assert(poll.snapshot.teams[0].wins === 1, 'team win in snapshot')
   console.log('e2e ok')
 } finally {
   server.kill()

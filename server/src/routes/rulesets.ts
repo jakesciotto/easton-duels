@@ -27,29 +27,27 @@ rulesetRoutes.get('/events/:eventId/rulesets', requireAdmin, async c => {
 })
 
 rulesetRoutes.post('/events/:eventId/rulesets', requireAdmin, validate('json', rulesetSchema), async c => {
-  const { db, hub } = c.get('ctx')
+  const { db } = c.get('ctx')
   const eventId = Number(c.req.param('eventId'))
   if (!await db.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get()) return errorJson(c, 404, 'not_found', 'event not found')
   const row = await db.insert(rulesets).values({ eventId, ...c.req.valid('json') }).returning().get()
   await bumpVersion(db, eventId)
-  await hub.broadcast(eventId)
   return c.json(row, 201)
 })
 
 rulesetRoutes.patch('/rulesets/:rulesetId', requireAdmin, validate('json', rulesetSchema.partial()), async c => {
-  const { db, hub } = c.get('ctx')
+  const { db } = c.get('ctx')
   const id = Number(c.req.param('rulesetId'))
   const existing = await db.select().from(rulesets).where(eq(rulesets.id, id)).get()
   if (!existing) return errorJson(c, 404, 'not_found', 'ruleset not found')
   const fields = c.req.valid('json')
   if (Object.keys(fields).length > 0) await db.update(rulesets).set(fields).where(eq(rulesets.id, id)).run()
   await bumpVersion(db, existing.eventId)
-  await hub.broadcast(existing.eventId)
   return c.json(await db.select().from(rulesets).where(eq(rulesets.id, id)).get())
 })
 
 rulesetRoutes.delete('/rulesets/:rulesetId', requireAdmin, async c => {
-  const { db, hub } = c.get('ctx')
+  const { db } = c.get('ctx')
   const id = Number(c.req.param('rulesetId'))
   const existing = await db.select().from(rulesets).where(eq(rulesets.id, id)).get()
   if (!existing) return errorJson(c, 404, 'not_found', 'ruleset not found')
@@ -58,6 +56,5 @@ rulesetRoutes.delete('/rulesets/:rulesetId', requireAdmin, async c => {
   if (count <= 1) return errorJson(c, 409, 'match_state', 'an event needs at least one ruleset')
   await db.delete(rulesets).where(eq(rulesets.id, id)).run()
   await bumpVersion(db, existing.eventId)
-  await hub.broadcast(existing.eventId)
   return c.body(null, 204)
 })

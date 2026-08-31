@@ -17,7 +17,7 @@ describe('bind and heartbeat', () => {
     const hb = await call(app, 'POST', `/api/mats/${s.matIds[0]}/heartbeat`, {}, ok.body.token)
     expect(hb.status).toBe(200)
     expect((await call(app, 'POST', `/api/mats/${s.matIds[1]}/heartbeat`, {}, ok.body.token)).status).toBe(403)
-    expect((await call(app, 'GET', `/api/events/${s.eventId}/board`)).body.mats[0].bound).toBe(true)
+    expect((await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)).body.snapshot.mats[0].bound).toBe(true)
     for (let i = 0; i < 4; i++) await call(app, 'POST', `/api/events/${s.eventId}/mats/${s.matIds[0]}/bind`, { code: '9999' })
     expect((await call(app, 'POST', `/api/events/${s.eventId}/mats/${s.matIds[0]}/bind`, { code: '0420' })).status).toBe(429)
   })
@@ -69,9 +69,9 @@ describe('scoring flow', () => {
     expect(r.status).toBe(200)
     expect(r.body.match.status).toBe('done')
     expect(r.body.match.result).toEqual({ winnerAthleteId: s.a1, winType: 'points' })
-    const board = await call(app, 'GET', `/api/events/${s.eventId}/board`)
-    expect(board.body.mats[0].current.id).toBe(second)
-    expect(board.body.teams[0].wins).toBe(1)
+    const board = await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)
+    expect(board.body.snapshot.mats[0].current.id).toBe(second)
+    expect(board.body.snapshot.teams[0].wins).toBe(1)
   })
 
   it('advances the mat on a replayed end whose advance never landed', async () => {
@@ -81,7 +81,7 @@ describe('scoring flow', () => {
     const [first, second] = s.matchIds
     const body = { id: 'end-0001', lastSeq: 0, winnerAthleteId: s.a1 }
     await endMatch(db, { ...body, matchId: first })
-    const version = (await call(app, 'GET', `/api/events/${s.eventId}/board`)).body.version
+    const version = (await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)).body.version
     const replay = await call(app, 'POST', `/api/matches/${first}/end`, body, token)
     expect(replay.status).toBe(200)
     expect(replay.body.version).toBe(version)
@@ -142,10 +142,10 @@ describe('scoring flow', () => {
     expect(r.body.match.result).toEqual({ winnerAthleteId: s.b1, winType: 'decision' })
     r = await call(app, 'POST', `/api/matches/${first}/reopen`, undefined, adminToken)
     expect(r.body.match.status).toBe('live')
-    expect((await call(app, 'GET', `/api/events/${s.eventId}/board`)).body.mats[0].current.id).toBe(first)
+    expect((await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)).body.snapshot.mats[0].current.id).toBe(first)
     r = await call(app, 'POST', `/api/matches/${first}/skip`, undefined, adminToken)
     expect(r.body.match.status).toBe('pending')
-    expect((await call(app, 'GET', `/api/events/${s.eventId}/board`)).body.mats[0].current.id).toBe(second)
+    expect((await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)).body.snapshot.mats[0].current.id).toBe(second)
     expect((await call(app, 'POST', `/api/matches/${first}/skip`, undefined, matToken(s.eventId, s.matIds[0]))).status).toBe(403)
   })
 })

@@ -28,28 +28,36 @@ describe('POST /api/auth/admin', () => {
   })
 })
 
-describe('board and stream', () => {
+describe('snapshot polling', () => {
   it('serves a snapshot without a token and 404s an unknown event', async () => {
     const { app, db } = await createTestApp()
     const s = await seedEvent(db)
-    const r = await call(app, 'GET', `/api/events/${s.eventId}/board`)
+    const r = await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)
     expect(r.status).toBe(200)
-    expect(r.body.event.id).toBe(s.eventId)
-    expect((await call(app, 'GET', '/api/events/999/board')).status).toBe(404)
+    expect(r.body.snapshot.event.id).toBe(s.eventId)
+    expect((await call(app, 'GET', '/api/events/999/snapshot')).status).toBe(404)
   })
 
-  it('streams the first snapshot as an SSE event', async () => {
+  it('returns the full snapshot when since is stale and a slim body when current', async () => {
     const { app, db } = await createTestApp()
     const s = await seedEvent(db)
-    const res = await app.request(`/api/events/${s.eventId}/stream`)
-    expect(res.status).toBe(200)
-    expect(res.headers.get('content-type')).toContain('text/event-stream')
-    const reader = res.body!.getReader()
-    const { value } = await reader.read()
-    const text = new TextDecoder().decode(value)
-    expect(text).toContain('event: snapshot')
-    expect(text).toContain(`"id":${s.eventId}`)
-    await reader.cancel()
+    const full = await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)
+    expect(full.status).toBe(200)
+    expect(full.body.snapshot.event.id).toBe(s.eventId)
+    const version = full.body.version
+    const slim = await call(app, 'GET', `/api/events/${s.eventId}/snapshot?since=${version}`)
+    expect(slim.status).toBe(200)
+    expect(slim.body.version).toBe(version)
+    expect(slim.body.snapshot).toBeUndefined()
+    expect(typeof slim.body.now).toBe('string')
+  })
+
+  it('has no stream route', async () => {
+    const { app, db } = await createTestApp()
+    const s = await seedEvent(db)
+    const r = await call(app, 'GET', `/api/events/${s.eventId}/stream`)
+    expect(r.status).toBe(404)
+    expect(r.body.error.code).toBe('not_found')
   })
 })
 

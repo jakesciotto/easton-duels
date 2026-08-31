@@ -70,7 +70,7 @@ export async function upsertCandidates(db: DbLike, eventId: number, candidates: 
 export const athleteRoutes = new Hono<Env>()
 
 athleteRoutes.post('/events/:eventId/athletes', requireAdmin, validate('json', addSchema), async c => {
-  const { db, hub } = c.get('ctx')
+  const { db } = c.get('ctx')
   const eventId = Number(c.req.param('eventId'))
   if (!await db.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get()) return errorJson(c, 404, 'not_found', 'event not found')
   const body = c.req.valid('json')
@@ -99,12 +99,11 @@ athleteRoutes.post('/events/:eventId/athletes', requireAdmin, validate('json', a
     await upsertCandidates(db, eventId, body.candidates)
   }
   await bumpVersion(db, eventId)
-  await hub.broadcast(eventId)
   return c.json((await eventDetail(db, eventId))!.athletes, 201)
 })
 
 athleteRoutes.patch('/athletes/:athleteId', requireAdmin, validate('json', patchSchema), async c => {
-  const { db, hub } = c.get('ctx')
+  const { db } = c.get('ctx')
   const id = Number(c.req.param('athleteId'))
   const existing = await db.select().from(athletes).where(eq(athletes.id, id)).get()
   if (!existing) return errorJson(c, 404, 'not_found', 'athlete not found')
@@ -120,23 +119,21 @@ athleteRoutes.patch('/athletes/:athleteId', requireAdmin, validate('json', patch
   if (p.weightLbs !== undefined) Object.assign(update, { weightLbs: p.weightLbs, weightSource: p.weightLbs === null ? null : 'manual' })
   if (Object.keys(update).length > 0) await db.update(athletes).set(update).where(eq(athletes.id, id)).run()
   await bumpVersion(db, existing.eventId)
-  await hub.broadcast(existing.eventId)
   return c.json(await db.select().from(athletes).where(eq(athletes.id, id)).get())
 })
 
 athleteRoutes.post('/events/:eventId/athletes/assign', requireAdmin, validate('json', z.object({ ids: z.array(z.number().int()).min(1).max(500), teamId: z.number().int().nullable() })), async c => {
-  const { db, hub } = c.get('ctx')
+  const { db } = c.get('ctx')
   const eventId = Number(c.req.param('eventId'))
   const { ids, teamId } = c.req.valid('json')
   if (!await teamBelongs(db, eventId, teamId)) return errorJson(c, 422, 'validation', 'teamId is not on this event')
   await db.update(athletes).set({ teamId }).where(and(eq(athletes.eventId, eventId), inArray(athletes.id, ids))).run()
   await bumpVersion(db, eventId)
-  await hub.broadcast(eventId)
   return c.json((await eventDetail(db, eventId))!.athletes)
 })
 
 athleteRoutes.delete('/athletes/:athleteId', requireAdmin, async c => {
-  const { db, hub } = c.get('ctx')
+  const { db } = c.get('ctx')
   const id = Number(c.req.param('athleteId'))
   const existing = await db.select().from(athletes).where(eq(athletes.id, id)).get()
   if (!existing) return errorJson(c, 404, 'not_found', 'athlete not found')
@@ -144,6 +141,5 @@ athleteRoutes.delete('/athletes/:athleteId', requireAdmin, async c => {
   if (used) return errorJson(c, 409, 'match_state', 'athlete is in a match; delete the match first')
   await db.delete(athletes).where(eq(athletes.id, id)).run()
   await bumpVersion(db, existing.eventId)
-  await hub.broadcast(existing.eventId)
   return c.body(null, 204)
 })

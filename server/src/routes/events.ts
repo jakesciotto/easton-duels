@@ -75,7 +75,7 @@ eventRoutes.get('/events', requireAdmin, async c => {
 })
 
 eventRoutes.post('/events', requireAdmin, validate('json', createEventSchema), async c => {
-  const { db, hub } = c.get('ctx')
+  const { db } = c.get('ctx')
   const body = c.req.valid('json')
   const detail = await db.transaction(async tx => {
     const ev = await tx.insert(events).values({
@@ -89,7 +89,6 @@ eventRoutes.post('/events', requireAdmin, validate('json', createEventSchema), a
     await bumpVersion(tx, ev.id)
     return eventDetail(tx, ev.id)
   })
-  await hub.broadcast(detail!.event.id)
   return c.json(detail, 201)
 })
 
@@ -100,7 +99,7 @@ eventRoutes.get('/events/:eventId', requireAdmin, async c => {
 })
 
 eventRoutes.patch('/events/:eventId', requireAdmin, validate('json', patchEventSchema), async c => {
-  const { db, hub } = c.get('ctx')
+  const { db } = c.get('ctx')
   const eventId = Number(c.req.param('eventId'))
   const ev = await db.select().from(events).where(eq(events.id, eventId)).get()
   if (!ev) return errorJson(c, 404, 'not_found', 'event not found')
@@ -115,7 +114,6 @@ eventRoutes.patch('/events/:eventId', requireAdmin, validate('json', patchEventS
     }
     await bumpVersion(tx, eventId)
   })
-  await hub.broadcast(eventId)
   return c.json(await eventDetail(db, eventId))
 })
 
@@ -130,7 +128,7 @@ eventRoutes.delete('/events/:eventId', requireAdmin, async c => {
 })
 
 eventRoutes.patch('/events/:eventId/teams/:teamId', requireAdmin, validate('json', teamSchema.partial()), async c => {
-  const { db, hub } = c.get('ctx')
+  const { db } = c.get('ctx')
   const eventId = Number(c.req.param('eventId'))
   const teamId = Number(c.req.param('teamId'))
   const team = await db.select().from(teams).where(eq(teams.id, teamId)).get()
@@ -138,7 +136,6 @@ eventRoutes.patch('/events/:eventId/teams/:teamId', requireAdmin, validate('json
   const fields = c.req.valid('json')
   if (Object.keys(fields).length > 0) await db.update(teams).set(fields).where(eq(teams.id, teamId)).run()
   await bumpVersion(db, eventId)
-  await hub.broadcast(eventId)
   return c.json(await eventDetail(db, eventId))
 })
 

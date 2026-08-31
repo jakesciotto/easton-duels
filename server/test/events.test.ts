@@ -38,15 +38,15 @@ describe('events', () => {
   })
 
   it('goes live through PATCH and loads the first match on each mat', async () => {
-    const { app, db, adminToken, hub } = await createTestApp()
+    const { app, db, adminToken } = await createTestApp()
     const s = await seedEvent(db, { matCount: 2 })
-    let seen = 0
-    await hub.subscribe(s.eventId, () => { seen++ })
+    const before = (await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)).body.version
     const r = await call(app, 'PATCH', `/api/events/${s.eventId}`, { status: 'live' }, adminToken)
     expect(r.status).toBe(200)
     expect(r.body.event.status).toBe('live')
     expect((await db.select().from(mats).where(eq(mats.eventId, s.eventId)).all()).map(m => m.currentMatchId)).toEqual([s.matchIds[0], s.matchIds[1]])
-    expect(seen).toBe(2)
+    const after = (await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)).body.version
+    expect(after).toBeGreaterThan(before)
     expect((await call(app, 'PATCH', `/api/events/${s.eventId}`, { status: 'live' }, adminToken)).status).toBe(409)
     expect((await call(app, 'PATCH', `/api/events/${s.eventId}`, { status: 'done' }, adminToken)).body.event.status).toBe('done')
   })

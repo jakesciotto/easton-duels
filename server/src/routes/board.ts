@@ -1,38 +1,22 @@
-import { Hono, type Context } from 'hono'
-import { streamSSE } from 'hono/streaming'
+import { Hono } from 'hono'
 import { eq } from 'drizzle-orm'
 import type { Env } from '../context.js'
 import { events } from '../db/schema.js'
 import { errorJson } from '../auth/middleware.js'
+import { buildSnapshot } from '../live/snapshot.js'
+import { reapBound } from '../live/bound.js'
 
 export const boardRoutes = new Hono<Env>()
 
-async function eventExists(c: Context<Env>, eventId: number): Promise<boolean> {
-  return await c.get('ctx').db.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get() !== undefined
-}
-
-boardRoutes.get('/events/:eventId/board', async c => {
+boardRoutes.get('/events/:eventId/snapshot', async c => {
   const eventId = Number(c.req.param('eventId'))
-  if (!await eventExists(c, eventId)) return errorJson(c, 404, 'not_found', 'event not found')
-  return c.json(await c.get('ctx').hub.snapshot(eventId))
-})
-
-boardRoutes.get('/events/:eventId/stream', async c => {
-  const eventId = Number(c.req.param('eventId'))
-  if (!await eventExists(c, eventId)) return errorJson(c, 404, 'not_found', 'event not found')
-  const hub = c.get('ctx').hub
-  return streamSSE(c, async stream => {
-    let open = true
-    const unsubscribe = await hub.subscribe(eventId, snap => {
-      void stream.writeSSE({ event: 'snapshot', data: JSON.stringify(snap) })
-    })
-    stream.onAbort(() => {
-      open = false
-      unsubscribe()
-    })
-    while (open) {
-      await stream.sleep(15_000)
-      if (open) await stream.writeSSE({ event: 'ping', data: '' })
-    }
-  })
+  const sinceParam = Number(c.req.query('since'))
+  const since = Number.isFinite(sinceParam) ? sinceParam : -1
+  const db = c.get('ctx').db
+  const now = Date.now()
+  await reapBound(db, eventId, now)
+  const ev = await db.select({ version: events.version }).from(events).where(eq(events.id, eventId)).get()
+  if (!ev) return errorJson(c, 404, 'not_found', 'event not found')
+  if (since === ev.version) return c.json({ version: ev.version, now: new Date(now).toISOString() })
+  return c.json({ version: ev.version, snapshot: await buildSnapshot(db, eventId, { nowMs: now }) })
 })

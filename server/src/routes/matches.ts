@@ -22,16 +22,15 @@ const patchSchema = createSchema.partial()
 export const matchRoutes = new Hono<Env>()
 
 matchRoutes.post('/events/:eventId/matches/generate', requireAdmin, async c => {
-  const { db, hub } = c.get('ctx')
+  const { db } = c.get('ctx')
   const eventId = Number(c.req.param('eventId'))
   const result = await generateMatches(db, eventId)
   await bumpVersion(db, eventId)
-  await hub.broadcast(eventId)
   return c.json(result)
 })
 
 matchRoutes.post('/events/:eventId/matches', requireAdmin, validate('json', createSchema), async c => {
-  const { db, hub } = c.get('ctx')
+  const { db } = c.get('ctx')
   const eventId = Number(c.req.param('eventId'))
   if (!await db.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get()) return errorJson(c, 404, 'not_found', 'event not found')
   const body = c.req.valid('json')
@@ -52,12 +51,11 @@ matchRoutes.post('/events/:eventId/matches', requireAdmin, validate('json', crea
     orderIndex: (max?.m ?? -1) + 1,
   }).returning().get()
   await bumpVersion(db, eventId)
-  await hub.broadcast(eventId)
   return c.json(row, 201)
 })
 
 matchRoutes.patch('/matches/:matchId', requireAdmin, validate('json', patchSchema), async c => {
-  const { db, hub } = c.get('ctx')
+  const { db } = c.get('ctx')
   const id = Number(c.req.param('matchId'))
   const existing = await db.select().from(matches).where(eq(matches.id, id)).get()
   if (!existing) return errorJson(c, 404, 'not_found', 'match not found')
@@ -82,12 +80,11 @@ matchRoutes.patch('/matches/:matchId', requireAdmin, validate('json', patchSchem
   }
   if (Object.keys(update).length > 0) await db.update(matches).set(update).where(eq(matches.id, id)).run()
   await bumpVersion(db, existing.eventId)
-  await hub.broadcast(existing.eventId)
   return c.json(await db.select().from(matches).where(eq(matches.id, id)).get())
 })
 
 matchRoutes.delete('/matches/:matchId', requireAdmin, async c => {
-  const { db, hub } = c.get('ctx')
+  const { db } = c.get('ctx')
   const id = Number(c.req.param('matchId'))
   const existing = await db.select().from(matches).where(eq(matches.id, id)).get()
   if (!existing) return errorJson(c, 404, 'not_found', 'match not found')
@@ -97,12 +94,11 @@ matchRoutes.delete('/matches/:matchId', requireAdmin, async c => {
     await tx.delete(matches).where(eq(matches.id, id)).run()
     await bumpVersion(tx, existing.eventId)
   })
-  await hub.broadcast(existing.eventId)
   return c.body(null, 204)
 })
 
 matchRoutes.post('/events/:eventId/matches/reorder', requireAdmin, validate('json', z.object({ ids: z.array(z.number().int()).min(1) })), async c => {
-  const { db, hub } = c.get('ctx')
+  const { db } = c.get('ctx')
   const eventId = Number(c.req.param('eventId'))
   const { ids } = c.req.valid('json')
   const current = (await db.select({ id: matches.id }).from(matches).where(eq(matches.eventId, eventId)).all()).map(m => m.id)
@@ -112,6 +108,5 @@ matchRoutes.post('/events/:eventId/matches/reorder', requireAdmin, validate('jso
     for (const [i, id] of ids.entries()) await tx.update(matches).set({ orderIndex: i }).where(eq(matches.id, id)).run()
     await bumpVersion(tx, eventId)
   })
-  await hub.broadcast(eventId)
   return c.json((await eventDetail(db, eventId))!.matches)
 })

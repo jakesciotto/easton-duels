@@ -2,8 +2,8 @@ import { createApp } from '../src/app.js'
 import type { AppContext } from '../src/context.js'
 import { RateLimiter } from '../src/auth/rateLimit.js'
 import { signToken, tokenExpiry } from '../src/auth/tokens.js'
-import { Hub } from '../src/live/hub.js'
 import { ExpiryScheduler, expireClock } from '../src/match/expiry.js'
+import { bumpVersion } from '../src/match/events.js'
 import { freshDb } from './fixtures.js'
 
 export const TEST_SECRET = 'test-secret'
@@ -11,19 +11,18 @@ export const TEST_PIN = '123456'
 
 export async function createTestApp(overrides: Partial<AppContext> = {}) {
   const db = overrides.db ?? await freshDb()
-  const hub = overrides.hub ?? new Hub(db)
   const expiry = overrides.expiry ?? new ExpiryScheduler(async (matchId, at) => {
     const m = await expireClock(db, matchId, at)
-    if (m) await hub.broadcast(m.eventId)
+    if (m) await bumpVersion(db, m.eventId)
   })
   const ctx: AppContext = {
-    port: 0, db, secret: TEST_SECRET, adminPin: TEST_PIN, limiter: new RateLimiter(), hub, expiry,
+    port: 0, db, secret: TEST_SECRET, adminPin: TEST_PIN, limiter: new RateLimiter(), expiry,
     roster: { wl: null, leaderboard: null },
     ...overrides,
   }
   const app = createApp(ctx)
   const adminToken = signToken({ role: 'admin', exp: tokenExpiry() }, TEST_SECRET)
-  return { app, ctx, db, hub, expiry, adminToken }
+  return { app, ctx, db, expiry, adminToken }
 }
 
 export function matToken(eventId: number, matId: number): string {

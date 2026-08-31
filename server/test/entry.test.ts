@@ -96,8 +96,8 @@ describe('entry routes', () => {
     const r = await call(app, 'POST', `/api/events/${s.eventId}/entries`, { entryId: 'entry-0001', athleteAId: s.a1, athleteBId: s.b1, pointsA: 4, pointsB: 2, winnerAthleteId: s.a1, winType: 'points' }, adminToken)
     expect(r.status).toBe(201)
     expect(r.body.match).toMatchObject({ status: 'done', a: { score: 4 }, b: { score: 2 } })
-    const board = await call(app, 'GET', `/api/events/${s.eventId}/board`)
-    expect(board.body.teams.map((t: any) => [t.wins, t.points])).toEqual([[1, 4], [0, 2]])
+    const board = await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)
+    expect(board.body.snapshot.teams.map((t: any) => [t.wins, t.points])).toEqual([[1, 4], [0, 2]])
     const fix = await call(app, 'POST', `/api/matches/${r.body.match.id}/entry`, { entryId: 'entry-0002', pointsA: 4, pointsB: 4, winnerAthleteId: s.b1, winType: 'decision' }, adminToken)
     expect(fix.body.match.result).toEqual({ winnerAthleteId: s.b1, winType: 'decision' })
     expect((await call(app, 'POST', `/api/events/${s.eventId}/entries`, { entryId: 'entry-0003', athleteAId: s.a1, athleteBId: s.a2, pointsA: 0, pointsB: 0, winnerAthleteId: s.a1, winType: 'points' }, adminToken)).status).toBe(422)
@@ -117,8 +117,8 @@ describe('entry routes', () => {
     expect(replay.body.match.id).toBe(first.body.match.id)
     expect(replay.body.version).toBe(first.body.version)
     expect(await db.select().from(matches).where(eq(matches.eventId, s.eventId)).all()).toHaveLength(1)
-    const board = await call(app, 'GET', `/api/events/${s.eventId}/board`)
-    expect(board.body.teams.map((t: any) => [t.wins, t.points])).toEqual([[1, 4], [0, 2]])
+    const board = await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)
+    expect(board.body.snapshot.teams.map((t: any) => [t.wins, t.points])).toEqual([[1, 4], [0, 2]])
   })
 
   it('replays a match entry as a no-op', async () => {
