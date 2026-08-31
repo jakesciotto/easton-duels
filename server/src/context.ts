@@ -13,6 +13,7 @@ export interface AppContext {
   secret: string
   adminPin: string
   roster: RosterConfig
+  publicUrl?: string
 }
 
 export type Env = { Variables: { ctx: AppContext; auth: TokenPayload | null } }
