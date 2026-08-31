@@ -7,6 +7,7 @@ import { validate } from '../lib/validate.js'
 import { errorJson, requireAdmin } from '../auth/middleware.js'
 import { fetchCompetitors } from '../roster/leaderboard.js'
 import { buildCandidates } from '../roster/join.js'
+import { WlRequestError } from '../roster/wl.js'
 import type { WlBeltRecord, LeaderboardCompetitor } from '../roster/types.js'
 
 export const rosterRoutes = new Hono<Env>()
@@ -31,21 +32,23 @@ rosterRoutes.post('/events/:eventId/roster/sync', requireAdmin, validate('json',
   const records: WlBeltRecord[] = []
   // One report per location, each of which can poll for minutes. Without an overall budget
   // a multi-location sync outlives the function's time limit and the admin dialog sees a
-  // platform timeout instead of an envelope it can render.
+  // platform timeout instead of an envelope it can render. The same absolute deadline is
+  // handed to every location's own fetch, so a report that is still polling when the budget
+  // runs out gives up mid-flight instead of only being caught once it returns.
   const deadline = roster.syncBudgetMs === null ? null : Date.now() + roster.syncBudgetMs
+  const outOfTime = (done: number) => `roster sync ran out of time after ${done} of ${kBusinesses.length} locations; sync fewer at once`
   let done = 0
   try {
     const byK = new Map((await roster.wl.listLocations()).map(l => [l.kBusiness, l]))
     for (const k of kBusinesses) {
       const loc = byK.get(k)
       if (!loc) return errorJson(c, 422, 'validation', `unknown location ${k}`)
-      if (deadline !== null && Date.now() > deadline) {
-        return errorJson(c, 503, 'wl_error', `roster sync ran out of time after ${done} of ${kBusinesses.length} locations; sync fewer at once`)
-      }
-      records.push(...await roster.wl.fetchKidsBeltRecords(k, loc.title))
+      if (deadline !== null && Date.now() > deadline) return errorJson(c, 503, 'wl_error', outOfTime(done))
+      records.push(...await roster.wl.fetchKidsBeltRecords(k, loc.title, deadline ?? undefined))
       done += 1
     }
   } catch (e) {
+    if (e instanceof WlRequestError && e.message === 'sync deadline exceeded') return errorJson(c, 503, 'wl_error', outOfTime(done))
     return errorJson(c, 503, 'wl_error', e instanceof Error ? e.message : 'WellnessLiving request failed')
   }
   let competitors: LeaderboardCompetitor[] = []

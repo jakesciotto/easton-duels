@@ -40,23 +40,33 @@ describe('pin', () => {
 })
 
 describe('clientIp', () => {
-  function build() {
-    const app = new Hono()
+  function build(publicUrl: string | undefined) {
+    const app = new Hono<Env>()
+    app.use('*', async (c, next) => {
+      c.set('ctx', { publicUrl } as unknown as AppContext)
+      await next()
+    })
     app.get('/ip', c => c.json({ ip: clientIp(c) }))
     return app
   }
 
-  it('prefers the leftmost x-forwarded-for entry, then x-real-ip', async () => {
-    const app = build()
+  it('cloud mode (publicUrl set): prefers the leftmost x-forwarded-for entry, then x-real-ip', async () => {
+    const app = build('https://duels.example.com')
     const forwarded = await app.request('/ip', { headers: { 'x-forwarded-for': ' 203.0.113.7 , 70.41.3.18 ', 'x-real-ip': '198.51.100.5' } })
     expect(await forwarded.json()).toEqual({ ip: '203.0.113.7' })
     const real = await app.request('/ip', { headers: { 'x-real-ip': ' 198.51.100.5 ' } })
     expect(await real.json()).toEqual({ ip: '198.51.100.5' })
   })
 
-  it('falls back when no proxy header is present', async () => {
-    const app = build()
+  it('cloud mode (publicUrl set): falls back when no proxy header is present', async () => {
+    const app = build('https://duels.example.com')
     const r = await app.request('/ip')
+    expect((await r.json()).ip).toBe('unknown')
+  })
+
+  it('LAN mode (no publicUrl): ignores forwarded headers entirely, even when spoofed', async () => {
+    const app = build(undefined)
+    const r = await app.request('/ip', { headers: { 'x-forwarded-for': '203.0.113.7', 'x-real-ip': '198.51.100.5' } })
     expect((await r.json()).ip).toBe('unknown')
   })
 })

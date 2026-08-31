@@ -60,6 +60,25 @@ describe('WlClient', () => {
     expect(body.s_sql).toContain("text_rank_category = 'O''Brien Kids Belts'")
   })
 
+  it('aborts mid-poll once the deadline passes, instead of finishing the report', async () => {
+    const { fetchFn, calls } = fakeFetch([
+      token,
+      { json: { id_report_status: 2 } },
+      { json: { id_report_status: 3, a_field: ['uid'], a_row: [['7']] } },
+    ])
+    const wl = new WlClient(cfg, { fetchFn, sleep: noSleep })
+    await expect(wl.fetchKidsBeltRecords('1', 'X', Date.now() - 1)).rejects.toThrow('sync deadline exceeded')
+    // Stopped after the first (still-queued) poll response and never reached the second,
+    // completing one -- the deadline bounds the location itself, not just its start.
+    expect(calls).toHaveLength(2)
+  })
+
+  it('checks the deadline before a retry backoff too, not only between polls', async () => {
+    const { fetchFn } = fakeFetch([token, { status: 502, json: {} }])
+    const wl = new WlClient(cfg, { fetchFn, sleep: noSleep, maxAttempts: 5 })
+    await expect(wl.fetchKidsBeltRecords('1', 'X', Date.now() - 1)).rejects.toThrow('sync deadline exceeded')
+  })
+
   it('refuses a page whose row count equals the limit', async () => {
     const rows = Array.from({ length: 3 }, (_, i) => [String(i), 'Grey Belt', 'Kids', 'A', 'B', ''])
     const { fetchFn } = fakeFetch([token, { json: { id_report_status: 3, a_field: ['uid', 'text_rank', 'text_rank_category', 'o_client.text_first', 'o_client.text_last', 'o_rank_promotion_date.dtl_promotion_date'], a_row: rows } }])

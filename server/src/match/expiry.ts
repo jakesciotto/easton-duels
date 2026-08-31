@@ -3,8 +3,9 @@ import type { DbLike } from '../db/client.js'
 import type { MatchRow } from '../db/schema.js'
 import { appendMatchEvent, loadMatch, MatchStateError, SeqConflict } from './events.js'
 
-// True when another writer holds the write lock. Transactions open their own connection,
-// so a concurrent expiry pass raises this instead of serialising behind the first one.
+// True when another writer holds the write lock. The caller's own transaction boundary
+// (expireOverdue, reapBound) is what can actually contend for it; a poll that loses the
+// race simply retries on the next one.
 export function isBusy(e: unknown): boolean {
   return e instanceof LibsqlError && e.code === 'SQLITE_BUSY'
 }
@@ -18,9 +19,6 @@ export async function expireClock(db: DbLike, matchId: number, atIso: string): P
     return r.duplicate ? null : r.match
   } catch (e) {
     if (e instanceof SeqConflict || e instanceof MatchStateError) return null
-    // Another writer holds the file lock, most likely a concurrent expiry call for the
-    // same match. Treat it like a duplicate: the next poll re-checks and catches up.
-    if (isBusy(e)) return null
     throw e
   }
 }

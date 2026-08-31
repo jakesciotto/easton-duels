@@ -47,4 +47,26 @@ describe('bound', () => {
     expect(mat?.bound).toBe(false)
     expect(ev?.version).toBe(2)
   })
+
+  it('does not double-reap under two concurrent polls for the same stale mat', async () => {
+    const db = await freshDb()
+    const s = await seedEvent(db)
+    const matId = s.matIds[0]
+    const t0 = 10_000
+
+    await heartbeatMat(db, matId, s.eventId, t0)
+    const staleAt = t0 + BOUND_WINDOW_MS + 1_000
+
+    // Same SQLITE_BUSY tolerance as expireOverdue: the loser is refused the write lock
+    // and drops out rather than throwing out of the route as a 500.
+    await Promise.all([
+      reapBound(db, s.eventId, staleAt),
+      reapBound(db, s.eventId, staleAt),
+    ])
+
+    const mat = await db.select().from(mats).where(eq(mats.id, matId)).get()
+    const ev = await db.select().from(events).where(eq(events.id, s.eventId)).get()
+    expect(mat?.bound).toBe(false)
+    expect(ev?.version).toBe(2)
+  })
 })

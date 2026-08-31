@@ -13,7 +13,7 @@ export interface WlBeltRecord {
 
 export interface WlLike {
   listLocations(): Promise<WlLocation[]>
-  fetchKidsBeltRecords(kBusiness: string, location: string): Promise<WlBeltRecord[]>
+  fetchKidsBeltRecords(kBusiness: string, location: string, deadlineMs?: number): Promise<WlBeltRecord[]>
 }
 
 export interface LeaderboardConfig { url: string; key: string }

@@ -4,6 +4,7 @@ import { ageFromAgeGroup, weightFromWeightClass } from '../src/roster/parse.js'
 import { makeCompetitorId } from '../src/roster/slug.js'
 import { buildCandidates } from '../src/roster/join.js'
 import { rosterFromEnv } from '../src/roster/config.js'
+import { WlRequestError } from '../src/roster/wl.js'
 import type { WlBeltRecord, LeaderboardCompetitor } from '../src/roster/types.js'
 import { createTestApp, call } from './helpers.js'
 import { seedEvent } from './fixtures.js'
@@ -118,26 +119,39 @@ describe('roster routes', () => {
     expect((await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['1'] }, adminToken)).status).toBe(422)
   })
 
-  it('gives up between locations once the sync budget is spent', async () => {
+  it('gives up mid-location once the sync budget is spent, not only between locations', async () => {
     // Real start point: the admin token's expiry is checked against this same clock.
     const clock = { ms: Date.now() }
     const slowWl = {
       async listLocations() {
         return ['100001', '100002', '100003'].map((kBusiness, i) => ({ kBusiness, title: `Site ${i + 1}`, city: 'Northtown' }))
       },
-      async fetchKidsBeltRecords(kBusiness: string, location: string) {
-        clock.ms += 200_000
+      // Mirrors the real WlClient: several sleeps inside one location's own fetch, each
+      // one checking the deadline the route passed down, rather than one lump sum that
+      // only the between-locations check could ever catch.
+      async fetchKidsBeltRecords(kBusiness: string, location: string, deadlineMs?: number) {
+        const polls = kBusiness === '100001' ? 2 : 4
+        for (let poll = 0; poll < polls; poll++) {
+          clock.ms += 70_000
+          if (deadlineMs !== undefined && clock.ms > deadlineMs) throw new WlRequestError('sync deadline exceeded', null, null)
+        }
         return [{ uid: kBusiness, kBusiness, location, firstName: 'Zoe', lastName: 'Martin', rankTitle: 'Grey Belt', categoryTitle: 'Kids IBJJF Belts', promotedAt: null }]
       },
     }
-    const { app, db, adminToken } = await createTestApp({ roster: { wl: slowWl, leaderboard: null, syncBudgetMs: 280_000 } })
+    const { app, db, adminToken } = await createTestApp({ roster: { wl: slowWl, leaderboard: null, syncBudgetMs: 300_000 } })
     const s = await seedEvent(db)
     const spy = vi.spyOn(Date, 'now').mockImplementation(() => clock.ms)
+    const start = clock.ms
     try {
       const r = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['100001', '100002', '100003'] }, adminToken)
       expect(r.status).toBe(503)
       expect(r.body.error.code).toBe('wl_error')
-      expect(r.body.error.message).toContain('2 of 3 locations')
+      // Location 1 completes (140_000ms) and passes the between-locations check at 300_000ms.
+      // Location 2 needs 280_000ms to run to completion (420_000ms total) but is aborted at
+      // its third poll -- 350_000ms in, well before it would ever return and well before a
+      // location 3 would even start.
+      expect(r.body.error.message).toContain('1 of 3 locations')
+      expect(clock.ms - start).toBe(350_000)
     } finally {
       spy.mockRestore()
     }

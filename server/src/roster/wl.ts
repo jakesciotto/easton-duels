@@ -21,6 +21,9 @@ export interface WlClientOptions {
   maxPolls?: number
   maxAttempts?: number
   kidsLimit?: number
+  // Absolute epoch ms. A per-call deadline (passed to fetchKidsBeltRecords/queryReportPage)
+  // always overrides this constructor default.
+  deadlineMs?: number
 }
 
 interface ReportResponse { id_report_status?: number; dtu_complete?: string; a_field?: string[]; a_row?: unknown[][] }
@@ -33,6 +36,7 @@ export class WlClient implements WlLike {
   private readonly maxPolls: number
   private readonly maxAttempts: number
   private readonly kidsLimit: number
+  private readonly deadlineMs: number | null
 
   constructor(private readonly cfg: WlConfig, opts: WlClientOptions = {}) {
     this.fetchFn = opts.fetchFn ?? fetch
@@ -41,6 +45,7 @@ export class WlClient implements WlLike {
     this.maxPolls = opts.maxPolls ?? 60
     this.maxAttempts = opts.maxAttempts ?? 5
     this.kidsLimit = opts.kidsLimit ?? 10_000
+    this.deadlineMs = opts.deadlineMs ?? null
   }
 
   async getToken(): Promise<string> {
@@ -84,7 +89,14 @@ export class WlClient implements WlLike {
   // WL reports compute asynchronously: the first submit queues (status 2), later identical
   // submits return the cached result (status 3). Poll until complete; back off on 5xx.
   // i_offset paging is broken with s_sql, so this issues one page at the given limit.
-  async queryReportPage(opts: { cidReport: number; kBusiness: string; limit: number; sSql?: string }): Promise<{ fields: string[]; rows: unknown[][] }> {
+  // deadlineMs (absolute epoch, per call) bounds the location this call is fetching for --
+  // checked before every poll sleep and every retry backoff sleep, so a report that is slow
+  // to complete cannot run past the caller's overall time budget.
+  async queryReportPage(opts: { cidReport: number; kBusiness: string; limit: number; sSql?: string; deadlineMs?: number }): Promise<{ fields: string[]; rows: unknown[][] }> {
+    const deadline = opts.deadlineMs ?? this.deadlineMs
+    const checkDeadline = () => {
+      if (deadline !== null && Date.now() >= deadline) throw new WlRequestError('sync deadline exceeded', null, null)
+    }
     const body: Record<string, unknown> = {
       k_business: opts.kBusiness, cid_report: opts.cidReport, i_limit: opts.limit, i_offset: 0,
       is_backend: 1, is_refresh: 0, s_sort: 'uid', json_filter: {},
@@ -96,12 +108,14 @@ export class WlClient implements WlLike {
         for (let poll = 0; poll < this.maxPolls; poll++) {
           const res = await this.request<ReportResponse>('/v1/report/query', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
           if ((res.id_report_status ?? 0) >= 3 || res.dtu_complete) return { fields: res.a_field ?? [], rows: res.a_row ?? [] }
+          checkDeadline()
           await this.sleep(this.pollMs)
         }
         throw new WlRequestError(`report ${opts.cidReport} did not complete after ${this.maxPolls} polls`, null, null)
       } catch (err) {
         const retriable = err instanceof WlRequestError && err.status !== null && err.status >= 500
         if (!retriable || attempt === this.maxAttempts - 1) throw err
+        checkDeadline()
         await this.sleep(delay)
         delay *= 2
       }
@@ -109,8 +123,8 @@ export class WlClient implements WlLike {
     throw new WlRequestError('report query exhausted retries', null, null)
   }
 
-  async fetchKidsBeltRecords(kBusiness: string, location: string): Promise<WlBeltRecord[]> {
-    const page = await this.queryReportPage({ cidReport: BELTS_REPORT, kBusiness, limit: this.kidsLimit, sSql: kidsQuery(this.cfg.kidsCategory) })
+  async fetchKidsBeltRecords(kBusiness: string, location: string, deadlineMs?: number): Promise<WlBeltRecord[]> {
+    const page = await this.queryReportPage({ cidReport: BELTS_REPORT, kBusiness, limit: this.kidsLimit, sSql: kidsQuery(this.cfg.kidsCategory), deadlineMs })
     if (page.rows.length >= this.kidsLimit) {
       throw new WlRequestError(`${location} returned ${page.rows.length} rows, equal to the limit; the page may be truncated`, null, null)
     }
