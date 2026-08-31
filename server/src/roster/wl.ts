@@ -1,5 +1,5 @@
 import type { WlLike, WlLocation, WlBeltRecord } from './types.js'
-import { KIDS_QUERY, normalizeTitle } from './belts.js'
+import { kidsQuery, normalizeTitle } from './belts.js'
 
 const AUTH_URL = 'https://access.api.wellnessliving.io/oauth2/token'
 const API_BASE = 'https://api.wellnessliving.io'
@@ -12,7 +12,7 @@ export class WlRequestError extends Error {
   }
 }
 
-export interface WlConfig { clientId: string; clientSecret: string; region: string; business: string }
+export interface WlConfig { clientId: string; clientSecret: string; region: string; business: string; kidsCategory?: string }
 
 export interface WlClientOptions {
   fetchFn?: typeof fetch
@@ -110,7 +110,7 @@ export class WlClient implements WlLike {
   }
 
   async fetchKidsBeltRecords(kBusiness: string, location: string): Promise<WlBeltRecord[]> {
-    const page = await this.queryReportPage({ cidReport: BELTS_REPORT, kBusiness, limit: this.kidsLimit, sSql: KIDS_QUERY })
+    const page = await this.queryReportPage({ cidReport: BELTS_REPORT, kBusiness, limit: this.kidsLimit, sSql: kidsQuery(this.cfg.kidsCategory) })
     if (page.rows.length >= this.kidsLimit) {
       throw new WlRequestError(`${location} returned ${page.rows.length} rows, equal to the limit; the page may be truncated`, null, null)
     }

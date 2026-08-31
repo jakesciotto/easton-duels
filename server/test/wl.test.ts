@@ -49,6 +49,17 @@ describe('WlClient', () => {
     await expect(wl.fetchKidsBeltRecords('1', 'X')).rejects.toBeInstanceOf(WlRequestError)
   })
 
+  it('threads cfg.kidsCategory into an exact-match query', async () => {
+    const { fetchFn, calls } = fakeFetch([
+      token,
+      { json: { id_report_status: 3, a_field: ['uid', 'text_rank', 'text_rank_category', 'o_client.text_first', 'o_client.text_last', 'o_rank_promotion_date.dtl_promotion_date'], a_row: [] } },
+    ])
+    const wl = new WlClient({ ...cfg, kidsCategory: "O'Brien Kids Belts" }, { fetchFn, sleep: noSleep })
+    await wl.fetchKidsBeltRecords('100001', 'Boulder')
+    const body = JSON.parse(String(calls[1].init?.body))
+    expect(body.s_sql).toContain("text_rank_category = 'O''Brien Kids Belts'")
+  })
+
   it('refuses a page whose row count equals the limit', async () => {
     const rows = Array.from({ length: 3 }, (_, i) => [String(i), 'Grey Belt', 'Kids', 'A', 'B', ''])
     const { fetchFn } = fakeFetch([token, { json: { id_report_status: 3, a_field: ['uid', 'text_rank', 'text_rank_category', 'o_client.text_first', 'o_client.text_last', 'o_rank_promotion_date.dtl_promotion_date'], a_row: rows } }])

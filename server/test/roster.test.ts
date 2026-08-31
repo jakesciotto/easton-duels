@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deriveKidsBelt, KIDS_QUERY } from '../src/roster/belts.js'
+import { deriveKidsBelt, kidsQuery } from '../src/roster/belts.js'
 import { ageFromAgeGroup, weightFromWeightClass } from '../src/roster/parse.js'
 import { makeCompetitorId } from '../src/roster/slug.js'
 import { buildCandidates } from '../src/roster/join.js'
@@ -17,9 +17,16 @@ describe('deriveKidsBelt', () => {
     expect(deriveKidsBelt('Blue Belt')).toBeNull()
     expect(deriveKidsBelt('')).toBeNull()
   })
-  it('keeps the query lowercase and kids-only', () => {
-    expect(KIDS_QUERY.startsWith('select ')).toBe(true)
-    expect(KIDS_QUERY).toContain("like '%Kids%'")
+  it('keeps the default query lowercase and narrowed to kids IBJJF categories', () => {
+    const q = kidsQuery()
+    expect(q.startsWith('select ')).toBe(true)
+    expect(q).toContain("like '%Kids%'")
+    expect(q).toContain("like '%IBJJF%'")
+  })
+  it('overrides with an exact category title, escaping an embedded quote', () => {
+    const q = kidsQuery("O'Brien Kids Belts")
+    expect(q).toContain("text_rank_category = 'O''Brien Kids Belts'")
+    expect(q).not.toContain('%Kids%')
   })
 })
 
