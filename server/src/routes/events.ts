@@ -134,8 +134,10 @@ eventRoutes.patch('/events/:eventId/teams/:teamId', requireAdmin, validate('json
   const team = await db.select().from(teams).where(eq(teams.id, teamId)).get()
   if (!team || team.eventId !== eventId) return errorJson(c, 404, 'not_found', 'team not found')
   const fields = c.req.valid('json')
-  if (Object.keys(fields).length > 0) await db.update(teams).set(fields).where(eq(teams.id, teamId)).run()
-  await bumpVersion(db, eventId)
+  await db.transaction(async tx => {
+    if (Object.keys(fields).length > 0) await tx.update(teams).set(fields).where(eq(teams.id, teamId)).run()
+    await bumpVersion(tx, eventId)
+  })
   return c.json(await eventDetail(db, eventId))
 })
 
