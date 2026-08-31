@@ -21,12 +21,19 @@ function derive(match: MatchView, ruleset: RulesetView | null): { winner: number
 
 export function useScorer(binding: MatBinding, snapshot: Snapshot | null, connected: boolean) {
   const mat = snapshot?.mats.find(m => m.id === binding.matId) ?? null
-  const current = mat?.current ?? null
-  const ruleset = current ? snapshot?.rulesets.find(r => r.id === current.rulesetId) ?? null : null
+  const polled = mat?.current ?? null
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [sheet, setSheet] = useState<Sheet | null>(null)
+  const [written, setWritten] = useState<MatchView | null>(null)
   const seqRef = useRef<{ matchId: number; seq: number } | null>(null)
+
+  // The snapshot poll is up to a full interval behind this scorer's own writes, so a tap
+  // right after another one would read the pre-write clock and scores: Start then Start
+  // again, or an End sheet asking to break a tie that a takedown already broke. The write
+  // response is authoritative for its own match until the poll catches up on seq.
+  const current = written && polled && written.id === polled.id && polled.lastSeq < written.lastSeq ? written : polled
+  const ruleset = current ? snapshot?.rulesets.find(r => r.id === current.rulesetId) ?? null : null
 
   // The newest seq wins, whether it came from the stream or from a write response.
   if (current && (!seqRef.current || seqRef.current.matchId !== current.id || current.lastSeq > seqRef.current.seq)) {
@@ -49,6 +56,7 @@ export function useScorer(binding: MatBinding, snapshot: Snapshot | null, connec
     try {
       const r = await fn(current.id, seqRef.current.seq)
       seqRef.current = { matchId: r.match.id, seq: Math.max(seqRef.current.seq, r.match.lastSeq) }
+      setWritten(r.match)
       return r
     } catch (e) {
       if (e instanceof ApiError && e.code === 'sequence') {

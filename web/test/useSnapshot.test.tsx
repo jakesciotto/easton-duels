@@ -85,6 +85,27 @@ describe('useSnapshot', () => {
     expect(f.calls.length).toBe(callsAtUnmount)
   })
 
+  it('polls at once when the tab becomes visible again', async () => {
+    const f = fakeFetch(() => ({ json: { version: 1, snapshot: sampleSnapshot({ version: 1 }) } }))
+    Object.defineProperty(document, 'hidden', { value: true, configurable: true })
+    const { unmount } = renderHook(() => useSnapshot(1, 60_000))
+    try {
+      await flush()
+      expect(f.calls.length).toBe(0)
+      Object.defineProperty(document, 'hidden', { value: false, configurable: true })
+      act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+      await flush()
+      // No timer was advanced: the wake-up polled instead of waiting out the interval.
+      expect(f.calls.length).toBe(1)
+      unmount()
+      act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+      await flush()
+      expect(f.calls.length).toBe(1)
+    } finally {
+      Object.defineProperty(document, 'hidden', { value: false, configurable: true })
+    }
+  })
+
   it('pauses polling while document.hidden is true', async () => {
     const f = fakeFetch(() => ({ json: { version: 1, snapshot: sampleSnapshot({ version: 1 }) } }))
     Object.defineProperty(document, 'hidden', { value: true, configurable: true })

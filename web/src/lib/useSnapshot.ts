@@ -44,8 +44,21 @@ export function useSnapshot(eventId: number | null, pollMs = POLL_MS): StreamSta
       }
       timer = setTimeout(tick, pollMs)
     }
+    // A background tab's timers are throttled to about one tick a minute, so a locked iPad
+    // or a TV that came out of its screensaver would keep rendering the previous match until
+    // that late tick landed. Waking on visibilitychange polls at once instead.
+    const wake = () => {
+      if (ignore || document.hidden) return
+      if (timer) clearTimeout(timer)
+      void tick()
+    }
+    document.addEventListener('visibilitychange', wake)
     void tick()
-    return () => { ignore = true; if (timer) clearTimeout(timer) }
+    return () => {
+      ignore = true
+      if (timer) clearTimeout(timer)
+      document.removeEventListener('visibilitychange', wake)
+    }
   }, [eventId, pollMs])
 
   return state
