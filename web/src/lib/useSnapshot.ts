@@ -21,10 +21,12 @@ export function useSnapshot(eventId: number | null, pollMs = POLL_MS): StreamSta
     let failures = 0
     let timer: ReturnType<typeof setTimeout> | undefined
     let version = -1
+    let inFlight = false
 
     const tick = async () => {
-      if (ignore) return
+      if (ignore || inFlight) return
       if (document.hidden) { timer = setTimeout(tick, pollMs); return }
+      inFlight = true
       try {
         const res = await fetch(`/api/events/${eventId}/snapshot?since=${version}`)
         if (!res.ok) throw new Error(String(res.status))
@@ -41,14 +43,18 @@ export function useSnapshot(eventId: number | null, pollMs = POLL_MS): StreamSta
         if (ignore) return
         failures += 1
         if (failures >= 3) setState(s => (s.connected ? { ...s, connected: false } : s))
+      } finally {
+        inFlight = false
       }
-      timer = setTimeout(tick, pollMs)
+      if (!ignore) timer = setTimeout(tick, pollMs)
     }
     // A background tab's timers are throttled to about one tick a minute, so a locked iPad
     // or a TV that came out of its screensaver would keep rendering the previous match until
-    // that late tick landed. Waking on visibilitychange polls at once instead.
+    // that late tick landed. Waking on visibilitychange polls at once instead -- but only when
+    // no fetch is already in flight, or the same lock/unlock sequence starts a second poll
+    // chain that never stops (the in-flight tick already schedules its own next timer).
     const wake = () => {
-      if (ignore || document.hidden) return
+      if (ignore || document.hidden || inFlight) return
       if (timer) clearTimeout(timer)
       void tick()
     }

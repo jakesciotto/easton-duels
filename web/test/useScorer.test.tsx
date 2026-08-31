@@ -9,8 +9,8 @@ const binding: MatBinding = { eventId: 1, matId: 1, matNumber: 1, eventName: 'Fa
 
 afterEach(() => vi.unstubAllGlobals())
 
-function snapshotWith(current: ReturnType<typeof sampleMatch>): Snapshot {
-  return sampleSnapshot({ mats: [{ id: 1, number: 1, current, onDeck: [], bound: true }], matches: [current] })
+function snapshotWith(current: ReturnType<typeof sampleMatch>, version = 1): Snapshot {
+  return sampleSnapshot({ version, mats: [{ id: 1, number: 1, current, onDeck: [], bound: true }], matches: [current] })
 }
 
 describe('useScorer', () => {
@@ -42,17 +42,33 @@ describe('useScorer', () => {
     expect(result.current.sheet).toEqual({ reason: 'end', winner: 100, winType: 'points' })
   })
 
-  it('hands authority back to the poll once its seq catches up', async () => {
+  it("hands authority to a newer-version poll even when its seq is lower, as with another device's undo", async () => {
     const scored = sampleMatch({ lastSeq: 1, a: { ...sampleMatch().a, score: 2 } })
     fakeFetch(url => (url === '/api/matches/10/events' ? { json: { match: scored, version: 2 } } : { json: { ok: true } }))
-    const { result, rerender } = renderHook(({ snap }: { snap: Snapshot }) => useScorer(binding, snap, true), { initialProps: { snap: sampleSnapshot() } })
+    const { result, rerender } = renderHook(({ snap }: { snap: Snapshot }) => useScorer(binding, snap, true), { initialProps: { snap: sampleSnapshot({ version: 1 }) } })
 
     await act(async () => { await result.current.tap(100, 'takedown') })
     expect(result.current.current?.a.score).toBe(2)
 
-    const undone = sampleMatch({ lastSeq: 2 })
-    rerender({ snap: snapshotWith(undone) })
+    // Another device undoes the tap: the poll's seq goes DOWN (below this scorer's own
+    // write), but its version is newer, so it must still win the handoff.
+    const undone = sampleMatch({ lastSeq: 0 })
+    rerender({ snap: snapshotWith(undone, 3) })
     expect(result.current.current?.a.score).toBe(0)
-    expect(result.current.current?.lastSeq).toBe(2)
+    expect(result.current.current?.lastSeq).toBe(0)
+  })
+
+  it('ignores a poll whose version has not caught up to its own write, even if stale', async () => {
+    const scored = sampleMatch({ lastSeq: 1, a: { ...sampleMatch().a, score: 2 } })
+    fakeFetch(url => (url === '/api/matches/10/events' ? { json: { match: scored, version: 2 } } : { json: { ok: true } }))
+    const { result, rerender } = renderHook(({ snap }: { snap: Snapshot }) => useScorer(binding, snap, true), { initialProps: { snap: sampleSnapshot({ version: 1 }) } })
+
+    await act(async () => { await result.current.tap(100, 'takedown') })
+    expect(result.current.current?.a.score).toBe(2)
+
+    // A poll still at the pre-write version is stale and must not override the pinned write.
+    const stalePoll = sampleMatch({ lastSeq: 1 })
+    rerender({ snap: snapshotWith(stalePoll, 1) })
+    expect(result.current.current?.a.score).toBe(2)
   })
 })

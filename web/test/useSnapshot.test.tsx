@@ -106,6 +106,35 @@ describe('useSnapshot', () => {
     }
   })
 
+  it('does not start a second poll chain when visibilitychange fires during an in-flight fetch', async () => {
+    let resolveFetch: ((r: Response) => void) | null = null
+    let callCount = 0
+    const fn = vi.fn(() => {
+      callCount += 1
+      return new Promise<Response>(resolve => { resolveFetch = resolve })
+    })
+    vi.stubGlobal('fetch', fn)
+
+    renderHook(() => useSnapshot(1))
+    await flush()
+    expect(callCount).toBe(1)
+
+    // Simulates an iPad locking and unlocking again while the current poll is still
+    // awaiting its response: wake() must not start a second chain on top of it.
+    act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+    expect(callCount).toBe(1)
+
+    await act(async () => {
+      resolveFetch!(new Response(JSON.stringify({ version: 1, snapshot: sampleSnapshot({ version: 1 }) }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(callCount).toBe(1)
+
+    // Only the in-flight chain's own next tick fires -- not a second, parallel one.
+    await flush(1000)
+    expect(callCount).toBe(2)
+  })
+
   it('pauses polling while document.hidden is true', async () => {
     const f = fakeFetch(() => ({ json: { version: 1, snapshot: sampleSnapshot({ version: 1 }) } }))
     Object.defineProperty(document, 'hidden', { value: true, configurable: true })
