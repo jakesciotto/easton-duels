@@ -35,6 +35,13 @@ const detail: EventDetail = {
   ],
 }
 
+// Adds a 4th pending match that puts Mateo Rivera (100, already Team A in match 1)
+// against Kai Wong, so Mateo is sitting in two pending matches at once.
+const doubleBooked: EventDetail = {
+  ...detail,
+  matches: [...detail.matches, match(4, { athleteAId: 100, athleteBId: 202, matId: 1, why: null })],
+}
+
 function mount(d: EventDetail = detail) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(<QueryClientProvider client={qc}><MatchesTab detail={d} /></QueryClientProvider>)
@@ -135,5 +142,45 @@ describe('MatchesTab', () => {
     await user.click(within(rows[1]).getByRole('button', { name: 'Delete match' }))
     await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/matches/2' && c.init?.method === 'DELETE')).toBe(true))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('badges a pending match that shares a competitor with another pending match', () => {
+    fakeFetch(() => ({ json: {} }))
+    mount(doubleBooked)
+    const rows = screen.getAllByRole('row').slice(1)
+    expect(rows).toHaveLength(4)
+    expect(within(rows[0]).getByText('double-booked')).toBeInTheDocument()
+    expect(within(rows[3]).getByText('double-booked')).toBeInTheDocument()
+    expect(within(rows[1]).queryByText('double-booked')).not.toBeInTheDocument()
+    expect(within(rows[2]).queryByText('double-booked')).not.toBeInTheDocument()
+  })
+
+  it('marks a double-booked competitor in the kid picker list', async () => {
+    fakeFetch(() => ({ json: {} }))
+    mount(doubleBooked)
+    const user = userEvent.setup()
+    const rows = screen.getAllByRole('row').slice(1)
+    await user.click(within(rows[1]).getByRole('button', { name: 'Ava Park' }))
+    const dialog = await screen.findByRole('dialog')
+    const mateoRow = within(dialog).getByRole('button', { name: 'Mateo Rivera' })
+    expect(within(mateoRow).getByText('double-booked')).toBeInTheDocument()
+    const avaRow = within(dialog).getByRole('button', { name: 'Ava Park' })
+    expect(within(avaRow).queryByText('double-booked')).not.toBeInTheDocument()
+  })
+
+  it('marks the option and warns naming the competitor when adding a match by hand', async () => {
+    fakeFetch(() => ({ json: {} }))
+    // Liam Cruz is a fresh, unpaired Boulder competitor: contrast against Mateo, who is
+    // already double-booked, to prove the marker only lands on the double-booked option.
+    const withUnpaired: EventDetail = { ...doubleBooked, athletes: [...doubleBooked.athletes, kid(103, 1, 'Liam', 'Cruz')] }
+    mount(withUnpaired)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Add match' }))
+    const dialog = await screen.findByRole('dialog')
+    const teamASelect = within(dialog).getByLabelText('Boulder competitor')
+    expect(within(teamASelect).getByRole('option', { name: 'Mateo Rivera (double-booked)' })).toBeInTheDocument()
+    expect(within(teamASelect).getByRole('option', { name: 'Liam Cruz' })).toBeInTheDocument()
+    await user.selectOptions(teamASelect, '100')
+    expect(within(dialog).getByText('Mateo Rivera is already in a pending match')).toBeInTheDocument()
   })
 })

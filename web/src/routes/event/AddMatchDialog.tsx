@@ -1,8 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { adminApi, useAdminMutation } from '@/lib/queries'
-import type { EventDetail } from '@/lib/types'
+import type { AthleteRow, EventDetail } from '@/lib/types'
 import { athleteName } from '@/lib/format'
+import { isDoubleBooked } from '@/lib/doubleBooking'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -31,6 +33,10 @@ export function AddMatchDialog({ detail, open, onOpenChange }: { detail: EventDe
   }, [open])
 
   const kids = (teamId: number) => detail.athletes.filter(a => a.teamId === teamId).sort((x, y) => x.lastName.localeCompare(y.lastName))
+  const optionLabel = (k: AthleteRow) => athleteName(k) + (isDoubleBooked(k.id, detail.matches) ? ' (double-booked)' : '')
+  const doubleBookedPicks = [aId, bId]
+    .map(v => detail.athletes.find(a => String(a.id) === v))
+    .filter((k): k is AthleteRow => k !== undefined && isDoubleBooked(k.id, detail.matches))
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
@@ -50,14 +56,14 @@ export function AddMatchDialog({ detail, open, onOpenChange }: { detail: EventDe
               <Label htmlFor="am-a">{teamA.name} competitor</Label>
               <select id="am-a" required className={sel} value={aId} onChange={e => setAId(e.target.value)}>
                 <option value="">Pick</option>
-                {kids(teamA.id).map(k => <option key={k.id} value={k.id}>{athleteName(k)}</option>)}
+                {kids(teamA.id).map(k => <option key={k.id} value={k.id}>{optionLabel(k)}</option>)}
               </select>
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="am-b">{teamB.name} competitor</Label>
               <select id="am-b" required className={sel} value={bId} onChange={e => setBId(e.target.value)}>
                 <option value="">Pick</option>
-                {kids(teamB.id).map(k => <option key={k.id} value={k.id}>{athleteName(k)}</option>)}
+                {kids(teamB.id).map(k => <option key={k.id} value={k.id}>{optionLabel(k)}</option>)}
               </select>
             </div>
             <div className="grid gap-1.5">
@@ -84,6 +90,11 @@ export function AddMatchDialog({ detail, open, onOpenChange }: { detail: EventDe
                 {detail.mats.map(m => <option key={m.id} value={m.id}>Mat {m.number}</option>)}
               </select>
             </div>
+            {doubleBookedPicks.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 sm:col-span-2">
+                {doubleBookedPicks.map(k => <Badge key={k.id} variant="warn">{athleteName(k)} is already in a pending match</Badge>)}
+              </div>
+            )}
             {create.error && <p role="alert" className="text-[13px] text-destructive sm:col-span-2">{create.error.message}</p>}
           </DialogBody>
           <DialogFooter>

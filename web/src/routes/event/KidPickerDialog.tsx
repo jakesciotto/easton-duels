@@ -1,11 +1,16 @@
 import { useState } from 'react'
 import type { EventDetail } from '@/lib/types'
 import { athleteName, beltLabel } from '@/lib/format'
+import { isDoubleBooked } from '@/lib/doubleBooking'
 import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { List, ListRow } from '@/components/ui/list'
 
-export function KidPickerDialog({ detail, teamId, open, onOpenChange, onPick }: { detail: EventDetail; teamId: number | null; open: boolean; onOpenChange: (o: boolean) => void; onPick: (athleteId: number) => void }) {
+export function KidPickerDialog({ detail, teamId, matchId, open, onOpenChange, onPick }: {
+  detail: EventDetail; teamId: number | null; matchId: number | null; open: boolean
+  onOpenChange: (o: boolean) => void; onPick: (athleteId: number) => void
+}) {
   const [search, setSearch] = useState('')
   const team = detail.teams.find(t => t.id === teamId)
   const kids = detail.athletes
@@ -30,6 +35,7 @@ export function KidPickerDialog({ detail, teamId, open, onOpenChange, onPick }: 
                     className="flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm outline-none transition-colors duration-150 hover:bg-accent focus-visible:shadow-focus"
                   >
                     <span className="flex-1 truncate font-medium">{athleteName(k)}</span>
+                    {isDoubleBooked(k.id, detail.matches, matchId ?? undefined) && <Badge variant="warn">double-booked</Badge>}
                     <span className="text-faint">{beltLabel(k.belt)}</span>
                     <span className="font-mono tabular text-faint">{k.age ?? '?'}y {k.weightLbs ?? '?'}lb</span>
                     {k.erp !== null && <span className="font-mono tabular text-faint">ERP {k.erp.toFixed(1)}</span>}

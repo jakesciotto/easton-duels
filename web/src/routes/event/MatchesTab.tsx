@@ -7,6 +7,7 @@ import { adminApi, useAdminMutation } from '@/lib/queries'
 import type { EventDetail, MatchRow } from '@/lib/types'
 import { athleteName } from '@/lib/format'
 import { moveId } from '@/lib/reorder'
+import { doubleBookedMatchIds } from '@/lib/doubleBooking'
 import { cn } from '@/lib/utils'
 import { KidPickerDialog } from './KidPickerDialog'
 import { AddMatchDialog } from './AddMatchDialog'
@@ -20,8 +21,8 @@ interface Pick { matchId: number; side: 'a' | 'b'; teamId: number }
 
 const selCell = 'h-8 rounded-md border border-input bg-card px-2 text-sm text-foreground outline-none transition-[color,background-color,box-shadow] duration-150 focus-visible:border-transparent focus-visible:shadow-focus disabled:opacity-50'
 
-function Row({ m, detail, index, pendingIndex, pendingCount, onPick, onPatch, onDelete, onMovePending }: {
-  m: MatchRow; detail: EventDetail; index: number; pendingIndex: number; pendingCount: number
+function Row({ m, detail, index, pendingIndex, pendingCount, doubleBooked, onPick, onPatch, onDelete, onMovePending }: {
+  m: MatchRow; detail: EventDetail; index: number; pendingIndex: number; pendingCount: number; doubleBooked: boolean
   onPick: (p: Pick) => void; onPatch: (id: number, body: Partial<MatchRow>) => void; onDelete: (id: number) => void
   onMovePending: (pendingIndex: number, dir: -1 | 1) => void
 }) {
@@ -69,7 +70,12 @@ function Row({ m, detail, index, pendingIndex, pendingCount, onPick, onPatch, on
           <TeamDot color={teamB.color} name={name(m.athleteBId)} />
         </button>
       </td>
-      <td className="px-3 py-2.5">{m.why && <Badge>{m.why}</Badge>}</td>
+      <td className="px-3 py-2.5">
+        <div className="flex flex-wrap gap-1.5">
+          {m.why && <Badge>{m.why}</Badge>}
+          {doubleBooked && <Badge variant="warn">double-booked</Badge>}
+        </div>
+      </td>
       <td className="px-3 py-2.5">
         <input
           aria-label="Length" type="number" min={30} max={1800} disabled={locked} defaultValue={m.lengthSec}
@@ -106,6 +112,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
   // Only pending rows are sortable: locked (live/done) rows keep their exact overall
   // position, so Up/Down and drag only ever swap a pending row with another pending row.
   const pendingIds = useMemo(() => ordered.filter(m => m.status === 'pending').map(m => m.id), [ordered])
+  const doubleBooked = useMemo(() => doubleBookedMatchIds(detail.matches), [detail.matches])
 
   const generate = useAdminMutation(eventId, () => adminApi<{ created: number; unpairedA: number[]; unpairedB: number[] }>(`/api/events/${eventId}/matches/generate`, { method: 'POST' }))
   const patch = useAdminMutation(eventId, (v: { id: number; body: Partial<MatchRow> }) => adminApi(`/api/matches/${v.id}`, { method: 'PATCH', body: v.body }))
@@ -210,7 +217,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <KidPickerDialog detail={detail} teamId={pick?.teamId ?? null} open={pick !== null} onOpenChange={o => { if (!o) setPick(null) }} onPick={onPicked} />
+      <KidPickerDialog detail={detail} teamId={pick?.teamId ?? null} matchId={pick?.matchId ?? null} open={pick !== null} onOpenChange={o => { if (!o) setPick(null) }} onPick={onPicked} />
       <AddMatchDialog detail={detail} open={addOpen} onOpenChange={setAddOpen} />
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
         <SortableContext items={pendingIds} strategy={verticalListSortingStrategy}>
@@ -235,7 +242,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
                 ) : ordered.map((m, i) => (
                   <Row
                     key={m.id} m={m} detail={detail} index={i}
-                    pendingIndex={pendingIds.indexOf(m.id)} pendingCount={pendingIds.length}
+                    pendingIndex={pendingIds.indexOf(m.id)} pendingCount={pendingIds.length} doubleBooked={doubleBooked.has(m.id)}
                     onPick={setPick} onPatch={onPatchAction} onDelete={onDeleteAction} onMovePending={onMovePending}
                   />
                 ))}
