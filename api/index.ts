@@ -1,10 +1,12 @@
 import { handle } from '@hono/node-server/vercel'
 
-// Dynamic imports on purpose: the bundler's static compilation of this module graph ships
-// a client-library copy whose Turso requests fail with 401, while the same modules loaded
-// at runtime work (proven by the diag function during the 2026-08-31 incident). Loading at
-// runtime keeps one canonical copy from node_modules.
-type App = Awaited<ReturnType<typeof buildApp>>
+// Build per invocation. A module-singleton app carries one libsql http client across
+// invocations, and Vercel freezes the instance between them; the thawed client's stream
+// state then fails against Turso with HTTP 401 on the next query, while a fresh client
+// works every time (proven by the diag function during the 2026-08-31 incident). The
+// token secret is cached at module scope so a rebuild costs the pragma round trip, not
+// a settings query, and createApp itself is pure route registration.
+let cachedSecret: string | null = null
 
 async function buildApp() {
   const { createApp } = await import('../server/src/app.js')
@@ -14,8 +16,9 @@ async function buildApp() {
   const opts = dbUrlFromEnv(process.env)
   const db = createDb(opts)
   await initDb(db, opts)
+  cachedSecret ??= await getOrCreateSecret(db)
   const app = createApp({
-    port: 0, db, secret: await getOrCreateSecret(db),
+    port: 0, db, secret: cachedSecret,
     adminPin: validateAdminPin(process.env.ADMIN_PIN),
     roster: rosterFromEnv(process.env, { syncBudgetMs: 280_000 }),
     publicUrl: process.env.PUBLIC_URL,
@@ -24,25 +27,11 @@ async function buildApp() {
   return app
 }
 
-let ready: Promise<App> | null = null
-
-
-// A rejected boot must not be cached. An unmigrated database, a missing ADMIN_PIN, or two
-// instances racing on the token secret would otherwise poison this warm instance for its
-// whole life, so the next invocation gets a fresh attempt instead.
-function getApp(): Promise<App> {
-  ready ??= buildApp().catch(e => {
-    ready = null
-    throw e
-  })
-  return ready
-}
-
 // Vercel's Node runtime pre-parses JSON bodies and drains the request stream before the
 // adapter can read it, so c.req.json() waits forever on POSTs. Turning the platform body
 // parser off hands the raw stream through untouched.
 export const config = { api: { bodyParser: false } }
 
 export default async function handler(req: unknown, res: unknown) {
-  return handle(await getApp())(req as never, res as never)
+  return handle(await buildApp())(req as never, res as never)
 }
