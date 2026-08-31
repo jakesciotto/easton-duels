@@ -70,7 +70,8 @@ export default async function handler(req: unknown, res: unknown) {
           const auth = rq.headers.get('authorization') ?? ''
           calls.push({ url: rq.url, method: rq.method, authLen: auth.length, authTail: auth.slice(-6), hdrs: [...rq.headers.keys()].join(',') })
           const rs = await globalThis.fetch(rq)
-          calls.push({ status: rs.status })
+          if (rs.ok) calls.push({ status: rs.status })
+          else calls.push({ status: rs.status, body: (await rs.clone().text()).slice(0, 160) })
           return rs
         }
         const { createClient } = await import('@libsql/client')
@@ -83,8 +84,9 @@ export default async function handler(req: unknown, res: unknown) {
         out.spy = calls.slice(0, 6)
       }
       try {
-        out.isoFetch = import.meta.resolve('@libsql/isomorphic-fetch')
-      } catch (e) { out.isoFetch = String(e).slice(0, 120) }
+        const dns = await import('node:dns/promises')
+        out.dns = await dns.resolve4(new URL(url.replace('libsql://', 'https://')).hostname)
+      } catch (e) { out.dns = String(e).slice(0, 100) }
       try {
         const fetchBefore = globalThis.fetch
         await import('../server/src/app.js')
