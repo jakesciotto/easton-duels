@@ -32,12 +32,12 @@ export const requireAdmin = createMiddleware<Env>(async (c, next) => {
   await next()
 })
 
-export function requireMatOrAdmin(resolveMatId: (c: Context<Env>) => number | null) {
+export function requireMatOrAdmin(resolveMatId: (c: Context<Env>) => number | null | Promise<number | null>) {
   return createMiddleware<Env>(async (c, next) => {
     const auth = c.get('auth')
     if (!auth) return errorJson(c, 401, 'unauthorized', 'token required')
     if (auth.role === 'admin') return next()
-    const matId = resolveMatId(c)
+    const matId = await resolveMatId(c)
     if (matId === null || auth.matId !== matId) return errorJson(c, 403, 'forbidden', 'token is for another mat')
     await next()
   })

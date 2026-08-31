@@ -92,16 +92,16 @@ describe('roster routes', () => {
   }
 
   it('503s when WL is not configured', async () => {
-    const { app, db, adminToken } = createTestApp()
-    const s = seedEvent(db)
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db)
     const r = await call(app, 'GET', `/api/events/${s.eventId}/wl-locations`, undefined, adminToken)
     expect(r.status).toBe(503)
     expect(r.body.error.code).toBe('wl_not_configured')
   })
 
   it('returns candidates and a warning when the leaderboard is off', async () => {
-    const { app, db, adminToken } = createTestApp({ roster: { wl: fakeWl, leaderboard: null } })
-    const s = seedEvent(db)
+    const { app, db, adminToken } = await createTestApp({ roster: { wl: fakeWl, leaderboard: null } })
+    const s = await seedEvent(db)
     const locs = await call(app, 'GET', `/api/events/${s.eventId}/wl-locations`, undefined, adminToken)
     expect(locs.body[0].kBusiness).toBe('100001')
     const r = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['100001'] }, adminToken)

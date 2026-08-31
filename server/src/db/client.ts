@@ -2,36 +2,49 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import Database from 'better-sqlite3'
-import { drizzle } from 'drizzle-orm/better-sqlite3'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
-import { eq } from 'drizzle-orm'
+import { createClient } from '@libsql/client'
+import { drizzle } from 'drizzle-orm/libsql'
+import { migrate } from 'drizzle-orm/libsql/migrator'
+import { eq, sql } from 'drizzle-orm'
 import * as schema from './schema.js'
 
 export type Db = ReturnType<typeof createDb>
 export type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
 export type DbLike = Db | Tx
 
-export function createDb(dbPath: string) {
-  if (dbPath !== ':memory:') fs.mkdirSync(path.dirname(dbPath), { recursive: true })
-  const sqlite = new Database(dbPath)
-  sqlite.pragma('journal_mode = WAL')
-  sqlite.pragma('foreign_keys = ON')
-  return drizzle(sqlite, { schema })
+export function dbUrlFromEnv(env: Record<string, string | undefined>): { url: string; authToken?: string } {
+  if (env.TURSO_DATABASE_URL) return { url: env.TURSO_DATABASE_URL, authToken: env.TURSO_AUTH_TOKEN }
+  const dbPath = env.DB_PATH ?? path.join(env.DATA_DIR ?? './data', 'duels.db')
+  return { url: `file:${dbPath}` }
+}
+
+export function createDb(opts: { url: string; authToken?: string }) {
+  if (opts.url.startsWith('file:') && !opts.url.includes(':memory:')) {
+    fs.mkdirSync(path.dirname(opts.url.slice('file:'.length)), { recursive: true })
+  }
+  const client = createClient(opts)
+  return drizzle(client, { schema })
+}
+
+export async function initDb(db: Db, opts: { url: string }): Promise<void> {
+  await db.run(sql`pragma foreign_keys = on`)
+  if (opts.url.startsWith('file:') && !opts.url.includes(':memory:')) {
+    await db.run(sql`pragma journal_mode = wal`)
+  }
 }
 
 const defaultMigrations = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../drizzle')
 
-export function migrateDb(db: Db, folder = defaultMigrations) {
-  migrate(db, { migrationsFolder: folder })
+export async function migrateDb(db: Db, folder = defaultMigrations): Promise<void> {
+  await migrate(db, { migrationsFolder: folder })
 }
 
 const SECRET_KEY = 'token_secret'
 
-export function getOrCreateSecret(db: DbLike): string {
-  const row = db.select().from(schema.settings).where(eq(schema.settings.key, SECRET_KEY)).get()
+export async function getOrCreateSecret(db: DbLike): Promise<string> {
+  const row = await db.select().from(schema.settings).where(eq(schema.settings.key, SECRET_KEY)).get()
   if (row) return row.value
   const value = randomBytes(32).toString('base64url')
-  db.insert(schema.settings).values({ key: SECRET_KEY, value }).run()
+  await db.insert(schema.settings).values({ key: SECRET_KEY, value }).run()
   return value
 }

@@ -9,12 +9,12 @@ import { freshDb } from './fixtures.js'
 export const TEST_SECRET = 'test-secret'
 export const TEST_PIN = '123456'
 
-export function createTestApp(overrides: Partial<AppContext> = {}) {
-  const db = overrides.db ?? freshDb()
+export async function createTestApp(overrides: Partial<AppContext> = {}) {
+  const db = overrides.db ?? await freshDb()
   const hub = overrides.hub ?? new Hub(db)
-  const expiry = overrides.expiry ?? new ExpiryScheduler((matchId, at) => {
-    const m = expireClock(db, matchId, at)
-    if (m) hub.broadcast(m.eventId)
+  const expiry = overrides.expiry ?? new ExpiryScheduler(async (matchId, at) => {
+    const m = await expireClock(db, matchId, at)
+    if (m) await hub.broadcast(m.eventId)
   })
   const ctx: AppContext = {
     port: 0, db, secret: TEST_SECRET, adminPin: TEST_PIN, limiter: new RateLimiter(), hub, expiry,

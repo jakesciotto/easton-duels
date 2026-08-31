@@ -49,29 +49,29 @@ export interface AppendResult { duplicate: boolean; match: MatchRow }
 
 type Insert = typeof matchEvents.$inferInsert
 
-export function loadMatch(db: DbLike, matchId: number): MatchRow {
-  const row = db.select().from(matches).where(eq(matches.id, matchId)).get()
+export async function loadMatch(db: DbLike, matchId: number): Promise<MatchRow> {
+  const row = await db.select().from(matches).where(eq(matches.id, matchId)).get()
   if (!row) throw new MatchStateError('match not found')
   return row
 }
 
-export function loadEvents(db: DbLike, matchId: number): MatchEventRow[] {
+export async function loadEvents(db: DbLike, matchId: number): Promise<MatchEventRow[]> {
   return db.select().from(matchEvents).where(eq(matchEvents.matchId, matchId)).orderBy(asc(matchEvents.seq)).all()
 }
 
 // endedAt is not stored on the match row: it is read back from the latest `end` event so a
 // reopen followed by a re-end always reflects the newest end, and it works for matches that
 // finished before this field existed.
-export function latestEndedAt(db: DbLike, matchId: number): string | null {
-  const row = db.select({ at: matchEvents.at }).from(matchEvents)
+export async function latestEndedAt(db: DbLike, matchId: number): Promise<string | null> {
+  const row = await db.select({ at: matchEvents.at }).from(matchEvents)
     .where(and(eq(matchEvents.matchId, matchId), eq(matchEvents.type, 'end')))
     .orderBy(desc(matchEvents.seq)).limit(1).get()
   return row?.at ?? null
 }
 
-export function endedAtByMatch(db: DbLike, matchIds: number[]): Map<number, string> {
+export async function endedAtByMatch(db: DbLike, matchIds: number[]): Promise<Map<number, string>> {
   if (matchIds.length === 0) return new Map()
-  const rows = db.select({ matchId: matchEvents.matchId, seq: matchEvents.seq, at: matchEvents.at }).from(matchEvents)
+  const rows = await db.select({ matchId: matchEvents.matchId, seq: matchEvents.seq, at: matchEvents.at }).from(matchEvents)
     .where(and(inArray(matchEvents.matchId, matchIds), eq(matchEvents.type, 'end')))
     .all()
   const latest = new Map<number, { seq: number; at: string }>()
@@ -82,17 +82,17 @@ export function endedAtByMatch(db: DbLike, matchIds: number[]): Map<number, stri
   return new Map([...latest].map(([id, v]) => [id, v.at]))
 }
 
-export function loadRuleset(db: DbLike, rulesetId: number): RulesetRow {
-  const row = db.select().from(rulesets).where(eq(rulesets.id, rulesetId)).get()
+export async function loadRuleset(db: DbLike, rulesetId: number): Promise<RulesetRow> {
+  const row = await db.select().from(rulesets).where(eq(rulesets.id, rulesetId)).get()
   if (!row) throw new MatchStateError('ruleset not found')
   return row
 }
 
-export function recompute(db: DbLike, matchId: number): MatchRow {
-  const match = loadMatch(db, matchId)
-  const d = deriveMatch(loadEvents(db, matchId), match.athleteAId, match.athleteBId, match.lengthSec * 1000)
+export async function recompute(db: DbLike, matchId: number): Promise<MatchRow> {
+  const match = await loadMatch(db, matchId)
+  const d = deriveMatch(await loadEvents(db, matchId), match.athleteAId, match.athleteBId, match.lengthSec * 1000)
   const status = d.result ? 'done' : match.status === 'pending' ? 'pending' : 'live'
-  db.update(matches).set({
+  await db.update(matches).set({
     pointsA: d.scoreA,
     pointsB: d.scoreB,
     clockElapsedMs: d.clockElapsedMs,
@@ -112,25 +112,25 @@ function assertAthlete(match: MatchRow, athleteId: number | undefined): number {
   return athleteId
 }
 
-function assertEventLive(db: DbLike, eventId: number): void {
-  const ev = db.select({ status: events.status }).from(events).where(eq(events.id, eventId)).get()
+async function assertEventLive(db: DbLike, eventId: number): Promise<void> {
+  const ev = await db.select({ status: events.status }).from(events).where(eq(events.id, eventId)).get()
   if (!ev) throw new MatchStateError('event not found')
   if (ev.status !== 'live') throw new MatchStateError(`event is ${ev.status}`)
 }
 
-function guard(db: DbLike, input: { id: string; matchId: number; lastSeq: number }): { duplicate: AppendResult } | { match: MatchRow } {
-  const existing = db.select().from(matchEvents).where(eq(matchEvents.id, input.id)).get()
-  if (existing) return { duplicate: { duplicate: true, match: loadMatch(db, existing.matchId) } }
-  const match = loadMatch(db, input.matchId)
-  assertEventLive(db, match.eventId)
+async function guard(db: DbLike, input: { id: string; matchId: number; lastSeq: number }): Promise<{ duplicate: AppendResult } | { match: MatchRow }> {
+  const existing = await db.select().from(matchEvents).where(eq(matchEvents.id, input.id)).get()
+  if (existing) return { duplicate: { duplicate: true, match: await loadMatch(db, existing.matchId) } }
+  const match = await loadMatch(db, input.matchId)
+  await assertEventLive(db, match.eventId)
   if (match.status !== 'live') throw new MatchStateError(`match is ${match.status}`)
   if (match.lastSeq !== input.lastSeq) throw new SeqConflict(match.lastSeq)
   return { match }
 }
 
-export function appendMatchEvent(db: DbLike, input: AppendInput): AppendResult {
-  return db.transaction(tx => {
-    const g = guard(tx, input)
+export async function appendMatchEvent(db: DbLike, input: AppendInput): Promise<AppendResult> {
+  return db.transaction(async tx => {
+    const g = await guard(tx, input)
     if ('duplicate' in g) return g.duplicate
     const match = g.match
     const at = input.at ?? new Date().toISOString()
@@ -138,14 +138,14 @@ export function appendMatchEvent(db: DbLike, input: AppendInput): AppendResult {
     const rows: Insert[] = []
     switch (input.type) {
       case 'score': {
-        const action = loadRuleset(tx, match.rulesetId).actions.find(a => a.key === input.actionKey)
+        const action = (await loadRuleset(tx, match.rulesetId)).actions.find(a => a.key === input.actionKey)
         if (!action) throw new MatchStateError('unknown action')
         const athleteId = assertAthlete(match, input.athleteId)
         rows.push({ id: input.id, matchId: match.id, seq: ++seq, type: 'score', athleteId, actionKey: action.key, points: action.points, at })
         break
       }
       case 'terminal': {
-        const terminal = loadRuleset(tx, match.rulesetId).terminals.find(t => t.key === input.actionKey)
+        const terminal = (await loadRuleset(tx, match.rulesetId)).terminals.find(t => t.key === input.actionKey)
         if (!terminal) throw new MatchStateError('unknown terminal')
         const athleteId = assertAthlete(match, input.athleteId)
         if (match.clockStartedAt) rows.push({ id: `${input.id}:pause`, matchId: match.id, seq: ++seq, type: 'clock_pause', at })
@@ -163,19 +163,19 @@ export function appendMatchEvent(db: DbLike, input: AppendInput): AppendResult {
         rows.push({ id: input.id, matchId: match.id, seq: ++seq, type: 'clock_pause', at })
         break
     }
-    tx.insert(matchEvents).values(rows).run()
-    return { duplicate: false, match: recompute(tx, match.id) }
+    await tx.insert(matchEvents).values(rows).run()
+    return { duplicate: false, match: await recompute(tx, match.id) }
   })
 }
 
-export function endMatch(db: DbLike, input: EndInput): AppendResult {
-  return db.transaction(tx => {
-    const g = guard(tx, input)
+export async function endMatch(db: DbLike, input: EndInput): Promise<AppendResult> {
+  return db.transaction(async tx => {
+    const g = await guard(tx, input)
     if ('duplicate' in g) return g.duplicate
     const match = g.match
     const at = input.at ?? new Date().toISOString()
-    const d = deriveMatch(loadEvents(tx, match.id), match.athleteAId, match.athleteBId, match.lengthSec * 1000)
-    const outcome = deriveOutcome(d, match.athleteAId, match.athleteBId, loadRuleset(tx, match.rulesetId).terminals)
+    const d = deriveMatch(await loadEvents(tx, match.id), match.athleteAId, match.athleteBId, match.lengthSec * 1000)
+    const outcome = deriveOutcome(d, match.athleteAId, match.athleteBId, (await loadRuleset(tx, match.rulesetId)).terminals)
     let result: MatchResult
     if (outcome.kind === 'decided') {
       result = { winnerAthleteId: outcome.winnerAthleteId, winType: outcome.winType }
@@ -187,22 +187,22 @@ export function endMatch(db: DbLike, input: EndInput): AppendResult {
     const rows: Insert[] = []
     if (match.clockStartedAt) rows.push({ id: `${input.id}:pause`, matchId: match.id, seq: ++seq, type: 'clock_pause', at })
     rows.push({ id: input.id, matchId: match.id, seq: ++seq, type: 'end', athleteId: result.winnerAthleteId, payload: { kind: 'end', ...result }, at })
-    tx.insert(matchEvents).values(rows).run()
-    return { duplicate: false, match: recompute(tx, match.id) }
+    await tx.insert(matchEvents).values(rows).run()
+    return { duplicate: false, match: await recompute(tx, match.id) }
   })
 }
 
-export function undoLastMatchEvent(db: DbLike, input: { matchId: number; lastSeq: number }): MatchRow {
-  return db.transaction(tx => {
-    const match = loadMatch(tx, input.matchId)
-    assertEventLive(tx, match.eventId)
+export async function undoLastMatchEvent(db: DbLike, input: { matchId: number; lastSeq: number }): Promise<MatchRow> {
+  return db.transaction(async tx => {
+    const match = await loadMatch(tx, input.matchId)
+    await assertEventLive(tx, match.eventId)
     if (match.status !== 'live') throw new MatchStateError(`match is ${match.status}`)
     if (match.lastSeq !== input.lastSeq) throw new SeqConflict(match.lastSeq)
-    const last = tx.select().from(matchEvents).where(eq(matchEvents.matchId, match.id)).orderBy(desc(matchEvents.seq)).get()
+    const last = await tx.select().from(matchEvents).where(eq(matchEvents.matchId, match.id)).orderBy(desc(matchEvents.seq)).get()
     if (!last) throw new MatchStateError('nothing to undo')
     if (last.type === 'admin') throw new MatchStateError('cannot undo an admin event')
     if (last.type === 'clock_pause') throw new MatchStateError('press Start to resume the clock')
-    tx.delete(matchEvents).where(eq(matchEvents.id, last.id)).run()
+    await tx.delete(matchEvents).where(eq(matchEvents.id, last.id)).run()
     return recompute(tx, match.id)
   })
 }

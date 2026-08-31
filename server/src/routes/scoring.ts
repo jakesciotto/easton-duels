@@ -14,36 +14,36 @@ import { toMatchView } from '../live/snapshot.js'
 
 export const scoringRoutes = new Hono<Env>()
 
-const matIdFromMatch = (c: Context<Env>): number | null => {
-  const row = c.get('ctx').db.select({ matId: matches.matId }).from(matches).where(eq(matches.id, Number(c.req.param('matchId')))).get()
+const matIdFromMatch = async (c: Context<Env>): Promise<number | null> => {
+  const row = await c.get('ctx').db.select({ matId: matches.matId }).from(matches).where(eq(matches.id, Number(c.req.param('matchId')))).get()
   return row?.matId ?? null
 }
 
-function matchView(c: Context<Env>, match: MatchRow) {
+async function matchView(c: Context<Env>, match: MatchRow) {
   const db = c.get('ctx').db
-  const kids = db.select().from(athletes).where(eq(athletes.eventId, match.eventId)).all()
-  return toMatchView(match, new Map(kids.map(a => [a.id, a])), latestEndedAt(db, match.id))
+  const kids = await db.select().from(athletes).where(eq(athletes.eventId, match.eventId)).all()
+  return toMatchView(match, new Map(kids.map(a => [a.id, a])), await latestEndedAt(db, match.id))
 }
 
-export function respond(c: Context<Env>, match: MatchRow, bump = true) {
+export async function respond(c: Context<Env>, match: MatchRow, bump = true) {
   const { hub, expiry } = c.get('ctx')
   expiry.sync(match)
-  const snap = bump ? hub.broadcast(match.eventId) : hub.snapshot(match.eventId)
-  return c.json({ match: snap.matches.find(m => m.id === match.id) ?? matchView(c, match), version: snap.version })
+  const snap = bump ? await hub.broadcast(match.eventId) : await hub.snapshot(match.eventId)
+  return c.json({ match: snap.matches.find(m => m.id === match.id) ?? await matchView(c, match), version: snap.version })
 }
 
-function seqConflict(c: Context<Env>, matchId: number, err: SeqConflict) {
-  return errorJson(c, 409, 'sequence', 'stale sequence', { currentSeq: err.currentSeq, match: matchView(c, loadMatch(c.get('ctx').db, matchId)) })
+async function seqConflict(c: Context<Env>, matchId: number, err: SeqConflict) {
+  return errorJson(c, 409, 'sequence', 'stale sequence', { currentSeq: err.currentSeq, match: await matchView(c, await loadMatch(c.get('ctx').db, matchId)) })
 }
 
-scoringRoutes.post('/events/:eventId/mats/:matId/bind', validate('json', z.object({ code: z.string().regex(/^\d{4}$/) })), c => {
+scoringRoutes.post('/events/:eventId/mats/:matId/bind', validate('json', z.object({ code: z.string().regex(/^\d{4}$/) })), async c => {
   const ctx = c.get('ctx')
   const ip = clientIp(c)
   if (ctx.limiter.isBlocked(ip)) return errorJson(c, 429, 'rate_limited', 'too many attempts; wait a minute')
   const eventId = Number(c.req.param('eventId'))
   const matId = Number(c.req.param('matId'))
-  const ev = ctx.db.select().from(events).where(eq(events.id, eventId)).get()
-  const mat = ctx.db.select().from(mats).where(and(eq(mats.id, matId), eq(mats.eventId, eventId))).get()
+  const ev = await ctx.db.select().from(events).where(eq(events.id, eventId)).get()
+  const mat = await ctx.db.select().from(mats).where(and(eq(mats.id, matId), eq(mats.eventId, eventId))).get()
   if (!ev || !mat) return errorJson(c, 404, 'not_found', 'event or mat not found')
   if (!pinMatches(c.req.valid('json').code, ev.matCode)) {
     ctx.limiter.recordFailure(ip)
@@ -56,13 +56,13 @@ scoringRoutes.post('/events/:eventId/mats/:matId/bind', validate('json', z.objec
   })
 })
 
-scoringRoutes.post('/mats/:matId/heartbeat', requireMatOrAdmin(c => Number(c.req.param('matId'))), c => {
+scoringRoutes.post('/mats/:matId/heartbeat', requireMatOrAdmin(c => Number(c.req.param('matId'))), async c => {
   const { db, hub } = c.get('ctx')
-  const mat = db.select().from(mats).where(eq(mats.id, Number(c.req.param('matId')))).get()
+  const mat = await db.select().from(mats).where(eq(mats.id, Number(c.req.param('matId')))).get()
   if (!mat) return errorJson(c, 404, 'not_found', 'mat not found')
   const wasBound = hub.isBound(mat.id)
   hub.heartbeat(mat.id)
-  if (!wasBound) hub.broadcast(mat.eventId)
+  if (!wasBound) await hub.broadcast(mat.eventId)
   return c.json({ ok: true })
 })
 
@@ -76,48 +76,48 @@ const eventBody = z.object({
   lastSeq: z.number().int().min(0),
 })
 
-scoringRoutes.post('/matches/:matchId/events', requireMatOrAdmin(matIdFromMatch), validate('json', eventBody), c => {
+scoringRoutes.post('/matches/:matchId/events', requireMatOrAdmin(matIdFromMatch), validate('json', eventBody), async c => {
   const matchId = Number(c.req.param('matchId'))
   try {
-    const r = appendMatchEvent(c.get('ctx').db, { ...c.req.valid('json'), matchId })
-    return respond(c, r.match, !r.duplicate)
+    const r = await appendMatchEvent(c.get('ctx').db, { ...c.req.valid('json'), matchId })
+    return await respond(c, r.match, !r.duplicate)
   } catch (e) {
     if (e instanceof SeqConflict) return seqConflict(c, matchId, e)
     throw e
   }
 })
 
-scoringRoutes.delete('/matches/:matchId/events/last', requireMatOrAdmin(matIdFromMatch), validate('json', z.object({ lastSeq: z.number().int().min(0) })), c => {
+scoringRoutes.delete('/matches/:matchId/events/last', requireMatOrAdmin(matIdFromMatch), validate('json', z.object({ lastSeq: z.number().int().min(0) })), async c => {
   const matchId = Number(c.req.param('matchId'))
   try {
-    return respond(c, undoLastMatchEvent(c.get('ctx').db, { matchId, lastSeq: c.req.valid('json').lastSeq }))
+    return await respond(c, await undoLastMatchEvent(c.get('ctx').db, { matchId, lastSeq: c.req.valid('json').lastSeq }))
   } catch (e) {
     if (e instanceof SeqConflict) return seqConflict(c, matchId, e)
     throw e
   }
 })
 
-scoringRoutes.post('/matches/:matchId/end', requireMatOrAdmin(matIdFromMatch), validate('json', z.object({ id: clientEventId, lastSeq: z.number().int().min(0), winnerAthleteId: z.number().int().optional() })), c => {
+scoringRoutes.post('/matches/:matchId/end', requireMatOrAdmin(matIdFromMatch), validate('json', z.object({ id: clientEventId, lastSeq: z.number().int().min(0), winnerAthleteId: z.number().int().optional() })), async c => {
   const { db } = c.get('ctx')
   const matchId = Number(c.req.param('matchId'))
   try {
-    const r = endMatch(db, { ...c.req.valid('json'), matchId })
-    if (r.match.matId !== null) advanceMat(db, r.match.matId)
-    return respond(c, r.match, !r.duplicate)
+    const r = await endMatch(db, { ...c.req.valid('json'), matchId })
+    if (r.match.matId !== null) await advanceMat(db, r.match.matId)
+    return await respond(c, r.match, !r.duplicate)
   } catch (e) {
     if (e instanceof SeqConflict) return seqConflict(c, matchId, e)
     throw e
   }
 })
 
-scoringRoutes.post('/matches/:matchId/reopen', requireAdmin, c => {
-  return respond(c, reopenMatch(c.get('ctx').db, Number(c.req.param('matchId'))))
+scoringRoutes.post('/matches/:matchId/reopen', requireAdmin, async c => {
+  return respond(c, await reopenMatch(c.get('ctx').db, Number(c.req.param('matchId'))))
 })
 
-scoringRoutes.post('/matches/:matchId/skip', requireAdmin, c => {
-  return respond(c, skipMatch(c.get('ctx').db, Number(c.req.param('matchId'))))
+scoringRoutes.post('/matches/:matchId/skip', requireAdmin, async c => {
+  return respond(c, await skipMatch(c.get('ctx').db, Number(c.req.param('matchId'))))
 })
 
-scoringRoutes.post('/matches/:matchId/result', requireAdmin, validate('json', z.object({ winnerAthleteId: z.number().int(), winType: z.enum(['submission', 'points', 'decision']) })), c => {
-  return respond(c, setResult(c.get('ctx').db, Number(c.req.param('matchId')), c.req.valid('json')))
+scoringRoutes.post('/matches/:matchId/result', requireAdmin, validate('json', z.object({ winnerAthleteId: z.number().int(), winType: z.enum(['submission', 'points', 'decision']) })), async c => {
+  return respond(c, await setResult(c.get('ctx').db, Number(c.req.param('matchId')), c.req.valid('json')))
 })

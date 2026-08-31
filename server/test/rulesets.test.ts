@@ -10,8 +10,8 @@ const rs = {
 
 describe('rulesets', () => {
   it('lists, creates, patches, and deletes', async () => {
-    const { app, db, adminToken } = createTestApp()
-    const s = seedEvent(db, { matches: 0 })
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db, { matches: 0 })
     expect((await call(app, 'GET', `/api/events/${s.eventId}/rulesets`, undefined, adminToken)).body).toHaveLength(1)
     const created = await call(app, 'POST', `/api/events/${s.eventId}/rulesets`, rs, adminToken)
     expect(created.status).toBe(201)
@@ -24,16 +24,16 @@ describe('rulesets', () => {
   })
 
   it('refuses to delete a referenced ruleset or the last one', async () => {
-    const { app, db, adminToken } = createTestApp()
-    const s = seedEvent(db)
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db)
     expect((await call(app, 'DELETE', `/api/rulesets/${s.rulesetId}`, undefined, adminToken)).status).toBe(409)
-    const s2 = seedEvent(db, { matches: 0 })
+    const s2 = await seedEvent(db, { matches: 0 })
     expect((await call(app, 'DELETE', `/api/rulesets/${s2.rulesetId}`, undefined, adminToken)).status).toBe(409)
   })
 
   it('422s on duplicate keys and bad shapes', async () => {
-    const { app, db, adminToken } = createTestApp()
-    const s = seedEvent(db)
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db)
     const dup = { ...rs, actions: [rs.actions[0], rs.actions[0]] }
     expect((await call(app, 'POST', `/api/events/${s.eventId}/rulesets`, dup, adminToken)).status).toBe(422)
     expect((await call(app, 'POST', `/api/events/${s.eventId}/rulesets`, { ...rs, defaultLengthSec: 5 }, adminToken)).status).toBe(422)

@@ -13,7 +13,7 @@ export class Hub {
 
   constructor(private readonly db: Db, private readonly now: () => number = Date.now) {}
 
-  snapshot(eventId: number): Snapshot {
+  snapshot(eventId: number): Promise<Snapshot> {
     return buildSnapshot(this.db, eventId, {
       version: this.versions.get(eventId) ?? 0,
       nowMs: this.now(),
@@ -21,7 +21,7 @@ export class Hub {
     })
   }
 
-  subscribe(eventId: number, send: Sender): () => void {
+  async subscribe(eventId: number, send: Sender): Promise<() => void> {
     let set = this.subs.get(eventId)
     if (!set) {
       set = new Set()
@@ -29,17 +29,17 @@ export class Hub {
     }
     set.add(send)
     try {
-      send(this.snapshot(eventId))
+      send(await this.snapshot(eventId))
     } catch {
       set.delete(send)
     }
     return () => { set.delete(send) }
   }
 
-  broadcast(eventId: number): Snapshot {
+  async broadcast(eventId: number): Promise<Snapshot> {
     const version = (this.versions.get(eventId) ?? 0) + 1
     this.versions.set(eventId, version)
-    const snap = this.snapshot(eventId)
+    const snap = await this.snapshot(eventId)
     const set = this.subs.get(eventId)
     if (set) {
       const dead: Sender[] = []

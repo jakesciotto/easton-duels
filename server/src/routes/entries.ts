@@ -25,26 +25,26 @@ const createSchema = entrySchema.extend({
 
 export const entryRoutes = new Hono<Env>()
 
-entryRoutes.post('/matches/:matchId/entry', requireAdmin, validate('json', entrySchema), c => {
+entryRoutes.post('/matches/:matchId/entry', requireAdmin, validate('json', entrySchema), async c => {
   const { db } = c.get('ctx')
   const matchId = Number(c.req.param('matchId'))
-  const match = db.select().from(matches).where(eq(matches.id, matchId)).get()
+  const match = await db.select().from(matches).where(eq(matches.id, matchId)).get()
   if (!match) return errorJson(c, 404, 'not_found', 'match not found')
   const body = c.req.valid('json')
   if (body.winnerAthleteId !== match.athleteAId && body.winnerAthleteId !== match.athleteBId) return errorJson(c, 422, 'validation', 'winner must be one of the two athletes')
-  const { duplicate, match: updated } = enterResult(db, matchId, body)
+  const { duplicate, match: updated } = await enterResult(db, matchId, body)
   return respond(c, updated, !duplicate)
 })
 
-entryRoutes.post('/events/:eventId/entries', requireAdmin, validate('json', createSchema), c => {
+entryRoutes.post('/events/:eventId/entries', requireAdmin, validate('json', createSchema), async c => {
   const { db } = c.get('ctx')
   const eventId = Number(c.req.param('eventId'))
-  if (!db.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get()) return errorJson(c, 404, 'not_found', 'event not found')
+  if (!await db.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get()) return errorJson(c, 404, 'not_found', 'event not found')
   const body = c.req.valid('json')
-  const pair = resolvePair(db, eventId, body.athleteAId, body.athleteBId)
+  const pair = await resolvePair(db, eventId, body.athleteAId, body.athleteBId)
   if (typeof pair === 'string') return errorJson(c, 422, 'validation', pair)
   if (body.winnerAthleteId !== pair.a && body.winnerAthleteId !== pair.b) return errorJson(c, 422, 'validation', 'winner must be one of the two athletes')
-  const { duplicate, match } = createEntry(db, eventId, body)
-  const res = respond(c, match, !duplicate)
+  const { duplicate, match } = await createEntry(db, eventId, body)
+  const res = await respond(c, match, !duplicate)
   return duplicate ? res : new Response(res.body, { status: 201, headers: res.headers })
 })

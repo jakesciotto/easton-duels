@@ -54,37 +54,37 @@ describe('beltDistance', () => {
 })
 
 describe('generateMatches', () => {
-  it('pairs by ERP first, orders by weight, and round-robins mats', () => {
-    const db = freshDb()
-    const s = seedEvent(db, { matCount: 2, matches: 0 })
-    const r = generateMatches(db, s.eventId)
+  it('pairs by ERP first, orders by weight, and round-robins mats', async () => {
+    const db = await freshDb()
+    const s = await seedEvent(db, { matCount: 2, matches: 0 })
+    const r = await generateMatches(db, s.eventId)
     expect(r).toEqual({ created: 2, unpairedA: [], unpairedB: [] })
-    const rows = db.select().from(matches).where(eq(matches.eventId, s.eventId)).orderBy(matches.orderIndex).all()
+    const rows = await db.select().from(matches).where(eq(matches.eventId, s.eventId)).orderBy(matches.orderIndex).all()
     expect(rows.map(m => [m.athleteAId, m.athleteBId, m.matId, m.orderIndex])).toEqual([[s.a1, s.b1, s.matIds[0], 0], [s.a2, s.b2, s.matIds[1], 1]])
     expect(rows[0].why).toBe('ERP 6.1 vs 5.8')
     expect(rows[1].why).toBe('belt + age + weight')
     expect(rows[0].lengthSec).toBe(300)
   })
 
-  it('leaves excluded kids unpaired and lists them', () => {
-    const db = freshDb()
-    const s = seedEvent(db, { matches: 0 })
-    db.update(events).set({ maxAgeGap: 0 }).where(eq(events.id, s.eventId)).run()
-    const r = generateMatches(db, s.eventId)
+  it('leaves excluded kids unpaired and lists them', async () => {
+    const db = await freshDb()
+    const s = await seedEvent(db, { matches: 0 })
+    await db.update(events).set({ maxAgeGap: 0 }).where(eq(events.id, s.eventId)).run()
+    const r = await generateMatches(db, s.eventId)
     expect(r.created).toBe(1)
     expect(r.unpairedA).toEqual([s.a2])
     expect(r.unpairedB).toEqual([s.b2])
   })
 
-  it('replaces pending matches and keeps done ones', () => {
-    const db = freshDb()
-    const s = seedEvent(db, { matCount: 1, live: true })
-    endMatch(db, { id: 'end1', matchId: s.matchIds[0], lastSeq: 0, winnerAthleteId: s.a1 })
-    const r = generateMatches(db, s.eventId)
+  it('replaces pending matches and keeps done ones', async () => {
+    const db = await freshDb()
+    const s = await seedEvent(db, { matCount: 1, live: true })
+    await endMatch(db, { id: 'end1', matchId: s.matchIds[0], lastSeq: 0, winnerAthleteId: s.a1 })
+    const r = await generateMatches(db, s.eventId)
     expect(r.created).toBe(2)
-    const rows = db.select().from(matches).where(eq(matches.eventId, s.eventId)).all()
+    const rows = await db.select().from(matches).where(eq(matches.eventId, s.eventId)).all()
     expect(rows).toHaveLength(3)
-    expect(loadMatch(db, s.matchIds[0]).status).toBe('done')
+    expect((await loadMatch(db, s.matchIds[0])).status).toBe('done')
     expect(rows.filter(m => m.status === 'pending').map(m => m.orderIndex).sort()).toEqual([1, 2])
   })
 })

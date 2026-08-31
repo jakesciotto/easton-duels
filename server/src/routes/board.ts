@@ -7,23 +7,23 @@ import { errorJson } from '../auth/middleware.js'
 
 export const boardRoutes = new Hono<Env>()
 
-function eventExists(c: Context<Env>, eventId: number): boolean {
-  return c.get('ctx').db.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get() !== undefined
+async function eventExists(c: Context<Env>, eventId: number): Promise<boolean> {
+  return await c.get('ctx').db.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get() !== undefined
 }
 
-boardRoutes.get('/events/:eventId/board', c => {
+boardRoutes.get('/events/:eventId/board', async c => {
   const eventId = Number(c.req.param('eventId'))
-  if (!eventExists(c, eventId)) return errorJson(c, 404, 'not_found', 'event not found')
-  return c.json(c.get('ctx').hub.snapshot(eventId))
+  if (!await eventExists(c, eventId)) return errorJson(c, 404, 'not_found', 'event not found')
+  return c.json(await c.get('ctx').hub.snapshot(eventId))
 })
 
-boardRoutes.get('/events/:eventId/stream', c => {
+boardRoutes.get('/events/:eventId/stream', async c => {
   const eventId = Number(c.req.param('eventId'))
-  if (!eventExists(c, eventId)) return errorJson(c, 404, 'not_found', 'event not found')
+  if (!await eventExists(c, eventId)) return errorJson(c, 404, 'not_found', 'event not found')
   const hub = c.get('ctx').hub
   return streamSSE(c, async stream => {
     let open = true
-    const unsubscribe = hub.subscribe(eventId, snap => {
+    const unsubscribe = await hub.subscribe(eventId, snap => {
       void stream.writeSSE({ event: 'snapshot', data: JSON.stringify(snap) })
     })
     stream.onAbort(() => {

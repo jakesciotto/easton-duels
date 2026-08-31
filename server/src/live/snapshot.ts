@@ -42,16 +42,16 @@ export function toMatchView(m: MatchRow, athleteById: Map<number, AthleteRow>, e
   }
 }
 
-export function buildSnapshot(db: DbLike, eventId: number, opts: SnapshotOptions): Snapshot {
-  const ev = db.select().from(events).where(eq(events.id, eventId)).get()
+export async function buildSnapshot(db: DbLike, eventId: number, opts: SnapshotOptions): Promise<Snapshot> {
+  const ev = await db.select().from(events).where(eq(events.id, eventId)).get()
   if (!ev) throw new MatchStateError('event not found')
-  const teamRows = db.select().from(teams).where(eq(teams.eventId, eventId)).orderBy(asc(teams.position)).all()
-  const athleteRows = db.select().from(athletes).where(eq(athletes.eventId, eventId)).all()
+  const teamRows = await db.select().from(teams).where(eq(teams.eventId, eventId)).orderBy(asc(teams.position)).all()
+  const athleteRows = await db.select().from(athletes).where(eq(athletes.eventId, eventId)).all()
   const athleteById = new Map(athleteRows.map(a => [a.id, a]))
-  const rulesetRows = db.select().from(rulesets).where(eq(rulesets.eventId, eventId)).orderBy(asc(rulesets.id)).all()
-  const matRows = db.select().from(mats).where(eq(mats.eventId, eventId)).orderBy(asc(mats.number)).all()
-  const matchRows = db.select().from(matches).where(eq(matches.eventId, eventId)).orderBy(asc(matches.orderIndex), asc(matches.id)).all()
-  const endedAtById = endedAtByMatch(db, matchRows.map(m => m.id))
+  const rulesetRows = await db.select().from(rulesets).where(eq(rulesets.eventId, eventId)).orderBy(asc(rulesets.id)).all()
+  const matRows = await db.select().from(mats).where(eq(mats.eventId, eventId)).orderBy(asc(mats.number)).all()
+  const matchRows = await db.select().from(matches).where(eq(matches.eventId, eventId)).orderBy(asc(matches.orderIndex), asc(matches.id)).all()
+  const endedAtById = await endedAtByMatch(db, matchRows.map(m => m.id))
   const views = matchRows.map(m => toMatchView(m, athleteById, endedAtById.get(m.id) ?? null))
 
   const tally = new Map<number, { wins: number; points: number }>(teamRows.map(t => [t.id, { wins: 0, points: 0 }]))

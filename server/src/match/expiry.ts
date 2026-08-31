@@ -3,7 +3,7 @@ import type { DbLike } from '../db/client.js'
 import { matches, type MatchRow } from '../db/schema.js'
 import { appendMatchEvent, loadMatch, MatchStateError, SeqConflict } from './events.js'
 
-export type ExpireHandler = (matchId: number, atIso: string) => void
+export type ExpireHandler = (matchId: number, atIso: string) => void | Promise<void>
 
 export class ExpiryScheduler {
   private timers = new Map<number, NodeJS.Timeout>()
@@ -36,8 +36,8 @@ export class ExpiryScheduler {
     }
   }
 
-  rebuild(db: DbLike): void {
-    const running = db.select().from(matches).where(and(eq(matches.status, 'live'), isNotNull(matches.clockStartedAt))).all()
+  async rebuild(db: DbLike): Promise<void> {
+    const running = await db.select().from(matches).where(and(eq(matches.status, 'live'), isNotNull(matches.clockStartedAt))).all()
     for (const m of running) this.sync(m)
   }
 
@@ -52,11 +52,11 @@ export class ExpiryScheduler {
 }
 
 // Returns the match when it wrote the expiry pause, null when nothing needed writing.
-export function expireClock(db: DbLike, matchId: number, atIso: string): MatchRow | null {
-  const match = loadMatch(db, matchId)
+export async function expireClock(db: DbLike, matchId: number, atIso: string): Promise<MatchRow | null> {
+  const match = await loadMatch(db, matchId)
   if (match.status !== 'live' || !match.clockStartedAt) return null
   try {
-    const r = appendMatchEvent(db, { id: `expiry:${matchId}:${match.lastSeq}`, matchId, type: 'clock_pause', lastSeq: match.lastSeq, at: atIso })
+    const r = await appendMatchEvent(db, { id: `expiry:${matchId}:${match.lastSeq}`, matchId, type: 'clock_pause', lastSeq: match.lastSeq, at: atIso })
     return r.duplicate ? null : r.match
   } catch (e) {
     if (e instanceof SeqConflict || e instanceof MatchStateError) return null

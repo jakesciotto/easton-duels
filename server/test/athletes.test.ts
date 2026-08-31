@@ -9,8 +9,8 @@ const candidate = {
 
 describe('athletes', () => {
   it('adds a manual kid into the pool with manual sources', async () => {
-    const { app, db, adminToken } = createTestApp()
-    const s = seedEvent(db, { matches: 0 })
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db, { matches: 0 })
     const r = await call(app, 'POST', `/api/events/${s.eventId}/athletes`, { manual: { firstName: 'Kai', lastName: 'Wong', age: 9, weightLbs: 66, belt: 'yellow', gender: 'M' } }, adminToken)
     expect(r.status).toBe(201)
     const kai = r.body.find((a: any) => a.firstName === 'Kai')
@@ -18,8 +18,8 @@ describe('athletes', () => {
   })
 
   it('upserts candidates by wl uid and keeps manual age and weight', async () => {
-    const { app, db, adminToken } = createTestApp()
-    const s = seedEvent(db, { matches: 0 })
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db, { matches: 0 })
     let r = await call(app, 'POST', `/api/events/${s.eventId}/athletes`, { candidates: [candidate] }, adminToken)
     const zoe = r.body.find((a: any) => a.wlUid === 'u100')
     expect(zoe).toMatchObject({ source: 'wl', ageSource: 'leaderboard', weightSource: 'leaderboard', erp: 5.2, age: 8 })
@@ -31,21 +31,21 @@ describe('athletes', () => {
   })
 
   it('assigns teams, patches fields, and refuses to delete a kid in a match', async () => {
-    const { app, db, adminToken } = createTestApp()
-    const s = seedEvent(db)
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db)
     const moved = await call(app, 'POST', `/api/events/${s.eventId}/athletes/assign`, { ids: [s.a1], teamId: s.teamB }, adminToken)
     expect(moved.body.find((a: any) => a.id === s.a1).teamId).toBe(s.teamB)
     expect((await call(app, 'POST', `/api/events/${s.eventId}/athletes/assign`, { ids: [s.a1], teamId: 999 }, adminToken)).status).toBe(422)
     const p = await call(app, 'PATCH', `/api/athletes/${s.a1}`, { weightLbs: 64, teamId: null }, adminToken)
     expect(p.body).toMatchObject({ weightLbs: 64, weightSource: 'manual', teamId: null })
     expect((await call(app, 'DELETE', `/api/athletes/${s.a1}`, undefined, adminToken)).status).toBe(409)
-    const s2 = seedEvent(db, { matches: 0 })
+    const s2 = await seedEvent(db, { matches: 0 })
     expect((await call(app, 'DELETE', `/api/athletes/${s2.a1}`, undefined, adminToken)).status).toBe(204)
   })
 
   it('adds a bulk list of manual kids', async () => {
-    const { app, db, adminToken } = createTestApp()
-    const s = seedEvent(db, { matches: 0 })
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db, { matches: 0 })
     const r = await call(app, 'POST', `/api/events/${s.eventId}/athletes`, { bulk: [
       { firstName: 'Ana', lastName: 'Bell', age: 7, weightLbs: 52, belt: 'white', gender: 'F', teamId: s.teamA },
       { firstName: 'Eli', lastName: 'Cruz', teamId: s.teamB },

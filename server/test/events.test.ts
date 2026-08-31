@@ -8,13 +8,13 @@ const body = { name: 'Fall Duels', date: '2026-10-03', matCount: 2, teams: [{ na
 
 describe('events', () => {
   it('requires an admin token', async () => {
-    const { app } = createTestApp()
+    const { app } = await createTestApp()
     expect((await call(app, 'GET', '/api/events')).status).toBe(401)
     expect((await call(app, 'POST', '/api/events', body)).status).toBe(401)
   })
 
   it('creates an event with teams, mats, a default ruleset, and a mat code', async () => {
-    const { app, adminToken } = createTestApp()
+    const { app, adminToken } = await createTestApp()
     const r = await call(app, 'POST', '/api/events', body, adminToken)
     expect(r.status).toBe(201)
     expect(r.body.event.matCode).toMatch(/^\d{4}$/)
@@ -32,40 +32,40 @@ describe('events', () => {
   })
 
   it('422s on a bad colour or mat count', async () => {
-    const { app, adminToken } = createTestApp()
+    const { app, adminToken } = await createTestApp()
     expect((await call(app, 'POST', '/api/events', { ...body, matCount: 0 }, adminToken)).status).toBe(422)
     expect((await call(app, 'POST', '/api/events', { ...body, teams: [{ name: 'A', color: 'mauve' }, body.teams[1]] }, adminToken)).status).toBe(422)
   })
 
   it('goes live through PATCH and loads the first match on each mat', async () => {
-    const { app, db, adminToken, hub } = createTestApp()
-    const s = seedEvent(db, { matCount: 2 })
+    const { app, db, adminToken, hub } = await createTestApp()
+    const s = await seedEvent(db, { matCount: 2 })
     let seen = 0
-    hub.subscribe(s.eventId, () => { seen++ })
+    await hub.subscribe(s.eventId, () => { seen++ })
     const r = await call(app, 'PATCH', `/api/events/${s.eventId}`, { status: 'live' }, adminToken)
     expect(r.status).toBe(200)
     expect(r.body.event.status).toBe('live')
-    expect(db.select().from(mats).where(eq(mats.eventId, s.eventId)).all().map(m => m.currentMatchId)).toEqual([s.matchIds[0], s.matchIds[1]])
+    expect((await db.select().from(mats).where(eq(mats.eventId, s.eventId)).all()).map(m => m.currentMatchId)).toEqual([s.matchIds[0], s.matchIds[1]])
     expect(seen).toBe(2)
     expect((await call(app, 'PATCH', `/api/events/${s.eventId}`, { status: 'live' }, adminToken)).status).toBe(409)
     expect((await call(app, 'PATCH', `/api/events/${s.eventId}`, { status: 'done' }, adminToken)).body.event.status).toBe('done')
   })
 
   it('adds mats on a higher count and refuses to drop a mat that has matches', async () => {
-    const { app, db, adminToken } = createTestApp()
-    const s = seedEvent(db, { matCount: 2 })
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db, { matCount: 2 })
     const up = await call(app, 'PATCH', `/api/events/${s.eventId}`, { matCount: 3 }, adminToken)
     expect(up.body.mats.map((m: any) => m.number)).toEqual([1, 2, 3])
     expect((await call(app, 'PATCH', `/api/events/${s.eventId}`, { matCount: 1 }, adminToken)).status).toBe(409)
-    db.update(matches).set({ matId: s.matIds[0] }).where(eq(matches.eventId, s.eventId)).run()
+    await db.update(matches).set({ matId: s.matIds[0] }).where(eq(matches.eventId, s.eventId)).run()
     const down = await call(app, 'PATCH', `/api/events/${s.eventId}`, { matCount: 1 }, adminToken)
     expect(down.status).toBe(200)
     expect(down.body.mats).toHaveLength(1)
   })
 
   it('renames a team, serves connect info, and deletes a setup event', async () => {
-    const { app, db, adminToken } = createTestApp()
-    const s = seedEvent(db)
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db)
     const t = await call(app, 'PATCH', `/api/events/${s.eventId}/teams/${s.teamA}`, { name: 'Boulder Bears', color: 'teal' }, adminToken)
     expect(t.body.teams[0]).toMatchObject({ name: 'Boulder Bears', color: 'teal' })
     const c = await call(app, 'GET', `/api/events/${s.eventId}/connect`, undefined, adminToken)
@@ -73,7 +73,7 @@ describe('events', () => {
     expect(c.body.url).toMatch(/^http:\/\/[\d.]+:\d+$/)
     expect((await call(app, 'DELETE', `/api/events/${s.eventId}`, undefined, adminToken)).status).toBe(204)
     expect((await call(app, 'GET', `/api/events/${s.eventId}`, undefined, adminToken)).status).toBe(404)
-    const live = seedEvent(db, { live: true })
+    const live = await seedEvent(db, { live: true })
     expect((await call(app, 'DELETE', `/api/events/${live.eventId}`, undefined, adminToken)).status).toBe(409)
   })
 })

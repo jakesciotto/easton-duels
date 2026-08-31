@@ -6,8 +6,8 @@ import { mats } from '../src/db/schema.js'
 
 describe('match routes', () => {
   it('generates, creates by hand with team order fixed, patches, deletes, reorders', async () => {
-    const { app, db, adminToken } = createTestApp()
-    const s = seedEvent(db, { matches: 0 })
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db, { matches: 0 })
     const gen = await call(app, 'POST', `/api/events/${s.eventId}/matches/generate`, undefined, adminToken)
     expect(gen.status).toBe(200)
     expect(gen.body.created).toBe(2)
@@ -26,16 +26,16 @@ describe('match routes', () => {
   })
 
   it('clears a mat pointer at the deleted match', async () => {
-    const { app, db, adminToken } = createTestApp()
-    const s = seedEvent(db)
-    db.update(mats).set({ currentMatchId: s.matchIds[0] }).where(eq(mats.id, s.matIds[0])).run()
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db)
+    await db.update(mats).set({ currentMatchId: s.matchIds[0] }).where(eq(mats.id, s.matIds[0])).run()
     expect((await call(app, 'DELETE', `/api/matches/${s.matchIds[0]}`, undefined, adminToken)).status).toBe(204)
-    expect(db.select().from(mats).where(eq(mats.id, s.matIds[0])).get()?.currentMatchId).toBeNull()
+    expect((await db.select().from(mats).where(eq(mats.id, s.matIds[0])).get())?.currentMatchId).toBeNull()
   })
 
   it('rejects same-team pairs, foreign athletes, and edits to live matches', async () => {
-    const { app, db, adminToken } = createTestApp()
-    const s = seedEvent(db, { live: true })
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db, { live: true })
     expect((await call(app, 'POST', `/api/events/${s.eventId}/matches`, { athleteAId: s.a1, athleteBId: s.a2 }, adminToken)).status).toBe(422)
     expect((await call(app, 'POST', `/api/events/${s.eventId}/matches`, { athleteAId: s.a1, athleteBId: 999 }, adminToken)).status).toBe(422)
     expect((await call(app, 'PATCH', `/api/matches/${s.matchIds[0]}`, { lengthSec: 90 }, adminToken)).status).toBe(409)

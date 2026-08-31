@@ -7,8 +7,8 @@ import { endMatch } from '../src/match/events.js'
 
 describe('bind and heartbeat', () => {
   it('issues a mat token for the right code and locks after five bad codes', async () => {
-    const { app, db } = createTestApp()
-    const s = seedEvent(db)
+    const { app, db } = await createTestApp()
+    const s = await seedEvent(db)
     const bad = await call(app, 'POST', `/api/events/${s.eventId}/mats/${s.matIds[0]}/bind`, { code: '9999' })
     expect(bad.status).toBe(401)
     const ok = await call(app, 'POST', `/api/events/${s.eventId}/mats/${s.matIds[0]}/bind`, { code: '0420' })
@@ -23,8 +23,8 @@ describe('bind and heartbeat', () => {
   })
 
   it('answers 404 for an unknown event or an unknown mat', async () => {
-    const { app, db } = createTestApp()
-    const s = seedEvent(db)
+    const { app, db } = await createTestApp()
+    const s = await seedEvent(db)
     const noEvent = await call(app, 'POST', `/api/events/999/mats/${s.matIds[0]}/bind`, { code: '0420' })
     expect(noEvent.status).toBe(404)
     expect(noEvent.body.error.code).toBe('not_found')
@@ -36,8 +36,8 @@ describe('bind and heartbeat', () => {
 
 describe('scoring flow', () => {
   it('scores, dedupes, rejects stale seq, undoes, and ends with mat advance', async () => {
-    const { app, db } = createTestApp()
-    const s = seedEvent(db, { matCount: 1, live: true })
+    const { app, db } = await createTestApp()
+    const s = await seedEvent(db, { matCount: 1, live: true })
     const token = matToken(s.eventId, s.matIds[0])
     const [first, second] = s.matchIds
     const base = `/api/matches/${first}`
@@ -75,22 +75,22 @@ describe('scoring flow', () => {
   })
 
   it('advances the mat on a replayed end whose advance never landed', async () => {
-    const { app, db } = createTestApp()
-    const s = seedEvent(db, { matCount: 1, live: true })
+    const { app, db } = await createTestApp()
+    const s = await seedEvent(db, { matCount: 1, live: true })
     const token = matToken(s.eventId, s.matIds[0])
     const [first, second] = s.matchIds
     const body = { id: 'end-0001', lastSeq: 0, winnerAthleteId: s.a1 }
-    endMatch(db, { ...body, matchId: first })
+    await endMatch(db, { ...body, matchId: first })
     const version = (await call(app, 'GET', `/api/events/${s.eventId}/board`)).body.version
     const replay = await call(app, 'POST', `/api/matches/${first}/end`, body, token)
     expect(replay.status).toBe(200)
     expect(replay.body.version).toBe(version)
-    expect(db.select().from(mats).where(eq(mats.id, s.matIds[0])).get()?.currentMatchId).toBe(second)
+    expect((await db.select().from(mats).where(eq(mats.id, s.matIds[0])).get())?.currentMatchId).toBe(second)
   })
 
   it('requires a decision on a tie and records a submission from a terminal', async () => {
-    const { app, db } = createTestApp()
-    const s = seedEvent(db, { live: true })
+    const { app, db } = await createTestApp()
+    const s = await seedEvent(db, { live: true })
     const token = matToken(s.eventId, s.matIds[0])
     const base = `/api/matches/${s.matchIds[0]}`
     let r = await call(app, 'POST', `${base}/end`, { id: 'end-0001', lastSeq: 0 }, token)
@@ -103,8 +103,8 @@ describe('scoring flow', () => {
   })
 
   it('runs the clock and lets the scheduler expire it', async () => {
-    const { app, db, expiry } = createTestApp()
-    const s = seedEvent(db, { live: true })
+    const { app, db, expiry } = await createTestApp()
+    const s = await seedEvent(db, { live: true })
     const token = matToken(s.eventId, s.matIds[0])
     const base = `/api/matches/${s.matchIds[0]}`
     const r = await call(app, 'POST', `${base}/events`, { id: 'clk-0001', type: 'clock_start', lastSeq: 0 }, token)
@@ -116,8 +116,8 @@ describe('scoring flow', () => {
   })
 
   it('blocks scoring while the event is in setup and with the wrong mat token', async () => {
-    const { app, db } = createTestApp()
-    const s = seedEvent(db)
+    const { app, db } = await createTestApp()
+    const s = await seedEvent(db)
     const base = `/api/matches/${s.matchIds[0]}`
     const r = await call(app, 'POST', `${base}/events`, { id: 'evt-0001', type: 'clock_start', lastSeq: 0 }, matToken(s.eventId, s.matIds[0]))
     expect(r.status).toBe(409)
@@ -126,16 +126,16 @@ describe('scoring flow', () => {
   })
 
   it('rejects a client event id outside the allowed charset', async () => {
-    const { app, db } = createTestApp()
-    const s = seedEvent(db, { live: true })
+    const { app, db } = await createTestApp()
+    const s = await seedEvent(db, { live: true })
     const r = await call(app, 'POST', `/api/matches/${s.matchIds[0]}/events`, { id: 'entry:0001', type: 'clock_start', lastSeq: 0 }, matToken(s.eventId, s.matIds[0]))
     expect(r.status).toBe(422)
     expect(r.body.error.code).toBe('validation')
   })
 
   it('admin can reopen, edit the result, and skip', async () => {
-    const { app, db, adminToken } = createTestApp()
-    const s = seedEvent(db, { matCount: 1, live: true })
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db, { matCount: 1, live: true })
     const [first, second] = s.matchIds
     await call(app, 'POST', `/api/matches/${first}/end`, { id: 'end-0001', lastSeq: 0, winnerAthleteId: s.a1 }, adminToken)
     let r = await call(app, 'POST', `/api/matches/${first}/result`, { winnerAthleteId: s.b1, winType: 'decision' }, adminToken)

@@ -24,7 +24,7 @@ rosterRoutes.get('/events/:eventId/wl-locations', requireAdmin, async c => {
 rosterRoutes.post('/events/:eventId/roster/sync', requireAdmin, validate('json', z.object({ kBusinesses: z.array(z.string().min(1)).min(1).max(20) })), async c => {
   const { db, roster } = c.get('ctx')
   const eventId = Number(c.req.param('eventId'))
-  if (!db.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get()) return errorJson(c, 404, 'not_found', 'event not found')
+  if (!await db.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get()) return errorJson(c, 404, 'not_found', 'event not found')
   if (!roster.wl) return errorJson(c, 503, 'wl_not_configured', 'WellnessLiving credentials are not set')
   const { kBusinesses } = c.req.valid('json')
   const warnings: string[] = []

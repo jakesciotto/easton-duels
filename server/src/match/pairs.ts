@@ -3,9 +3,9 @@ import type { DbLike } from '../db/client.js'
 import { teams, athletes, mats, matches } from '../db/schema.js'
 
 // Returns the pair with the team-A kid first, or a message when the pair is invalid.
-export function resolvePair(db: DbLike, eventId: number, aId: number, bId: number): { a: number; b: number } | string {
-  const teamRows = db.select().from(teams).where(eq(teams.eventId, eventId)).orderBy(asc(teams.position)).all()
-  const kids = db.select().from(athletes).where(eq(athletes.eventId, eventId)).all()
+export async function resolvePair(db: DbLike, eventId: number, aId: number, bId: number): Promise<{ a: number; b: number } | string> {
+  const teamRows = await db.select().from(teams).where(eq(teams.eventId, eventId)).orderBy(asc(teams.position)).all()
+  const kids = await db.select().from(athletes).where(eq(athletes.eventId, eventId)).all()
   const a = kids.find(k => k.id === aId)
   const b = kids.find(k => k.id === bId)
   if (!a || !b) return 'both athletes must be on this event'
@@ -15,11 +15,11 @@ export function resolvePair(db: DbLike, eventId: number, aId: number, bId: numbe
   return a.teamId === teamRows[0]?.id ? { a: a.id, b: b.id } : { a: b.id, b: a.id }
 }
 
-export function leastLoadedMat(db: DbLike, eventId: number): number | null {
-  const matRows = db.select().from(mats).where(eq(mats.eventId, eventId)).orderBy(asc(mats.number)).all()
+export async function leastLoadedMat(db: DbLike, eventId: number): Promise<number | null> {
+  const matRows = await db.select().from(mats).where(eq(mats.eventId, eventId)).orderBy(asc(mats.number)).all()
   if (matRows.length === 0) return null
   const counts = new Map(matRows.map(m => [m.id, 0]))
-  const pending = db.select({ matId: matches.matId }).from(matches).where(and(eq(matches.eventId, eventId), eq(matches.status, 'pending'))).all()
+  const pending = await db.select({ matId: matches.matId }).from(matches).where(and(eq(matches.eventId, eventId), eq(matches.status, 'pending'))).all()
   for (const m of pending) {
     if (m.matId !== null && counts.has(m.matId)) counts.set(m.matId, (counts.get(m.matId) ?? 0) + 1)
   }

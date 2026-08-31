@@ -27,20 +27,20 @@ type Insert = typeof matchEvents.$inferInsert
 
 const entryKey = (entryId: string) => `entry:${entryId}`
 
-function replayed(db: DbLike, entryId: string): EntryResult | null {
-  const row = db.select().from(matchEvents).where(eq(matchEvents.id, entryKey(entryId))).get()
-  return row ? { duplicate: true, match: loadMatch(db, row.matchId) } : null
+async function replayed(db: DbLike, entryId: string): Promise<EntryResult | null> {
+  const row = await db.select().from(matchEvents).where(eq(matchEvents.id, entryKey(entryId))).get()
+  return row ? { duplicate: true, match: await loadMatch(db, row.matchId) } : null
 }
 
-export function enterResult(db: DbLike, matchId: number, input: EntryInput): EntryResult {
-  return db.transaction(tx => {
-    const replay = replayed(tx, input.entryId)
+export async function enterResult(db: DbLike, matchId: number, input: EntryInput): Promise<EntryResult> {
+  return db.transaction(async tx => {
+    const replay = await replayed(tx, input.entryId)
     if (replay) return replay
-    const match = loadMatch(tx, matchId)
+    const match = await loadMatch(tx, matchId)
     if (input.winnerAthleteId !== match.athleteAId && input.winnerAthleteId !== match.athleteBId) throw new MatchStateError('athlete not in match')
     const at = input.at ?? new Date().toISOString()
     const wasDone = match.status === 'done'
-    if (match.status === 'pending') tx.update(matches).set({ status: 'live' }).where(eq(matches.id, matchId)).run()
+    if (match.status === 'pending') await tx.update(matches).set({ status: 'live' }).where(eq(matches.id, matchId)).run()
 
     let seq = match.lastSeq
     const rows: Insert[] = []
@@ -54,25 +54,25 @@ export function enterResult(db: DbLike, matchId: number, input: EntryInput): Ent
     const result = { winnerAthleteId: input.winnerAthleteId, winType: input.winType }
     if (wasDone) push({ type: 'admin', athleteId: result.winnerAthleteId, payload: { kind: 'edit_result', ...result } })
     else push({ type: 'end', athleteId: result.winnerAthleteId, payload: { kind: 'end', ...result } })
-    tx.insert(matchEvents).values(rows).run()
+    await tx.insert(matchEvents).values(rows).run()
 
-    const updated = recompute(tx, matchId)
+    const updated = await recompute(tx, matchId)
     if (updated.matId !== null) {
-      const mat = tx.select().from(mats).where(eq(mats.id, updated.matId)).get()
-      if (mat && mat.currentMatchId === matchId) advanceMat(tx, mat.id)
+      const mat = await tx.select().from(mats).where(eq(mats.id, updated.matId)).get()
+      if (mat && mat.currentMatchId === matchId) await advanceMat(tx, mat.id)
     }
-    return { duplicate: false, match: loadMatch(tx, matchId) }
+    return { duplicate: false, match: await loadMatch(tx, matchId) }
   })
 }
 
-export function createEntry(db: DbLike, eventId: number, input: CreateEntryInput): EntryResult {
-  return db.transaction(tx => {
-    const replay = replayed(tx, input.entryId)
+export async function createEntry(db: DbLike, eventId: number, input: CreateEntryInput): Promise<EntryResult> {
+  return db.transaction(async tx => {
+    const replay = await replayed(tx, input.entryId)
     if (replay) return replay
-    if (!tx.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get()) throw new MatchStateError('event not found')
-    const pair = resolvePair(tx, eventId, input.athleteAId, input.athleteBId)
+    if (!await tx.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get()) throw new MatchStateError('event not found')
+    const pair = await resolvePair(tx, eventId, input.athleteAId, input.athleteBId)
     if (typeof pair === 'string') throw new MatchStateError(pair)
-    const existing = tx.select().from(matches)
+    const existing = await tx.select().from(matches)
       .where(and(eq(matches.eventId, eventId), eq(matches.status, 'pending'), eq(matches.athleteAId, pair.a), eq(matches.athleteBId, pair.b)))
       .orderBy(asc(matches.orderIndex)).get()
     let matchId: number
@@ -80,14 +80,14 @@ export function createEntry(db: DbLike, eventId: number, input: CreateEntryInput
       matchId = existing.id
     } else {
       const ruleset = input.rulesetId !== undefined
-        ? tx.select().from(rulesets).where(and(eq(rulesets.id, input.rulesetId), eq(rulesets.eventId, eventId))).get()
-        : tx.select().from(rulesets).where(eq(rulesets.eventId, eventId)).orderBy(asc(rulesets.id)).get()
+        ? await tx.select().from(rulesets).where(and(eq(rulesets.id, input.rulesetId), eq(rulesets.eventId, eventId))).get()
+        : await tx.select().from(rulesets).where(eq(rulesets.eventId, eventId)).orderBy(asc(rulesets.id)).get()
       if (!ruleset) throw new MatchStateError('ruleset not found')
-      const max = tx.select({ m: sql<number>`coalesce(max(${matches.orderIndex}), -1)` }).from(matches).where(eq(matches.eventId, eventId)).get()
-      matchId = tx.insert(matches).values({
+      const max = await tx.select({ m: sql<number>`coalesce(max(${matches.orderIndex}), -1)` }).from(matches).where(eq(matches.eventId, eventId)).get()
+      matchId = (await tx.insert(matches).values({
         eventId, athleteAId: pair.a, athleteBId: pair.b, rulesetId: ruleset.id, lengthSec: ruleset.defaultLengthSec,
         matId: null, orderIndex: (max?.m ?? -1) + 1, why: 'entered by hand',
-      }).returning().get().id
+      }).returning().get()).id
     }
     return enterResult(tx, matchId, input)
   })
