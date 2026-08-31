@@ -3,7 +3,10 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "workspaces": ["server", "web"],
+  "workspaces": [
+    "server",
+    "web"
+  ],
   "scripts": {
     "dev": "trap 'kill 0' EXIT INT TERM; npm run dev -w server & npm run dev -w web & wait",
     "build": "npm run build -w web && npm run build -w server && rm -rf server/public && cp -r web/dist server/public",
@@ -15,5 +18,8 @@
     "smoke:cloud": "node scripts/smoke-cloud.mjs",
     "db:migrate": "node server/scripts/migrate.mjs",
     "prepare": "git config core.hooksPath .githooks || true"
+  },
+  "overrides": {
+    "@libsql/hrana-client": "^0.8.0"
   }
 }
