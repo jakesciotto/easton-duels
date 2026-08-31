@@ -63,8 +63,8 @@ export default async function handler(req: unknown, res: unknown) {
         await initDb(db, opts)
         out.appClient = 'ok'
       } catch (e) { out.appClient = String(e).slice(0, 160) }
+      const calls: unknown[] = []
       try {
-        const calls: unknown[] = []
         const spyFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
           const rq = new Request(input as RequestInfo, init)
           const auth = rq.headers.get('authorization') ?? ''
@@ -77,10 +77,10 @@ export default async function handler(req: unknown, res: unknown) {
         const c = createClient({ url, authToken: t, fetch: spyFetch as typeof fetch })
         await c.execute('select 1')
         out.injectedFetch = 'ok'
-        out.spy = calls.slice(0, 6)
-      out.spy = calls.slice(0, 6)
       } catch (e) {
         out.injectedFetch = String(e).slice(0, 120)
+      } finally {
+        out.spy = calls.slice(0, 6)
       }
       try {
         out.isoFetch = import.meta.resolve('@libsql/isomorphic-fetch')
