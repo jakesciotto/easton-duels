@@ -1,12 +1,6 @@
 import { handle } from '@hono/node-server/vercel'
 
-// Build per invocation. A module-singleton app carries one libsql http client across
-// invocations, and Vercel freezes the instance between them; the thawed client's stream
-// state then fails against Turso with HTTP 401 on the next query, while a fresh client
-// works every time (proven by the diag function during the 2026-08-31 incident). The
-// token secret is cached at module scope so a rebuild costs the pragma round trip, not
-// a settings query, and createApp itself is pure route registration.
-let cachedSecret: string | null = null
+type App = Awaited<ReturnType<typeof buildApp>>
 
 async function buildApp() {
   const { createApp } = await import('../server/src/app.js')
@@ -16,9 +10,8 @@ async function buildApp() {
   const opts = dbUrlFromEnv(process.env)
   const db = createDb(opts)
   await initDb(db, opts)
-  cachedSecret ??= await getOrCreateSecret(db)
   const app = createApp({
-    port: 0, db, secret: cachedSecret,
+    port: 0, db, secret: await getOrCreateSecret(db),
     adminPin: validateAdminPin(process.env.ADMIN_PIN),
     roster: rosterFromEnv(process.env, { syncBudgetMs: 280_000 }),
     publicUrl: process.env.PUBLIC_URL,
@@ -27,92 +20,23 @@ async function buildApp() {
   return app
 }
 
+let ready: Promise<App> | null = null
+
+// A rejected boot must not be cached: an unmigrated database or a missing ADMIN_PIN would
+// otherwise poison this warm instance for its whole life, so the next invocation retries.
+function getApp(): Promise<App> {
+  ready ??= buildApp().catch(e => {
+    ready = null
+    throw e
+  })
+  return ready
+}
+
 // Vercel's Node runtime pre-parses JSON bodies and drains the request stream before the
-// adapter can read it, so c.req.json() waits forever on POSTs. Turning the platform body
-// parser off hands the raw stream through untouched.
+// adapter can read it, so c.req.json() waits forever on POSTs. NODEJS_HELPERS=0 in the
+// project env is the primary switch; this export is the belt to that suspender.
 export const config = { api: { bodyParser: false } }
 
 export default async function handler(req: unknown, res: unknown) {
-  if (!process.env.TURSO_AUTH_TOKEN) console.warn('env-loss: TURSO_AUTH_TOKEN absent this invocation')
-  if (!process.env.NODEJS_HELPERS) console.warn('env-loss: NODEJS_HELPERS absent this invocation')
-  if (!process.env.PUBLIC_URL) console.warn('env-loss: PUBLIC_URL absent this invocation')
-  if (!process.env.TURSO_DATABASE_URL) console.warn('env-loss: TURSO_DATABASE_URL absent this invocation')
-  // Temporary incident branch: report this function's own env view, secret-free.
-  const r = req as { url?: string }
-  const w = res as { statusCode: number; setHeader: (k: string, v: string) => void; end: (b: string) => void }
-  if (r.url?.includes('__envtail=1')) {
-    const key = new URL(r.url, 'http://x').searchParams.get('key')
-    if (key && key === process.env.ADMIN_PIN) {
-      const t = process.env.TURSO_AUTH_TOKEN ?? ''
-      const url = process.env.TURSO_DATABASE_URL ?? ''
-      const out: Record<string, unknown> = { fn: 'index', node: process.version, tokenLen: t.length, tokenTail: t.slice(-6) }
-      try {
-        const r = await fetch(url.replace('libsql://', 'https://') + '/v2/pipeline', {
-          method: 'POST',
-          headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' },
-          body: JSON.stringify({ requests: [{ type: 'execute', stmt: { sql: 'select 1' } }, { type: 'close' }] }),
-        })
-        out.rawPipeline = r.status
-      } catch (e) { out.rawPipeline = String(e).slice(0, 120) }
-      try {
-        const { createClient } = await import('@libsql/client')
-        const c = createClient({ url, authToken: t })
-        await c.execute('select 1')
-        out.directClient = 'ok'
-      } catch (e) { out.directClient = String(e).slice(0, 160) }
-      try {
-        const { createDb, dbUrlFromEnv, initDb } = await import('../server/src/db/client.js')
-        const opts = dbUrlFromEnv(process.env)
-        const db = createDb(opts)
-        await initDb(db, opts)
-        out.appClient = 'ok'
-      } catch (e) { out.appClient = String(e).slice(0, 160) }
-      const calls: unknown[] = []
-      try {
-        const spyFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-          const rq = new Request(input as RequestInfo, init)
-          const auth = rq.headers.get('authorization') ?? ''
-          calls.push({ url: rq.url, method: rq.method, authLen: auth.length, authTail: auth.slice(-6), hdrs: [...rq.headers.keys()].join(',') })
-          const rs = await globalThis.fetch(rq)
-          if (rs.ok) calls.push({ status: rs.status })
-          else calls.push({ status: rs.status, body: (await rs.clone().text()).slice(0, 160) })
-          return rs
-        }
-        const { createClient } = await import('@libsql/client')
-        const c = createClient({ url, authToken: t, fetch: spyFetch as typeof fetch })
-        await c.execute('select 1')
-        out.injectedFetch = 'ok'
-      } catch (e) {
-        out.injectedFetch = String(e).slice(0, 120)
-      } finally {
-        out.spy = calls.slice(0, 6)
-      }
-      try {
-        const dns = await import('node:dns/promises')
-        out.dns = await dns.resolve4(new URL(url.replace('libsql://', 'https://')).hostname)
-      } catch (e) { out.dns = String(e).slice(0, 100) }
-      try {
-        const fetchBefore = globalThis.fetch
-        await import('../server/src/app.js')
-        out.fetchSameAfterApp = fetchBefore === globalThis.fetch
-        const { createClient } = await import('@libsql/client')
-        const c = createClient({ url, authToken: t })
-        await c.execute('select 1')
-        out.afterAppImport = 'ok'
-      } catch (e) { out.afterAppImport = String(e).slice(0, 160) }
-      out.tokenTailAtBuild = (process.env.TURSO_AUTH_TOKEN ?? '').slice(-6)
-      out.urlAtBuild = (process.env.TURSO_DATABASE_URL ?? '').slice(-14)
-      out.dbPathAtBuild = process.env.DB_PATH ?? null
-      out.dataDirAtBuild = process.env.DATA_DIR ?? null
-      try {
-        await buildApp()
-        out.buildApp = 'ok'
-      } catch (e) { out.buildApp = String(e).slice(0, 160) }
-      w.statusCode = 200
-      w.setHeader('content-type', 'application/json')
-      w.end(JSON.stringify(out))
-      return
-    }
-  }
-  return handle(await buildApp())(req as never, res as never)
+  return handle(await getApp())(req as never, res as never)
 }
