@@ -39,17 +39,33 @@ function guardedFetch(token: string | undefined, base: typeof fetch): typeof fet
       h.set('authorization', `Bearer ${token}`)
       template = new Request(template, { headers: h })
     }
+    // Redirects are followed manually: the fetch spec strips the authorization header on
+    // cross-origin redirects, and Turso's balancer can redirect serverless egress, which
+    // produced "empty JWT token" rejections while the header was present at this layer.
     const attempt = async (viaAgent?: unknown) => {
-      const req = template.clone()
-      return viaAgent
-        ? base(req, { dispatcher: viaAgent } as RequestInit)
-        : base(req)
+      let req = template.clone()
+      for (let hop = 0; hop < 3; hop++) {
+        const init: RequestInit = { redirect: 'manual', ...(viaAgent ? ({ dispatcher: viaAgent } as RequestInit) : {}) }
+        const res = await base(req, init)
+        if (res.status < 300 || res.status >= 400) return res
+        const loc = res.headers.get('location')
+        if (!loc) return res
+        console.warn(`libsql redirect ${res.status} -> ${loc.slice(0, 80)}, re-attaching authorization`)
+        const h = new Headers(template.headers)
+        if (token) h.set('authorization', `Bearer ${token}`)
+        req = new Request(new URL(loc, req.url), {
+          method: template.method,
+          headers: h,
+          body: template.method === 'GET' || template.method === 'HEAD' ? undefined : await template.clone().arrayBuffer(),
+        })
+      }
+      return base(template.clone())
     }
     let res = await attempt()
     for (let i = 0; i < RETRY_401 && res.status === 401; i++) {
       try {
         const body = (await res.clone().text()).slice(0, 160)
-        console.warn(`libsql 401 from ${res.url} body=${JSON.stringify(body)}`)
+        console.warn(`libsql 401 from ${res.url} redirected=${res.redirected} body=${JSON.stringify(body)}`)
       } catch { /* body unavailable */ }
       await new Promise(r => setTimeout(r, 150 * (i + 1)))
       console.warn(`libsql 401, retry ${i + 1} of ${RETRY_401} on a fresh connection`)
