@@ -12,6 +12,7 @@
     "typecheck": "npm run typecheck -w server && npm run typecheck -w web && tsc -p tsconfig.json",
     "lint": "npm run lint -w server && npm run lint -w web",
     "e2e": "node scripts/e2e.mjs",
+    "smoke:cloud": "node scripts/smoke-cloud.mjs",
     "db:migrate": "node server/scripts/migrate.mjs",
     "prepare": "git config core.hooksPath .githooks || true"
   }
