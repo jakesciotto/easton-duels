@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { ApiError } from '@/lib/api'
 import {
-  SAME_PAIR_WINDOW_MS, clearDraft, clockLabel, isRepeatPair, loadDraft, pairKey, saveDraft, saveErrorCopy, teamWins,
+  SAME_PAIR_WINDOW_MS, clearDraft, clockLabel, draftKey, isRepeatPair, ledgerTime, loadDraft, pairKey, restoreDraft,
+  saveDraft, saveErrorCopy, teamWins,
   type EntryDraft,
 } from '@/routes/event/entry-state'
 import type { AthleteRow, MatchRow } from '@/lib/types'
@@ -41,6 +42,62 @@ describe('entry draft', () => {
     expect(loadDraft(7)).toBeNull()
     sessionStorage.setItem('duels:entry:7', 'not json')
     expect(loadDraft(7)).toBeNull()
+  })
+
+  // One slot per event destroyed an unsent new entry the moment any correction
+  // was saved or cancelled, because both wrote and cleared the same key.
+  it('gives a new entry and a correction separate slots', () => {
+    const correction: EntryDraft = { ...draft, entryId: 'e7654321-bbbb', editingId: 4 }
+    saveDraft(7, draft)
+    saveDraft(7, correction)
+    expect(draftKey(7, null)).not.toBe(draftKey(7, 4))
+    expect(loadDraft(7)).toEqual(draft)
+    expect(loadDraft(7, 4)).toEqual(correction)
+
+    clearDraft(7, 4)
+    expect(loadDraft(7, 4)).toBeNull()
+    expect(loadDraft(7)).toEqual(draft)
+  })
+
+  it('keeps two corrections of different matches apart', () => {
+    saveDraft(7, { ...draft, editingId: 4 })
+    saveDraft(7, { ...draft, entryId: 'e7654321-cccc', editingId: 5 })
+    clearDraft(7, 5)
+    expect(loadDraft(7, 4)).toMatchObject({ editingId: 4 })
+    expect(loadDraft(7, 5)).toBeNull()
+  })
+
+  it('refuses a payload whose intent disagrees with its slot', () => {
+    sessionStorage.setItem(draftKey(7, null), JSON.stringify({ ...draft, editingId: 4 }))
+    expect(loadDraft(7)).toBeNull()
+  })
+
+  it('restores the unsent new entry first and a stranded correction otherwise', () => {
+    saveDraft(7, { ...draft, entryId: 'e7654321-dddd', editingId: 9 })
+    expect(restoreDraft(7)).toMatchObject({ editingId: 9 })
+    saveDraft(7, draft)
+    expect(restoreDraft(7)).toEqual(draft)
+    expect(restoreDraft(8)).toBeNull()
+  })
+
+  it('restores the lowest match when several corrections are stranded', () => {
+    saveDraft(7, { ...draft, entryId: 'e7654321-ffff', editingId: 12 })
+    saveDraft(7, { ...draft, entryId: 'e7654321-eeee', editingId: 3 })
+    expect(restoreDraft(7)).toMatchObject({ editingId: 3 })
+  })
+})
+
+describe('ledger time', () => {
+  // The At column was fed only by this browser session, so a reload or a second
+  // desk device rendered every row blank for the rest of the event.
+  it('prefers the server record and falls back to the in session stamp', () => {
+    const ended = new Date(2026, 9, 3, 15, 41).toISOString()
+    const saved = new Date(2026, 9, 3, 9, 5).getTime()
+    expect(ledgerTime(ended, saved)).toEqual(new Date(ended))
+    expect(ledgerTime(null, saved)).toEqual(new Date(saved))
+    expect(ledgerTime(undefined, saved)).toEqual(new Date(saved))
+    expect(ledgerTime(null, undefined)).toBeNull()
+    expect(ledgerTime('not a date', undefined)).toBeNull()
   })
 })
 

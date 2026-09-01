@@ -1,16 +1,19 @@
 import type { MatView, MatchView } from '@shared/types'
 import { isRunning } from '@shared/clock'
+import { POLL_CLOCK_RUNNING_MS } from '@/lib/pollInterval'
 import { MatRow, NextLine } from './MatRow'
 
 // One mat, one panel, in the same position for the whole event: mat 1 is the top row
 // whether it is live, idle or finished.
-function MatPanel({ mat, held, settled, serverNow, nextCount, withClock }: {
+function MatPanel({ mat, held, settled, serverNow, nextCount, withClock, lastSuccessAt, pollIntervalMs }: {
   mat: MatView
   held: MatchView | undefined
   settled: boolean
   serverNow: string | null
   nextCount: number
   withClock: boolean
+  lastSuccessAt: number | null
+  pollIntervalMs: number
 }) {
   const current = mat.current
   const showing = current ?? held ?? null
@@ -34,6 +37,8 @@ function MatPanel({ mat, held, settled, serverNow, nextCount, withClock }: {
         withClock={withClock}
         clock={withClock && current !== null && !finished ? current.clock : null}
         serverNow={serverNow}
+        lastSuccessAt={lastSuccessAt}
+        pollIntervalMs={pollIntervalMs}
       />
       {queue.length > 0 && (
         <div className="b-next">
@@ -51,11 +56,13 @@ function MatPanel({ mat, held, settled, serverNow, nextCount, withClock }: {
  * is what pays for the name field, which is why it is deleted at three and four mats
  * and kept at one and two.
  */
-export function MatBand({ mats, held, settled, serverNow }: {
+export function MatBand({ mats, held, settled, serverNow, lastSuccessAt = null, pollIntervalMs = POLL_CLOCK_RUNNING_MS }: {
   mats: MatView[]
   held: ReadonlyMap<number, MatchView>
   settled: ReadonlySet<number>
   serverNow: string | null
+  lastSuccessAt?: number | null
+  pollIntervalMs?: number
 }) {
   const withClock = mats.length <= 2
   const nextCount = mats.length === 1 ? 4 : mats.length === 2 ? 1 : 0
@@ -72,6 +79,8 @@ export function MatBand({ mats, held, settled, serverNow }: {
             serverNow={serverNow}
             nextCount={nextCount}
             withClock={withClock}
+            lastSuccessAt={lastSuccessAt}
+            pollIntervalMs={pollIntervalMs}
           />
         )
       })}

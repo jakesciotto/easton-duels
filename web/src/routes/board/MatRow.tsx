@@ -1,18 +1,40 @@
+import { useState } from 'react'
 import type { ClockState, MatchSide } from '@shared/types'
-import { formatClock } from '@shared/clock'
-import { useClock } from '@/lib/useClock'
+import { formatClock, remainingMs as remainingAt } from '@shared/clock'
+import { useClock, useServerOffset } from '@/lib/useClock'
+import { POLL_CLOCK_RUNNING_MS } from '@/lib/pollInterval'
 import { cn } from '@/lib/utils'
 import { boardName } from './names'
 
+const NEAR_EXPIRY_MS = 30_000
+
 /**
- * A figure crossfades whole when its value changes and never interpolates. The key is
- * what forces the remount: without it React patches the text node in place and the
- * change lands with no cue at all.
+ * A figure crossfades whole when its value changes and never interpolates. Two slots
+ * that both stay mounted are what makes it a crossfade rather than a fade in: keying a
+ * single span on the value unmounts the old numeral in the same commit, so the room
+ * only ever saw the new one arrive out of nothing. The incoming slot takes the value,
+ * the outgoing one keeps the old digits while it fades, and because both elements
+ * persist the cue is a CSS transition, which is the form 4.3 keeps under Reduce Motion.
  */
 export function Fig({ value, className }: { value: number | string; className?: string }) {
+  const text = String(value)
+  const [state, setState] = useState(() => ({ slots: [text, ''] as [string, string], active: 0, shown: text }))
+  if (state.shown !== text) {
+    const active = state.active === 0 ? 1 : 0
+    const slots: [string, string] = active === 0 ? [text, state.slots[1]] : [state.slots[0], text]
+    setState({ slots, active, shown: text })
+  }
   return (
-    <span key={String(value)} className={cn('b-fig', className)}>
-      {value}
+    <span className={cn('b-fig', className)}>
+      {state.slots.map((slot, i) => (
+        <span
+          key={i}
+          aria-hidden={i !== state.active}
+          className={i === state.active ? 'b-fig-on' : undefined}
+        >
+          {slot}
+        </span>
+      ))}
     </span>
   )
 }
@@ -31,12 +53,33 @@ export function BoardName({ full, side }: { full: string; side: 'a' | 'b' }) {
   )
 }
 
-// Whole seconds only, no colour transition, no interpolation between polls. The server
-// writes clock_pause at the expiry instant and a smoothed client clock would disagree
-// with it at exactly the moment that matters.
-function BoardClock({ clock, serverNow }: { clock: ClockState; serverNow: string | null }) {
-  const { remainingMs } = useClock(clock, serverNow)
-  return <span className="b-clock">{formatClock(remainingMs)}</span>
+/**
+ * 7.6's five states, on the board's own scale. Whole seconds only, no colour
+ * transition, no interpolation between polls: the server writes clock_pause at the
+ * expiry instant and a smoothed client clock would disagree with it at exactly the
+ * moment that matters.
+ *
+ * Past three missed polls the readout freezes at the value the last snapshot actually
+ * carried, computed from `lastSuccessAt` rather than from the device clock. A frozen
+ * board is pixel identical to a working one, so a board that keeps counting through an
+ * outage is the single failure this state exists to prevent.
+ */
+function BoardClock({ clock, serverNow, lastSuccessAt, pollIntervalMs }: {
+  clock: ClockState
+  serverNow: string | null
+  lastSuccessAt: number | null
+  pollIntervalMs: number
+}) {
+  const offset = useServerOffset(serverNow)
+  const { remainingMs, running, stale } = useClock(clock, serverNow, lastSuccessAt, pollIntervalMs)
+  const frozen = stale && lastSuccessAt !== null
+  const shown = frozen ? remainingAt(clock, lastSuccessAt + offset) : remainingMs
+  const state = stale ? 'b-clock-stale'
+    : shown <= 0 ? 'b-clock-expired'
+    : !running ? 'b-clock-paused'
+    : shown <= NEAR_EXPIRY_MS ? 'b-clock-near'
+    : null
+  return <span className={cn('b-clock', state)}>{formatClock(shown)}</span>
 }
 
 export interface MatRowProps {
@@ -52,6 +95,10 @@ export interface MatRowProps {
   withClock?: boolean
   clock?: ClockState | null
   serverNow?: string | null
+  /** 7.6: the timestamp of the last poll that reached the server, and the interval it
+      is measured against. Without them the clock cannot know it has gone quiet. */
+  lastSuccessAt?: number | null
+  pollIntervalMs?: number
 }
 
 /**
@@ -62,6 +109,7 @@ export interface MatRowProps {
 export function MatRow({
   a, b, matNumber, scores = true, live = false, settled = false, upcoming = false,
   withClock = false, clock = null, serverNow = null,
+  lastSuccessAt = null, pollIntervalMs = POLL_CLOCK_RUNNING_MS,
 }: MatRowProps) {
   const showScores = scores && a !== null && b !== null && !upcoming
   return (
@@ -78,7 +126,14 @@ export function MatRow({
       {matNumber !== undefined && <span className="b-mat">{matNumber}</span>}
       {a && <BoardName full={a.name} side="a" />}
       {showScores && a && b && <Fig className={cn('b-score b-score-a', settled ? null : figTone(a.score, b.score))} value={a.score} />}
-      {clock && <BoardClock clock={clock} serverNow={serverNow} />}
+      {clock && (
+        <BoardClock
+          clock={clock}
+          serverNow={serverNow}
+          lastSuccessAt={lastSuccessAt}
+          pollIntervalMs={pollIntervalMs}
+        />
+      )}
       {showScores && a && b && <Fig className={cn('b-score b-score-b', settled ? null : figTone(b.score, a.score))} value={b.score} />}
       {b && <BoardName full={b.name} side="b" />}
     </div>

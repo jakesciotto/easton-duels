@@ -1,10 +1,12 @@
 import type { MatchView, Snapshot } from '@shared/types'
 
-export type Composition = 'cold' | 'mats' | 'entry' | 'done'
+export type Composition = 'cold' | 'setup' | 'mats' | 'entry' | 'done'
 
 export interface BoardPlan {
   comp: Composition
-  /** 1 to 4. Chooses the mat band's row count and therefore its geometry. */
+  /** The event's actual mat count, at least 1. The mat band derives its panel height
+      from this rather than from a clamp, because the API accepts up to eight mats and a
+      clamp meant every mat above the fourth was laid out off the bottom of the band. */
   mats: number
 }
 
@@ -28,11 +30,22 @@ export function boardPlan(snapshot: Snapshot | null, held: ReadonlyMap<number, M
   if (!snapshot || snapshot.teams.length < 2) return { comp: 'cold', mats: 1 }
   if (snapshot.event.status === 'done') return { comp: 'done', mats: 1 }
 
-  const active = snapshot.mats.some(m => m.current !== null || held.has(m.id))
+  const mats = Math.max(1, snapshot.mats.length)
   const results = snapshot.matches.some(m => m.status === 'done')
-  // No mat is carrying a match and results exist, so somebody is typing them at a
-  // desk. That is a final score panel, not a degraded live board.
-  if (!active && results) return { comp: 'entry', mats: 1 }
+  // Whether a mat is bound is an event-wide setting that survives a reload. Whether one
+  // happens to be carrying a match this second is not, and the held results are derived
+  // from transitions this client watched, so both are empty on the first snapshot after
+  // any reload. Gating on those alone repainted the whole board as a Final Score panel
+  // every time four bouts ended together, and relaid it out again the moment mat 1
+  // started.
+  const matsInUse = snapshot.mats.some(m => m.bound || m.current !== null || held.has(m.id))
 
-  return { comp: 'mats', mats: Math.min(4, Math.max(1, snapshot.mats.length)) }
+  // Before the first whistle nobody is asking about a score, and the queue fits.
+  if (snapshot.event.status === 'setup' && !results) return { comp: 'setup', mats }
+  if (matsInUse) return { comp: 'mats', mats }
+  // No mat is bound, carrying or holding a match and results exist, so somebody is
+  // typing them at a desk. That is a final score panel, not a degraded live board.
+  if (results) return { comp: 'entry', mats: 1 }
+
+  return { comp: 'mats', mats }
 }

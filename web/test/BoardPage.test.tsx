@@ -6,7 +6,13 @@ import { routes } from '@/router'
 import { Board } from '@/routes/board/Board'
 import { fakeFetch, snapshotFeed, sampleMatch, sampleSnapshot } from './fakes'
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  // --far persists to localStorage now, so one test's calibration would otherwise be
+  // read back by the next one.
+  window.localStorage.clear()
+  window.history.replaceState({}, '', '/')
+})
 
 const RUNNING = { elapsedMs: 0, startedAt: '2026-10-03T15:59:00.000Z', lengthMs: 300_000 }
 const PAUSED = { elapsedMs: 0, startedAt: null, lengthMs: 300_000 }
@@ -43,9 +49,14 @@ describe('Board compositions', () => {
     const { container } = render(<Board snapshot={null} connected />)
     expect(safe(container)).toHaveAttribute('data-comp', 'cold')
     expect(screen.getByRole('region', { name: 'Scoreboard' })).toBeInTheDocument()
-    // Both bars, both plates and both names are in their final positions; only the
-    // values are skeletons.
-    expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBe(10)
+    // 6.15 is exact: both bars, both plates and both names hold their final positions
+    // and ONLY the two wins numerals are skeletons.
+    expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBe(2)
+    expect(container.querySelectorAll('.b-bar')).toHaveLength(2)
+    expect(container.querySelectorAll('.b-code')).toHaveLength(2)
+    for (const box of container.querySelectorAll('.b-bar, .b-code, .b-team-name')) {
+      expect(box).not.toHaveAttribute('data-slot', 'skeleton')
+    }
     expect(screen.getAllByText('Wins')).toHaveLength(2)
   })
 
@@ -109,6 +120,51 @@ describe('Board compositions', () => {
     }
   })
 
+  it('renders every mat of an event configured above four', () => {
+    // The API accepts up to eight mats and the New event dialog offers them, so a six
+    // mat event used to lose mats five and six off the bottom of the band silently.
+    const { container } = render(<Board snapshot={liveBoard(6)} connected />)
+    expect(safe(container)).toHaveAttribute('data-mats', '6')
+    expect(safe(container).style.getPropertyValue('--mats')).toBe('6')
+    expect(screen.getAllByRole('region', { name: /^Mat / })).toHaveLength(6)
+    expect(screen.getByRole('region', { name: 'Mat 6' })).toBeInTheDocument()
+  })
+
+  it('stays on the mat ledger when bound mats are between bouts', () => {
+    // Held results are derived from transitions this client watched, so they are empty
+    // on the first snapshot after a reload. Four bouts ending together used to repaint
+    // the whole board as a Final Score panel until the next one started.
+    const done = pair(1, 'Ava Park', 'Sofia Diaz', {
+      status: 'done', endedAt: '2026-10-03T16:01:00.000Z', result: { winnerAthleteId: 100, winType: 'submission' },
+    })
+    const snapshot = sampleSnapshot({
+      mats: [1, 2, 3, 4].map(n => mat(n, { bound: true })),
+      matches: [done],
+    })
+    const { container } = render(<Board snapshot={snapshot} connected />)
+    expect(safe(container)).toHaveAttribute('data-comp', 'mats')
+    expect(screen.getAllByRole('region', { name: /^Mat / })).toHaveLength(4)
+  })
+
+  it('shows what is first up on each mat while the event is still in setup', () => {
+    const queue = (m: number) => [1, 2, 3, 4].map(i =>
+      pair(m * 10 + i, `Kai${m}${i} Nakamura`, `Rosa${m}${i} Oliveira`, { status: 'pending' }))
+    const snapshot = sampleSnapshot({
+      event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'setup', matCount: 2 },
+      mats: [mat(1, { onDeck: queue(1), bound: true }), mat(2, { onDeck: queue(2), bound: true })],
+      matches: [],
+    })
+    const { container } = render(<Board snapshot={snapshot} connected />)
+
+    expect(safe(container)).toHaveAttribute('data-comp', 'setup')
+    expect(screen.getByText('Mat 1 first up')).toBeInTheDocument()
+    expect(screen.getByText('Mat 2 first up')).toBeInTheDocument()
+    // Three pairings per mat, per 6.15, and the fourth is not on the board.
+    expect(container.querySelectorAll('.b-next-line')).toHaveLength(6)
+    expect(screen.getByText('Kai13')).toBeInTheDocument()
+    expect(screen.queryByText('Kai14')).not.toBeInTheDocument()
+  })
+
   it('names are first name plus last initial at every mat count', () => {
     for (const count of [1, 2, 3, 4]) {
       const { unmount } = render(<Board snapshot={liveBoard(count)} connected />)
@@ -161,10 +217,11 @@ describe('Board compositions', () => {
     expect(within(summary).getByText('7')).toBeInTheDocument()
     expect(within(summary).getByText('41')).toBeInTheDocument()
     expect(within(summary).getAllByText('Matches')).toHaveLength(2)
-    // The leading numeral is the brighter of the two figure tones.
+    // The leading numeral is the brighter of the two figure tones. The tone is on the
+    // figure, whose crossfade slots carry the digits.
     const hero = screen.getByRole('region', { name: 'Scoreboard' })
-    expect(within(hero).getByText('7')).toHaveClass('b-lead')
-    expect(within(hero).getByText('5')).toHaveClass('b-trail')
+    expect(within(hero).getByText('7').closest('.b-fig')).toHaveClass('b-lead')
+    expect(within(hero).getByText('5').closest('.b-fig')).toHaveClass('b-trail')
   })
 
   it('raises the stale bar when the poll stops landing', () => {
@@ -172,6 +229,98 @@ describe('Board compositions', () => {
     expect(container.querySelector('.b-stale')).toBeNull()
     rerender(<Board snapshot={liveBoard(1)} connected={false} />)
     expect(container.querySelector('.b-stale')).not.toBeNull()
+  })
+})
+
+describe('Board freshness', () => {
+  // The snapshot's clock started a minute before its own `now`, so a board that is
+  // still being fed reads 4:00 and one frozen ten and a half seconds ago reads 4:11.
+  it('freezes the clock and says so in words when the server goes quiet', () => {
+    render(<Board snapshot={liveBoard(1)} connected lastSuccessAt={Date.now() - 10_500} />)
+
+    const clock = within(row('Mat 1')).getByText(/^\d+:\d{2}$/)
+    expect(clock).toHaveTextContent('4:11')
+    expect(clock).toHaveClass('b-clock-stale')
+    // 4.3: never a colour on its own, and never a bar at the edge of the stage either.
+    expect(screen.getByText(/^Not updating \d+s$/)).toBeInTheDocument()
+  })
+
+  it('keeps interpolating while the poll is still landing', () => {
+    render(<Board snapshot={liveBoard(1)} connected lastSuccessAt={Date.now()} />)
+    const clock = within(row('Mat 1')).getByText(/^\d+:\d{2}$/)
+    expect(clock).toHaveTextContent('4:00')
+    expect(clock).not.toHaveClass('b-clock-stale')
+    expect(screen.queryByText(/Not updating/)).not.toBeInTheDocument()
+  })
+
+  it('carries every step of the 7.6 clock ladder on the board itself', () => {
+    const clocks = {
+      running: RUNNING,
+      paused: PAUSED,
+      near: { elapsedMs: 270_000, startedAt: '2026-10-03T15:59:59.000Z', lengthMs: 300_000 },
+      expired: { elapsedMs: 300_000, startedAt: null, lengthMs: 300_000 },
+    }
+    const board = (one: keyof typeof clocks, two: keyof typeof clocks) => sampleSnapshot({
+      mats: [
+        mat(1, { current: pair(10, 'Mateo Rivera', 'Lucas Ferreira', { clock: clocks[one] }), bound: true }),
+        mat(2, { current: pair(11, 'Ava Park', 'Nina Costa', { clock: clocks[two] }), bound: true }),
+      ],
+      matches: [],
+    })
+    const clockOn = (name: string) => within(row(name)).getByText(/^\d+:\d{2}$/)
+
+    const first = render(<Board snapshot={board('running', 'paused')} connected />)
+    expect(clockOn('Mat 1').className).toBe('b-clock')
+    expect(clockOn('Mat 2')).toHaveClass('b-clock-paused')
+    first.unmount()
+
+    render(<Board snapshot={board('near', 'expired')} connected />)
+    expect(clockOn('Mat 1')).toHaveClass('b-clock-near')
+    expect(clockOn('Mat 2')).toHaveClass('b-clock-expired')
+  })
+
+  it('says the screen may sleep where the room can read it', () => {
+    render(<Board snapshot={liveBoard(1)} connected screenMaySleep />)
+    const note = screen.getByText('Screen may sleep')
+    expect(note.parentElement).toHaveClass('b-note')
+    // Inside the safe area, not in the letterbox margin outside it.
+    expect(note.closest('.b-safe')).not.toBeNull()
+  })
+})
+
+describe('Board calibration', () => {
+  it('grows the type from a far setting without moving the safe frame', () => {
+    window.history.replaceState({}, '', '/board/1?far=1.2')
+    const { container } = render(<Board snapshot={liveBoard(1)} connected />)
+
+    const stage = container.querySelector('.b-stage') as HTMLElement
+    // First paint, not after an effect: the board is opened once and left.
+    expect(stage.style.getPropertyValue('--far')).toBe('1.2')
+    expect(safe(container).style.transform).toBe('')
+    // 3.4: the knob persists, so the next plain visit to /board/1 keeps the setting.
+    expect(window.localStorage.getItem('duels.board.far')).toBe('1.2')
+  })
+})
+
+describe('Board figure change', () => {
+  function scored(score: number): Snapshot {
+    const base = pair(10, 'Mateo Rivera', 'Lucas Ferreira', { clock: RUNNING })
+    const match = { ...base, a: { ...base.a, score } }
+    return sampleSnapshot({ mats: [mat(1, { current: match, bound: true })], matches: [match] })
+  }
+
+  it('crossfades the whole numeral, keeping the old one mounted to fade out', () => {
+    const { rerender } = render(<Board snapshot={scored(0)} connected />)
+    rerender(<Board snapshot={scored(2)} connected />)
+
+    const fig = row('Mat 1').querySelector('.b-score-a') as HTMLElement
+    const slots = [...fig.querySelectorAll('span')]
+    expect(slots.map(s => s.textContent)).toEqual(['0', '2'])
+    expect(slots[1]).toHaveClass('b-fig-on')
+    expect(slots[0]).not.toHaveClass('b-fig-on')
+    // Only the incoming value is announced.
+    expect(slots[0]).toHaveAttribute('aria-hidden', 'true')
+    expect(slots[1]).toHaveAttribute('aria-hidden', 'false')
   })
 })
 
@@ -203,11 +352,43 @@ describe('Board result settling', () => {
 })
 
 describe('BoardPage route', () => {
+  function stubWakeLock(request: () => Promise<unknown>) {
+    Object.defineProperty(window.navigator, 'wakeLock', { configurable: true, value: { request } })
+    return () => Reflect.deleteProperty(window.navigator, 'wakeLock')
+  }
+
   it('polls the snapshot endpoint and paints the live board', async () => {
     const feed = snapshotFeed(liveBoard(1))
     fakeFetch(url => feed.handle(url) ?? { json: {} })
     render(<RouterProvider router={createMemoryRouter(routes, { initialEntries: ['/board/1'] })} />)
     await waitFor(() => expect(screen.getByRole('region', { name: 'Mat 1' })).toBeInTheDocument())
     expect(within(screen.getByRole('region', { name: 'Scoreboard' })).getAllByText('Wins')).toHaveLength(2)
+  })
+
+  it('takes a screen wake lock, because a slept panel never recovers on its own', async () => {
+    const request = vi.fn(async () => ({ addEventListener: vi.fn(), release: async () => {} }))
+    const restore = stubWakeLock(request)
+    try {
+      const feed = snapshotFeed(liveBoard(1))
+      fakeFetch(url => feed.handle(url) ?? { json: {} })
+      render(<RouterProvider router={createMemoryRouter(routes, { initialEntries: ['/board/1'] })} />)
+      await waitFor(() => expect(request).toHaveBeenCalledWith('screen'))
+      await waitFor(() => expect(screen.queryByText('Screen may sleep')).not.toBeInTheDocument())
+    } finally {
+      restore()
+    }
+  })
+
+  it('says the screen may sleep when the panel refuses the lock', async () => {
+    const request = vi.fn(async () => { throw new Error('not allowed') })
+    const restore = stubWakeLock(request)
+    try {
+      const feed = snapshotFeed(liveBoard(1))
+      fakeFetch(url => feed.handle(url) ?? { json: {} })
+      render(<RouterProvider router={createMemoryRouter(routes, { initialEntries: ['/board/1'] })} />)
+      expect(await screen.findByText('Screen may sleep')).toBeInTheDocument()
+    } finally {
+      restore()
+    }
   })
 })

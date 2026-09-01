@@ -49,23 +49,28 @@ export function Hero({ teams, winnerId }: { teams: TeamView[]; winnerId?: number
  * The board is the first thing the room sees on the television, so the cold start is a
  * real composition rather than an absence: the stage, both bars, both plates and both
  * names are already in their final positions and only the values arrive.
+ *
+ * 6.15 is exact about the count: ONLY the two wins numerals are Skeletons, at the b1
+ * 2ch slot width. The bar, the plate and the name hold empty boxes, because there is no
+ * snapshot yet to say what colour or what name they take, and skeletoning them would
+ * promise data for slots whose shape is already known.
  */
 export function HeroSkeleton() {
   return (
     <section aria-label="Scoreboard" className="b-hero">
       {(['a', 'b'] as const).map(side => (
         <div key={side} className={cn('b-half', side === 'b' ? 'b-half-b' : null)}>
-          <Skeleton className="b-skel-bar" />
+          <div className="b-bar" />
           <div className="b-plate-row">
-            <Skeleton className="b-skel-code" />
-            <Skeleton className="b-skel-name" />
+            <span aria-hidden className="b-code b-cold-code" />
+            <span className="b-team-name font-sans" />
           </div>
           <div className="b-score-row">
             <Skeleton className="b-skel-wins font-mono" />
             <span className="b-labels font-sans">
               <span>Wins</span>
               <span>
-                <Skeleton className="b-skel-pts font-mono" />
+                <span className="b-cold-pts font-mono" />
                 <span> pts</span>
               </span>
             </span>

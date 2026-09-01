@@ -1,13 +1,15 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import type { Snapshot } from '@shared/types'
 import { api, ApiError } from '@/lib/api'
 import { clearMatBinding, getMatBinding, setMatBinding } from '@/lib/auth'
+import { useWakeLock } from '@/lib/useWakeLock'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { List, ListRow } from '@/components/ui/list'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 
 export default function MatPickPage() {
   const [params] = useSearchParams()
@@ -23,6 +25,18 @@ export default function MatPickPage() {
   const [binding, setBinding] = useState(() => getMatBinding())
   const boundToCurrentEvent = binding !== null && (eventQueryId === null || binding.eventId === eventQueryId)
   const otherEventBinding = binding !== null && !boundToCurrentEvent ? binding : null
+
+  // 6.17b / 7.15: the wake lock is acquired on the code-entry tap, the first user gesture
+  // on this route. Safari refuses navigator.wakeLock.request() outside a gesture, so this
+  // cannot move into an effect; requestedRef stops a refocus of the code field from firing
+  // a second request once one is already in flight or held.
+  const wakeLock = useWakeLock()
+  const requestedRef = useRef(false)
+  const onCodeEntryTap = () => {
+    if (requestedRef.current) return
+    requestedRef.current = true
+    void wakeLock.request()
+  }
 
   useEffect(() => {
     if (!eventId) return
@@ -136,10 +150,18 @@ export default function MatPickPage() {
                 autoComplete="one-time-code"
                 maxLength={4}
                 value={code}
+                onFocus={onCodeEntryTap}
+                onPointerDown={onCodeEntryTap}
                 onChange={e => setCode(e.target.value.replace(/\D/g, ''))}
                 className="text-center font-mono text-3xl tabular tracking-[0.4em]"
               />
             </div>
+            {wakeLock.failed && (
+              <Alert variant="attend">
+                <AlertTitle variant="attend">Screen may sleep</AlertTitle>
+                <AlertDescription>Disable auto-lock for this device and keep it plugged in.</AlertDescription>
+              </Alert>
+            )}
             {error && <p role="alert" className="text-[13px] text-destructive">{error}</p>}
             <Button type="submit" size="lg" className="w-full" disabled={busy || matId === null || code.length !== 4}>
               Bind this iPad

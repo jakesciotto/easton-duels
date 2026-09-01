@@ -79,6 +79,38 @@ describe('MatPickPage', () => {
     expect(await screen.findByText('This event has no mats yet')).toBeInTheDocument()
   })
 
+  it('acquires the screen wake lock on the first tap into the code field (6.17b, 7.15)', async () => {
+    const release = vi.fn(async () => {})
+    const request = vi.fn().mockResolvedValue({ addEventListener: vi.fn(), release })
+    vi.stubGlobal('navigator', { wakeLock: { request } })
+    fakeFetch(url => {
+      if (url === '/api/events/1/snapshot') return { json: { version: 1, snapshot: sampleSnapshot({ mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: false }] }) } }
+      return { json: {} }
+    })
+    mount('/mat?event=1')
+    const user = userEvent.setup()
+    expect(request).not.toHaveBeenCalled()
+    await user.click(screen.getByLabelText('Mat code'))
+    expect(request).toHaveBeenCalledTimes(1)
+    await user.click(screen.getByLabelText('Mat code'))
+    expect(request).toHaveBeenCalledTimes(1)
+  })
+
+  it('surfaces a rejected wake lock honestly instead of failing silently', async () => {
+    const request = vi.fn().mockRejectedValue(new Error('not allowed'))
+    vi.stubGlobal('navigator', { wakeLock: { request } })
+    fakeFetch(url => {
+      if (url === '/api/events/1/snapshot') return { json: { version: 1, snapshot: sampleSnapshot({ mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: false }] }) } }
+      return { json: {} }
+    })
+    mount('/mat?event=1')
+    const user = userEvent.setup()
+    expect(screen.queryByText('Screen may sleep')).not.toBeInTheDocument()
+    await user.click(screen.getByLabelText('Mat code'))
+    expect(await screen.findByText('Screen may sleep')).toBeInTheDocument()
+    expect(screen.getByText('Disable auto-lock for this device and keep it plugged in.')).toBeInTheDocument()
+  })
+
   it('surfaces a 429 rate limit error', async () => {
     fakeFetch(url => {
       if (url === '/api/events/1/snapshot') return { json: { version: 1, snapshot: sampleSnapshot({ mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: false }, { id: 2, number: 2, current: null, onDeck: [], bound: false }] }) } }

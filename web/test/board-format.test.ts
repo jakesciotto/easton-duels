@@ -43,9 +43,11 @@ describe('boardPlan', () => {
     }
   })
 
-  it('clamps above four mats and below one', () => {
+  it('reports the real mat count above four, and at least one below it', () => {
+    // The API accepts up to eight mats. Clamping to four laid mats five and up out off
+    // the bottom of a band that never mentioned they existed.
     const many = Array.from({ length: 6 }, (_, i) => mat({ id: i + 1, number: i + 1 }))
-    expect(boardPlan(sampleSnapshot({ mats: many, matches: [] }), empty).mats).toBe(4)
+    expect(boardPlan(sampleSnapshot({ mats: many, matches: [] }), empty).mats).toBe(6)
     expect(boardPlan(sampleSnapshot({ mats: [], matches: [] }), empty).mats).toBe(1)
   })
 
@@ -61,13 +63,22 @@ describe('boardPlan', () => {
     expect(boardPlan(snapshot, new Map([[1, done]])).comp).toBe('mats')
   })
 
-  it('is the setup mat band when nothing has been scored yet', () => {
+  it('is the setup composition when nothing has been scored yet', () => {
     const snapshot = sampleSnapshot({
       event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'setup', matCount: 2 },
       mats: [mat({ id: 1, number: 1, onDeck: [sampleMatch({ id: 5, status: 'pending' })] }), mat({ id: 2, number: 2 })],
       matches: [],
     })
-    expect(boardPlan(snapshot, empty)).toEqual({ comp: 'mats', mats: 2 })
+    expect(boardPlan(snapshot, empty)).toEqual({ comp: 'setup', mats: 2 })
+  })
+
+  it('leaves setup for the mat band as soon as anything has been scored', () => {
+    const snapshot = sampleSnapshot({
+      event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'setup', matCount: 1 },
+      mats: [mat({ id: 1, number: 1, bound: true })],
+      matches: [sampleMatch({ id: 2, status: 'done' })],
+    })
+    expect(boardPlan(snapshot, empty).comp).toBe('mats')
   })
 
   it('is the done composition once the event closes', () => {

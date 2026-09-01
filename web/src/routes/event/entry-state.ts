@@ -22,7 +22,14 @@ export interface EntryDraft {
   editingId: number | null
 }
 
-const draftKey = (eventId: number) => `duels:entry:${eventId}`
+// One slot per intent, not one per event. A correction is a different job from the
+// new entry the desk is still holding, so opening, saving or cancelling one can
+// never reach the other's slot and delete a result that was typed and never sent.
+const DRAFT_ROOT = 'duels:entry:'
+const CORRECTION = ':match:'
+
+export const draftKey = (eventId: number, editingId: number | null): string =>
+  editingId === null ? `${DRAFT_ROOT}${eventId}` : `${DRAFT_ROOT}${eventId}${CORRECTION}${editingId}`
 
 const isDraft = (v: unknown): v is EntryDraft => {
   if (!v || typeof v !== 'object') return false
@@ -36,13 +43,15 @@ const isDraft = (v: unknown): v is EntryDraft => {
 }
 
 // Storage throws in Safari private mode rather than returning null, so every
-// call site treats an unreadable store as an empty one.
-export function loadDraft(eventId: number): EntryDraft | null {
+// call site treats an unreadable store as an empty one. A payload whose editingId
+// disagrees with its slot is discarded: it can only be a draft written by an older
+// build that kept every intent in one slot.
+export function loadDraft(eventId: number, editingId: number | null = null): EntryDraft | null {
   try {
-    const raw = sessionStorage.getItem(draftKey(eventId))
+    const raw = sessionStorage.getItem(draftKey(eventId, editingId))
     if (!raw) return null
     const parsed: unknown = JSON.parse(raw)
-    return isDraft(parsed) ? parsed : null
+    return isDraft(parsed) && parsed.editingId === editingId ? parsed : null
   } catch {
     return null
   }
@@ -50,18 +59,44 @@ export function loadDraft(eventId: number): EntryDraft | null {
 
 export function saveDraft(eventId: number, draft: EntryDraft): void {
   try {
-    sessionStorage.setItem(draftKey(eventId), JSON.stringify(draft))
+    sessionStorage.setItem(draftKey(eventId, draft.editingId), JSON.stringify(draft))
   } catch {
     // An entry that cannot be persisted still holds its id in memory.
   }
 }
 
-export function clearDraft(eventId: number): void {
+export function clearDraft(eventId: number, editingId: number | null = null): void {
   try {
-    sessionStorage.removeItem(draftKey(eventId))
+    sessionStorage.removeItem(draftKey(eventId, editingId))
   } catch {
     // Nothing to recover from: the draft is already unreachable.
   }
+}
+
+// What a reload should put back on screen. The unsent new entry outranks a
+// correction, because it is the one that becomes nothing if it is lost; a stranded
+// correction is still offered when there is no new entry waiting, lowest match
+// first so the choice does not depend on storage iteration order.
+export function restoreDraft(eventId: number): EntryDraft | null {
+  const created = loadDraft(eventId)
+  if (created) return created
+  const prefix = `${DRAFT_ROOT}${eventId}${CORRECTION}`
+  const ids: number[] = []
+  try {
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i)
+      if (!key?.startsWith(prefix)) continue
+      const id = Number(key.slice(prefix.length))
+      if (Number.isInteger(id)) ids.push(id)
+    }
+  } catch {
+    return null
+  }
+  for (const id of ids.sort((x, y) => x - y)) {
+    const draft = loadDraft(eventId, id)
+    if (draft) return draft
+  }
+  return null
 }
 
 export function pairKey(a: number, b: number): string {
@@ -103,9 +138,21 @@ export function saveErrorCopy(error: unknown): SaveErrorCopy {
   return { title: 'That result was not saved', body: error.message }
 }
 
-// The ledger's own column, not a shared format: 5ch of track holds h:mm and
-// nothing else, and an event never crosses noon and midnight both.
+// The ledger's own column, not a shared format: h:mm and nothing else, at most five
+// characters inside the --col-num-l track, and an event never crosses noon and
+// midnight both.
 export function clockLabel(at: Date): string {
   const hour = at.getHours() % 12 || 12
   return `${hour}:${String(at.getMinutes()).padStart(2, '0')}`
+}
+
+// The server's endedAt is the record, so a reload and a second desk device read the
+// same time for every row. The in-session stamp is the fallback for the one row this
+// browser has just written and not yet refetched.
+export function ledgerTime(endedAt: string | null | undefined, savedAt: number | undefined): Date | null {
+  if (endedAt) {
+    const at = new Date(endedAt)
+    if (!Number.isNaN(at.getTime())) return at
+  }
+  return savedAt === undefined ? null : new Date(savedAt)
 }

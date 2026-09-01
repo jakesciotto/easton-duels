@@ -9,7 +9,7 @@ import { lanIp } from '../lib/lanIp.js'
 import { errorJson, requireAdmin } from '../auth/middleware.js'
 import { randomMatCode } from '../auth/pin.js'
 import { startEvent } from '../match/mats.js'
-import { MatchStateError, bumpVersion } from '../match/events.js'
+import { MatchStateError, bumpVersion, endedAtByMatch } from '../match/events.js'
 import { DEFAULT_ACTIONS, DEFAULT_TERMINALS, DEFAULT_LENGTH_SEC, TEAM_COLOR_KEYS, type TeamColor } from '../shared/types.js'
 
 const colorSchema = z.enum(TEAM_COLOR_KEYS as [TeamColor, ...TeamColor[]])
@@ -42,13 +42,17 @@ export async function eventDetail(db: DbLike, eventId: number) {
   const ev = await db.select().from(events).where(eq(events.id, eventId)).get()
   if (!ev) return null
   const candidateRow = await db.select({ n: count() }).from(rosterCandidates).where(eq(rosterCandidates.eventId, eventId)).get()
+  const matchRows = await db.select().from(matches).where(eq(matches.eventId, eventId)).orderBy(asc(matches.orderIndex), asc(matches.id)).all()
+  // The same derivation the snapshot uses, so the Entry ledger's At column survives a
+  // reload and reads the same on a second desk device.
+  const endedAtById = await endedAtByMatch(db, matchRows.map(m => m.id))
   return {
     event: ev,
     teams: await db.select().from(teams).where(eq(teams.eventId, eventId)).orderBy(asc(teams.position)).all(),
     athletes: await db.select().from(athletes).where(eq(athletes.eventId, eventId)).orderBy(asc(athletes.lastName), asc(athletes.firstName)).all(),
     rulesets: await db.select().from(rulesets).where(eq(rulesets.eventId, eventId)).orderBy(asc(rulesets.id)).all(),
     mats: await db.select().from(mats).where(eq(mats.eventId, eventId)).orderBy(asc(mats.number)).all(),
-    matches: await db.select().from(matches).where(eq(matches.eventId, eventId)).orderBy(asc(matches.orderIndex), asc(matches.id)).all(),
+    matches: matchRows.map(m => ({ ...m, endedAt: endedAtById.get(m.id) ?? null })),
     candidateCount: candidateRow?.n ?? 0,
   }
 }

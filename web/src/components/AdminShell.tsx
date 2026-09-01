@@ -10,6 +10,14 @@ import { cn } from '@/lib/utils'
 // What the shell needs to drive the freshness readout (6.4): the same lastSuccessAt a
 // caller's useSnapshot() already exposes, and the poll interval it is actually using --
 // pass pollIntervalForSnapshot(snapshot) unless the caller pinned an explicit one.
+//
+// `freshness` is optional and, as of this writing, no caller passes it: EventPage (6.4's
+// own shell) reads its event through useEventDetail, a one-shot react-query fetch with no
+// lastSuccessAt, while the live snapshot 6.4 wants to report on is polled separately inside
+// event/LiveTab. Wiring that through means lifting the poll out of LiveTab and into
+// EventPage, which is out of this file's scope. Until that lands, the honest behaviour is
+// the one below: no freshness prop means no status region, never a region claiming
+// freshness it does not have. Do not default this to a fake "Live" state.
 export interface ShellFreshness {
   lastSuccessAt: number | null
   pollIntervalMs: number

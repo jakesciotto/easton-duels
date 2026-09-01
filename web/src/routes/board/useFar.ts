@@ -23,9 +23,17 @@ function read(): number {
  * motion deny list names --far specifically.
  */
 export function useFar(): number {
-  const [far, setFar] = useState(1)
+  // Read on the first render, not in an effect: the board is a television that is opened
+  // once and left, so a first paint at 1.00 followed by a resize to the calibrated value
+  // is a visible relayout in front of the room for no gain.
+  const [far, setFar] = useState(read)
 
-  useEffect(() => { setFar(read()) }, [])
+  // 3.4: the knob persists. A `?far=` on the URL is how it is set at the dress rehearsal,
+  // so it has to survive the next plain visit to /board/:id, not just the tab it was
+  // typed into.
+  useEffect(() => {
+    try { window.localStorage?.setItem(KEY, String(far)) } catch { /* private mode */ }
+  }, [far])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -36,9 +44,7 @@ export function useFar(): number {
         for (let i = 1; i < STEPS.length; i += 1) {
           if (Math.abs(STEPS[i] - current) < Math.abs(STEPS[nearest] - current)) nearest = i
         }
-        const next = STEPS[Math.min(STEPS.length - 1, Math.max(0, nearest + step))]
-        try { window.localStorage?.setItem(KEY, String(next)) } catch { /* private mode */ }
-        return next
+        return STEPS[Math.min(STEPS.length - 1, Math.max(0, nearest + step))]
       })
     }
     window.addEventListener('keydown', onKey)

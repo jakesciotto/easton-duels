@@ -46,4 +46,18 @@ describe('operatorEngaged', () => {
     document.body.innerHTML = '<div data-slot="dialog-content" data-open=""></div>'
     expect(operatorEngaged()).toBe(true)
   })
+
+  it('is true while the app Select trigger is focused', () => {
+    document.body.innerHTML = '<button data-slot="select-trigger"></button>'
+    const trigger = document.querySelector('button')!
+    trigger.focus()
+    expect(operatorEngaged()).toBe(true)
+  })
+
+  it('is true while a Select listbox is open, even if focus has moved to an item', () => {
+    document.body.innerHTML = '<div role="listbox"><div role="option" tabindex="0"></div></div>'
+    const option = document.querySelector('[role="option"]') as HTMLElement
+    option.focus()
+    expect(operatorEngaged()).toBe(true)
+  })
 })

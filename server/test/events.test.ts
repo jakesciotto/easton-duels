@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { createTestApp, call } from './helpers.js'
 import { seedEvent } from './fixtures.js'
+import { enterResult } from '../src/match/entry.js'
 import { mats, matches, rosterCandidates } from '../src/db/schema.js'
 
 const body = { name: 'Fall Duels', date: '2026-10-03', matCount: 2, teams: [{ name: 'Ridgeline', color: 'red' }, { name: 'Lakeside', color: 'blue' }] }
@@ -41,6 +42,21 @@ describe('events', () => {
     ]).run()
     const r = await call(app, 'GET', `/api/events/${s.eventId}`, undefined, adminToken)
     expect(r.body.candidateCount).toBe(2)
+  })
+
+  // Without endedAt on the wire the Entry ledger's At column can only be filled by
+  // the browser that did the saving, so a reload or a second desk device renders
+  // every row blank for the rest of the event.
+  it('carries endedAt on every match in event detail', async () => {
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db, { matCount: 1, live: true })
+    const at = '2026-10-03T18:07:00.000Z'
+    await enterResult(db, s.matchIds[0], { entryId: 'entry-0001', pointsA: 4, pointsB: 2, winnerAthleteId: s.a1, winType: 'points', at })
+
+    const r = await call(app, 'GET', `/api/events/${s.eventId}`, undefined, adminToken)
+    const rows: { id: number; status: string; endedAt: string | null }[] = r.body.matches
+    expect(rows.find(m => m.id === s.matchIds[0])?.endedAt).toBe(at)
+    expect(rows.find(m => m.id === s.matchIds[1])?.endedAt).toBeNull()
   })
 
   it('422s on a bad colour or mat count', async () => {

@@ -53,6 +53,9 @@ export interface MatchRow {
   pendingTerminalKey: string | null
   lastSeq: number
   why: string | null
+  // Derived server side from the latest end event rather than stored on the row, so
+  // it is read only here and absent on any row this client has built itself.
+  endedAt?: string | null
 }
 export interface EventDetail { event: EventRow; teams: TeamRow[]; athletes: AthleteRow[]; rulesets: RulesetRow[]; mats: MatRow[]; matches: MatchRow[]; candidateCount: number }
 export type EventSummary = EventRow & { teams: TeamRow[] }

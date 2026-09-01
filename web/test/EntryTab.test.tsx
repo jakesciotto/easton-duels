@@ -44,6 +44,7 @@ async function pick(user: UserEvent, field: string, name: string) {
 // depending on where the round trip is.
 const saveButton = () => screen.getByRole('button', { name: /^Sav/ })
 const draft = () => JSON.parse(sessionStorage.getItem('duels:entry:7') ?? 'null')
+const correctionDraft = (matchId: number) => sessionStorage.getItem(`duels:entry:7:match:${matchId}`)
 
 describe('EntryTab', () => {
   it('posts a new entry with the default winner, confirms in words, and clears the form', async () => {
@@ -348,5 +349,145 @@ describe('EntryTab', () => {
     mount({ ...detail, matches: [] })
     const results = screen.getByRole('region', { name: 'Results' })
     expect(within(results).getByText('No results yet. Type the first one on the left.')).toBeInTheDocument()
+  })
+
+  // A single draft slot per event meant a correction, or cancelling one, deleted a
+  // result that was typed, never sent, and still recoverable.
+  it('keeps an unsent entry through a correction that is opened and cancelled', async () => {
+    const f = fakeFetch(() => ({ status: 500, json: { error: { code: 'internal', message: 'boom' } } }))
+    mount()
+    const user = userEvent.setup()
+    await pick(user, 'Ridgeline competitor', 'Ava Park')
+    await pick(user, 'Lakeside competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('Ridgeline points'), '6')
+    await user.click(saveButton())
+    await screen.findByText('The server had a problem')
+    const unsent = f.body(0).entryId as string
+    expect(draft()).toMatchObject({ entryId: unsent, aId: '101', bId: '201', pointsA: '6', editingId: null })
+
+    await user.click(screen.getByRole('button', { name: 'Edit Mateo Rivera over Olivia Kim' }))
+    expect(screen.getByLabelText('Ridgeline points')).toHaveValue('4')
+    expect(draft()).toMatchObject({ entryId: unsent })
+
+    await user.click(screen.getByRole('button', { name: 'Cancel edit' }))
+    expect(draft()).toMatchObject({ entryId: unsent, aId: '101', bId: '201', pointsA: '6' })
+    expect(correctionDraft(1)).toBeNull()
+    // And it comes back on screen with its banner, rather than staying stored where
+    // nobody can see it.
+    expect(screen.getByText('This entry never sent')).toBeInTheDocument()
+    expect(screen.getByLabelText('Ridgeline points')).toHaveValue('6')
+  })
+
+  it('keeps an unsent entry through a correction that saves', async () => {
+    let broken = true
+    const f = fakeFetch(url => url.endsWith('/entries') && broken
+      ? { status: 500, json: { error: { code: 'internal', message: 'boom' } } }
+      : { json: { match: { id: 1 }, version: 2 } })
+    mount()
+    const user = userEvent.setup()
+    await pick(user, 'Ridgeline competitor', 'Ava Park')
+    await pick(user, 'Lakeside competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('Ridgeline points'), '6')
+    await user.click(saveButton())
+    await screen.findByText('The server had a problem')
+    const unsent = f.body(0).entryId as string
+    broken = false
+
+    await user.click(screen.getByRole('button', { name: 'Edit Mateo Rivera over Olivia Kim' }))
+    await user.click(screen.getByRole('button', { name: 'Save correction' }))
+    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/matches/1/entry')).toBe(true))
+
+    await vi.waitFor(() => expect(screen.getByText('This entry never sent')).toBeInTheDocument())
+    expect(draft()).toMatchObject({ entryId: unsent, aId: '101', bId: '201', pointsA: '6' })
+    expect(correctionDraft(1)).toBeNull()
+    expect(screen.getByLabelText('Ridgeline points')).toHaveValue('6')
+  })
+
+  it('clears only the new entry slot when a new entry saves', async () => {
+    const f = fakeFetch(() => ({ status: 201, json: { match: { id: 9 }, version: 1 } }))
+    mount()
+    const user = userEvent.setup()
+    await pick(user, 'Ridgeline competitor', 'Ava Park')
+    await pick(user, 'Lakeside competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+    await user.click(saveButton())
+    await vi.waitFor(() => expect(f.calls.length).toBe(1))
+    await vi.waitFor(() => expect(sessionStorage.getItem('duels:entry:7')).toBeNull())
+    expect(screen.queryByText('This entry never sent')).not.toBeInTheDocument()
+  })
+
+  // 6.6 puts a shortcut hint at --gray-10 because it is text a person reads. The
+  // ramp is authored for dark surfaces, so on the primary button's white fill both
+  // --gray-10 and the decoration-only --gray-9 fall under the 4.5:1 floor.
+  it('paints the Save shortcut hint in a tone that is legal on white', () => {
+    mount()
+    const hint = within(saveButton()).getByText('Enter')
+    expect(hint).toHaveClass('text-gray-7')
+    expect(hint).not.toHaveClass('text-gray-9')
+    expect(hint).not.toHaveClass('text-gray-10')
+  })
+
+  it('keeps every string a person reads off the decoration-only token', () => {
+    mount()
+    expect(screen.getByText('Match wins')).toHaveClass('text-gray-10')
+    const results = screen.getByRole('region', { name: 'Results' })
+    expect(results.innerHTML).not.toMatch(/text-gray-9/)
+  })
+
+  // 2.1 gives --white to text at 24px and below and --gray-12 to display type from
+  // 24px up, because pure white halates at display size. The well is t8, 44px.
+  it('sets the points wells in the near white, not pure white', () => {
+    mount()
+    for (const label of ['Ridgeline points', 'Lakeside points']) {
+      expect(screen.getByLabelText(label)).toHaveClass('text-gray-12')
+      expect(screen.getByLabelText(label)).not.toHaveClass('text-white')
+    }
+  })
+
+  // The digit key only ever writes to the Ridgeline well, so only that well may
+  // claim it.
+  it('hints the digit shortcut on the one field it writes to', () => {
+    mount()
+    expect(screen.getAllByText('0 to 9')).toHaveLength(1)
+    expect(screen.getByLabelText('Ridgeline points')).toHaveAttribute('aria-keyshortcuts', '0 1 2 3 4 5 6 7 8 9')
+    expect(screen.getByLabelText('Lakeside points')).not.toHaveAttribute('aria-keyshortcuts')
+  })
+
+  // 2.7: one set of tracks, so a score sits in the same register on every screen.
+  it('lays the ledger out on the Ledger Grid tokens', () => {
+    mount()
+    const head = screen.getByText('Win by').parentElement as HTMLElement
+    const row = screen.getByText('Mateo Rivera').closest('[data-side="a"]')?.parentElement as HTMLElement
+    for (const el of [head, row]) {
+      // Both scores and the timestamp, in one declaration shared by the head and
+      // every row, so the head keeps lining up with its own digits.
+      expect(el.className).toMatch(/var\(--col-num-s\)_88px_var\(--col-num-s\)/)
+      expect(el.className).toMatch(/var\(--col-num-l\)/)
+      expect(el.className).not.toMatch(/ch_\+_\d+px/)
+    }
+  })
+
+  // xs is a 28px control in a 44px hit area, which is 4px taller than the 40px
+  // ledger rung and would sit on top of the rows above and below.
+  it('keeps the ledger edit hit area inside its own row', () => {
+    mount()
+    const edit = screen.getByRole('button', { name: 'Edit Mateo Rivera over Olivia Kim' })
+    expect(edit).toHaveClass('before:-top-1.5')
+    expect(edit).toHaveClass('before:-bottom-1.5')
+  })
+
+  // The At column was fed only by this session's own saves, so a reload or a second
+  // desk device showed 40 blank cells for the rest of the event.
+  it('shows the time of a result it did not save itself', () => {
+    const reloaded: EventDetail = {
+      ...detail,
+      matches: [match(1, {
+        status: 'done', pointsA: 4, pointsB: 2, winnerAthleteId: 100, winType: 'points',
+        endedAt: new Date(2026, 9, 3, 14, 7).toISOString(),
+      })],
+    }
+    mount(reloaded)
+    const results = screen.getByRole('region', { name: 'Results' })
+    expect(within(results).getByText('2:07')).toBeInTheDocument()
   })
 })

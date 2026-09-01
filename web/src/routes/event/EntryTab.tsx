@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils'
 import { defaultOutcome } from './entry-defaults'
 import {
   CUE_MS, LEDGER_LIMIT, SAVED_LABEL_MS, SAVE_TIMEOUT_MS,
-  clearDraft, clockLabel, isRepeatPair, loadDraft, pairKey, saveDraft, saveErrorCopy, teamWins,
+  clearDraft, clockLabel, isRepeatPair, ledgerTime, loadDraft, pairKey, restoreDraft, saveDraft, saveErrorCopy, teamWins,
   type EntryDraft, type SaveErrorCopy,
 } from './entry-state'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -44,11 +44,17 @@ const WIN_TYPES: { value: WinType; label: string; hint: string }[] = [
 const WIN_TYPE_WORD: Record<WinType, string> = { points: 'Points', submission: 'Submission', decision: 'Decision' }
 const WIN_TYPE_KEY: Record<string, WinType> = { p: 'points', s: 'submission', d: 'decision' }
 
+// A restored draft says so, or the desk finds a filled form on a reload with no
+// account of where it came from.
+const UNSENT: SaveErrorCopy = { title: 'This entry never sent', body: 'It was kept on this device. Check it, then press Save.' }
+
 // One set of tracks for the head and every row: name, points, the win type as a
-// word, points, name, time, one action. Declared on a mono element or ch
-// measures the sans zero and the head stops lining up with its own digits.
+// word, points, name, time, one action. Every numeric track is a Ledger Grid token
+// (2.7) so a score sits in the same register here as on Roster, Matches and Live.
+// Declared on a mono element or ch measures the sans zero and the head stops lining
+// up with its own digits.
 const LEDGER_COLS =
-  'grid grid-cols-[minmax(0,1fr)_calc(2ch_+_16px)_88px_calc(2ch_+_16px)_minmax(0,1fr)_calc(5ch_+_8px)_var(--col-act)] items-center gap-x-3 px-3 font-mono t2'
+  'grid grid-cols-[minmax(0,1fr)_var(--col-num-s)_88px_var(--col-num-s)_minmax(0,1fr)_var(--col-num-l)_var(--col-act)] items-center gap-x-3 px-3 font-mono t2'
 
 interface NewEntryBody { entryId: string; athleteAId: number; athleteBId: number; pointsA: number; pointsB: number; winnerAthleteId: number; winType: WinType }
 interface CorrectionBody { entryId: string; pointsA: number; pointsB: number; winnerAthleteId: number; winType: WinType }
@@ -58,14 +64,10 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   const eventId = detail.event.id
   const [teamA, teamB] = detail.teams
   const [f, setF] = useState<Form>(() => {
-    const draft = loadDraft(eventId)
+    const draft = restoreDraft(eventId)
     return draft ? { ...draft, touched: draft.winner !== null } : fresh()
   })
-  // A restored draft says so, or the desk finds a filled form on a reload with no
-  // account of where it came from.
-  const [failure, setFailure] = useState<SaveErrorCopy | null>(() => (
-    loadDraft(eventId) ? { title: 'This entry never sent', body: 'It was kept on this device. Check it, then press Save.' } : null
-  ))
+  const [failure, setFailure] = useState<SaveErrorCopy | null>(() => (restoreDraft(eventId) ? UNSENT : null))
   const [pairPrompt, setPairPrompt] = useState<string | null>(null)
   const [savedLabel, setSavedLabel] = useState(false)
   const [announce, setAnnounce] = useState('')
@@ -136,9 +138,23 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     watchdog.current = null
   }
 
-  const onSaved = (res: EntryResponse | undefined, key: string, sentence: string) => {
+  // Leaving a correction, by saving it or by cancelling it, hands the desk back the
+  // unsent new entry that correction interrupted, banner and all. The two drafts
+  // live in separate slots, so the one that was never sent is still there to restore.
+  const resume = (editingId: number | null) => {
+    const kept = editingId === null ? null : loadDraft(eventId)
+    if (!kept) {
+      setF(fresh())
+      setFailure(null)
+      return
+    }
+    setF({ ...kept, touched: kept.winner !== null })
+    setFailure(UNSENT)
+  }
+
+  const onSaved = (res: EntryResponse | undefined, key: string, sentence: string, payload: Form) => {
     settle()
-    clearDraft(eventId)
+    clearDraft(eventId, payload.editingId)
     pairLog.current[key] = Date.now()
     const id = res?.match?.id
     if (typeof id === 'number') {
@@ -146,13 +162,12 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
       setSavedAt(s => ({ ...s, [id]: at }))
       setCue({ id, on: true })
     }
-    setFailure(null)
     setPairPrompt(null)
     setTimedOut(false)
     setSavedLabel(true)
     setAnnounce(sentence)
     later(() => setSavedLabel(false), SAVED_LABEL_MS)
-    setF(fresh())
+    resume(payload.editingId)
     focusFirstField()
   }
 
@@ -186,13 +201,13 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     if (f.editingId !== null) {
       const body: CorrectionBody = { entryId: f.entryId, pointsA: pA, pointsB: pB, winnerAthleteId, winType }
       correct.mutate({ id: f.editingId, body }, {
-        onSuccess: res => onSaved(res, key, sentence),
+        onSuccess: res => onSaved(res, key, sentence, payload),
         onError: err => onFailed(payload, err),
       })
     } else {
       const body: NewEntryBody = { entryId: f.entryId, athleteAId: a.id, athleteBId: b.id, pointsA: pA, pointsB: pB, winnerAthleteId, winType }
       create.mutate(body, {
-        onSuccess: res => onSaved(res, key, sentence),
+        onSuccess: res => onSaved(res, key, sentence, payload),
         onError: err => onFailed(payload, err),
       })
     }
@@ -226,6 +241,9 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     }
   }
 
+  // The banner goes while the correction is on screen because it describes the other
+  // entry, not this one. The entry itself stays in its own slot and comes back with
+  // its banner the moment the correction is saved or cancelled.
   const load = (m: MatchRow) => {
     setF({
       aId: String(m.athleteAId), bId: String(m.athleteBId),
@@ -243,14 +261,14 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     setF({ ...fresh(), aId: String(m.athleteAId), bId: String(m.athleteBId) })
     focusPoints()
   }
-  // Cancelling an edit drops the stored draft with it: a correction sets one
+  // Cancelling an edit drops that correction's own draft: a correction sets one
   // match's result rather than creating a win, so re-sending it under a new id
   // cannot double anything, and a kept draft would reappear on the next load as
-  // an entry nobody meant to make.
+  // an entry nobody meant to make. It never touches the new-entry slot.
   const cancelEdit = () => {
-    clearDraft(eventId)
-    setFailure(null)
-    setF(fresh())
+    clearDraft(eventId, f.editingId)
+    setPairPrompt(null)
+    resume(f.editingId)
   }
 
   // Instant on, released over 600ms, exactly once. The release waits a beat so
@@ -278,7 +296,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
           <TeamPlate color={teamA.color} name={teamA.name} />
           <Figure value={winsA} lead={winsA >= winsB} />
         </div>
-        <span className="t1 whitespace-nowrap text-gray-9 uppercase">Match wins</span>
+        <span className="t1 whitespace-nowrap text-gray-10 uppercase">Match wins</span>
         <div className="flex min-w-0 items-center justify-end gap-4">
           <Figure value={winsB} lead={winsB >= winsA} />
           <TeamPlate color={teamB.color} name={teamB.name} />
@@ -325,7 +343,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
                 align="right" className="sm:col-start-3 sm:row-start-1"
               />
               <span aria-hidden className="t1 hidden text-gray-9 uppercase sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:block sm:self-center">vs</span>
-              <PointsField id="entry-a-points" team={teamA} value={f.pointsA} onChange={setPoints('pointsA')} className="sm:col-start-1 sm:row-start-2" />
+              <PointsField id="entry-a-points" team={teamA} value={f.pointsA} onChange={setPoints('pointsA')} digitKey className="sm:col-start-1 sm:row-start-2" />
               <PointsField id="entry-b-points" team={teamB} value={f.pointsB} onChange={setPoints('pointsB')} align="right" className="sm:col-start-3 sm:row-start-2" />
 
               <WinnerToggle kid={a} team={teamA} hint="A" pressed={winner === 'a'} onPress={() => pickWinner('a')} className="sm:col-start-1 sm:row-start-3" />
@@ -414,7 +432,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
                 match={m}
                 nameA={name(m.athleteAId)}
                 nameB={name(m.athleteBId)}
-                at={savedAt[m.id]}
+                at={ledgerTime(m.endedAt, savedAt[m.id])}
                 cued={cue?.id === m.id && cue.on}
                 cueing={cue?.id === m.id}
                 onEdit={() => load(m)}
@@ -454,7 +472,13 @@ function Figure({ value, lead }: { value: number; lead: boolean }) {
 function Hint({ children, tone = 'on-dark' }: { children: ReactNode; tone?: 'on-dark' | 'on-white' }) {
   // aria-hidden because the accessible name stays the verb; the key itself is
   // published to assistive technology as aria-keyshortcuts on the control.
-  return <span aria-hidden className={cn('font-mono t2', tone === 'on-white' ? 'text-gray-9' : 'text-gray-10')}>{children}</span>
+  //
+  // 6.6 requires --gray-10 for a shortcut hint because it is text a person reads,
+  // and the ramp is authored for dark surfaces, so on the primary button's white
+  // fill --gray-10 is 3.00:1 and --gray-9 is 3.96:1, both under the 4.5:1 floor at
+  // 13px. The on-white tone takes the same rung of the ramp measured the other way:
+  // --gray-7 is 8.9:1 on white, and it is never a line here.
+  return <span aria-hidden className={cn('font-mono t2', tone === 'on-white' ? 'text-gray-7' : 'text-gray-10')}>{children}</span>
 }
 
 function KidField({ id, team, kids, value, onChange, align = 'left', className }: {
@@ -482,12 +506,19 @@ function KidField({ id, team, kids, value, onChange, align = 'left', className }
 
 // The well is one of the app's signature objects: 88px, black fill, radius 0
 // because inner = max(0, 8 - 16) = 0 inside a padded field, one t8 numeral in a
-// two character slot so 9 and 12 occupy the same box.
-function PointsField({ id, team, value, onChange, align = 'left', className }: {
+// two character slot so 9 and 12 occupy the same box. The numeral is --gray-12,
+// not --white: 2.1 gives white to text at 24px and below, and t8 is 44px, where
+// pure white halates on an emissive panel.
+//
+// The digit key only ever fills this side, so only this side carries the hint. A
+// digit typed while focus is in the other well is the browser's own typing, not
+// the shortcut, and needs no hint to explain it.
+function PointsField({ id, team, value, onChange, digitKey = false, align = 'left', className }: {
   id: string
   team: TeamRow
   value: string
   onChange: (v: string) => void
+  digitKey?: boolean
   align?: 'left' | 'right'
   className?: string
 }) {
@@ -495,7 +526,7 @@ function PointsField({ id, team, value, onChange, align = 'left', className }: {
     <div className={cn('grid gap-1.5', className)}>
       <div className={cn('flex items-center gap-2', align === 'right' && 'flex-row-reverse')}>
         <Label htmlFor={id}>{team.name} points</Label>
-        <Hint>0 to 9</Hint>
+        {digitKey && <Hint>0 to 9</Hint>}
       </div>
       <div className="grid h-[88px] place-items-center border border-gray-7 bg-background focus-within:shadow-focus">
         <input
@@ -505,7 +536,8 @@ function PointsField({ id, team, value, onChange, align = 'left', className }: {
           inputMode="numeric"
           autoComplete="off"
           maxLength={2}
-          className="fig fig-2 w-full bg-transparent text-center t8 text-white outline-none"
+          aria-keyshortcuts={digitKey ? '0 1 2 3 4 5 6 7 8 9' : undefined}
+          className="fig fig-2 w-full bg-transparent text-center t8 text-gray-12 outline-none"
         />
       </div>
     </div>
@@ -541,7 +573,7 @@ function LedgerRow({ match, nameA, nameB, at, cued, cueing, onEdit }: {
   match: MatchRow
   nameA: string
   nameB: string
-  at: number | undefined
+  at: Date | null
   cued: boolean
   cueing: boolean
   onEdit: () => void
@@ -568,8 +600,21 @@ function LedgerRow({ match, nameA, nameB, at, cued, cueing, onEdit }: {
         <span className="truncate">{nameB}</span>
         {!aWon && <Mark side="right" />}
       </span>
-      <span className="text-right t1 text-gray-9">{at === undefined ? '' : clockLabel(new Date(at))}</span>
-      <Button variant="ghost" size="xs" title="Edit result" aria-label={`Edit ${winnerName} over ${loserName}`} onClick={onEdit}>
+      <span className="text-right t1 text-gray-10">{at === null ? '' : clockLabel(at)}</span>
+      {/*
+        xs carries a 44px hit area as a 28px control plus an 8px pseudo-element
+        inset, which is 4px taller than this 40px rung and would sit on top of the
+        rows above and below. The vertical reach is clamped to the row; the
+        horizontal reach keeps the full 44px.
+      */}
+      <Button
+        variant="ghost"
+        size="xs"
+        title="Edit result"
+        aria-label={`Edit ${winnerName} over ${loserName}`}
+        onClick={onEdit}
+        className="before:-top-1.5 before:-bottom-1.5"
+      >
         <PencilLine />
       </Button>
     </div>
