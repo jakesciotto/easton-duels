@@ -21,14 +21,22 @@ const STATE_RULE: Record<EventSummary['status'], string> = {
   done: 'bg-transparent',
 }
 
-const ROW = 'grid h-10 grid-cols-[var(--col-state)_minmax(0,1fr)_92px_var(--col-num-s)_auto] items-center gap-x-3'
+// Finding 5: `ch` (and so var(--col-num-s)) resolves against each element's own
+// font-size. The head was left at the general t1 column-head size while a row
+// inherited the shell's ambient t3, both on the sans face, so the shared string
+// still resolved the Mats track to two different pixel widths. Both are pinned to
+// the mono face at the row's own t2 -- the same technique the roster row and the
+// candidate row already document -- and the labels take t1 back on themselves.
+const ROW = 'grid h-10 grid-cols-[var(--col-state)_minmax(0,1fr)_92px_var(--col-num-s)_auto] items-center gap-x-3 font-mono t2'
 
 function EventRow({ ev }: { ev: EventSummary }) {
   const [teamA, teamB] = ev.teams
   return (
     <FieldRow className={ROW}>
       <span aria-hidden className={cn('h-full self-stretch', STATE_RULE[ev.status])} />
-      <div className="flex min-w-0 items-center gap-3">
+      {/* The row sets the mono face so the numeric track resolves ch correctly.
+          Every cell holding words takes the sans face back. */}
+      <div className="flex min-w-0 items-center gap-3 font-sans">
         <Link to={`/events/${ev.id}`} className="truncate t3 font-medium text-gray-12 outline-none focus-visible:shadow-focus">
           {ev.name}
         </Link>
@@ -37,7 +45,7 @@ function EventRow({ ev }: { ev: EventSummary }) {
       </div>
       <span className="fig text-gray-10">{ev.date}</span>
       <span className="fig text-right text-gray-10">{ev.matCount}</span>
-      <Link to={`/board/${ev.id}`} className={buttonVariants({ variant: 'ghost', size: 'sm' })}>Board</Link>
+      <Link to={`/board/${ev.id}`} className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'font-sans')}>Board</Link>
     </FieldRow>
   )
 }
@@ -62,13 +70,20 @@ function EventList() {
           <FieldSet data-frame="card">
             <FieldHead className={ROW}>
               <span aria-hidden />
-              <span>Event</span>
-              <span className="tick text-right">Date</span>
-              <span className="tick text-right">Mats</span>
+              <span className="t1 font-sans">Event</span>
+              <span className="tick t1 font-sans text-right">Date</span>
+              <span className="tick t1 font-sans text-right">Mats</span>
               <span className="sr-only">Board</span>
             </FieldHead>
             {events.data.length === 0
-              ? <EmptyState message="No events yet. Create the first one." />
+              ? (
+                // Finding 6 / 7.10: a sentence with no control is a dead end. The verb
+                // moves to a real inline action instead of sitting in plain grey text.
+                <EmptyState
+                  message="No events yet."
+                  action={<Button size="sm" variant="ghost" onClick={() => setOpen(true)}>Create the first one</Button>}
+                />
+              )
               : events.data.map(ev => <EventRow key={ev.id} ev={ev} />)}
           </FieldSet>
         )}

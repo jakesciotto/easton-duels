@@ -21,14 +21,29 @@ const WIN_TYPE_ITEMS: { value: WinType; label: string }[] = [
   { value: 'decision', label: 'decision' },
 ]
 
-const slug = (label: string) => label.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 20) || 'action'
+const KEY_MAX = 20
 
-function uniqueKeys<T extends { key: string }>(rows: T[]): T[] {
-  const seen = new Map<string, number>()
-  return rows.map(r => {
-    const n = (seen.get(r.key) ?? 0) + 1
-    seen.set(r.key, n)
-    return n === 1 ? r : { ...r, key: `${r.key}_${n}` }
+const slug = (label: string, fallback: string) =>
+  label.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, KEY_MAX) || fallback
+
+// Every match event stores the action or terminal KEY, and the log is append only, so a
+// key that has already shipped is the only handle a settled score has on the word it was
+// scored with. A row that came back from the server therefore keeps its key for life,
+// whatever happens to its label; only a row added in this session takes a key from what
+// was typed, and only that new key is disambiguated when it collides.
+function withKeys<T extends { key: string; label: string }>(rows: T[], fallback: string): T[] {
+  const taken = new Set(rows.map(r => r.key).filter(k => k !== ''))
+  return rows.map(row => {
+    const label = row.label.trim()
+    if (row.key !== '') return { ...row, label }
+    const base = slug(label, fallback)
+    let key = base
+    for (let n = 2; taken.has(key); n++) {
+      const suffix = `_${n}`
+      key = base.slice(0, KEY_MAX - suffix.length) + suffix
+    }
+    taken.add(key)
+    return { ...row, key, label }
   })
 }
 
@@ -56,15 +71,19 @@ function PointsCell({ value, onChange }: { value: number; onChange: (n: number) 
   )
 }
 
-function RemoveCell({ label, onClick, lockedBy }: { label: string; onClick: () => void; lockedBy: string | null }) {
+// A disabled button sets pointer-events to none, so a reason carried only in its own
+// title is unreachable by everyone. The reason is printed under the field it governs and
+// named here through aria-describedby; the title rides on the cell, which can still take
+// a pointer, as a second channel rather than the only one.
+function RemoveCell({ label, onClick, lockedBy, describedBy }: { label: string; onClick: () => void; lockedBy: string | null; describedBy?: string }) {
   return (
-    <TableCell className="w-[var(--col-act)] px-0">
+    <TableCell className="w-[var(--col-act)] px-0" title={lockedBy ?? undefined}>
       <Button
         type="button"
         variant="ghost"
         size="xs"
         aria-label={label}
-        title={lockedBy ?? undefined}
+        aria-describedby={lockedBy === null ? undefined : describedBy}
         disabled={lockedBy !== null}
         onClick={onClick}
       >
@@ -101,6 +120,11 @@ export function RulesetDialog({ detail, open, onOpenChange, ruleset }: { detail:
   const scored = ruleset ? detail.matches.filter(m => m.rulesetId === ruleset.id && m.status !== 'pending').length : 0
   const lockedBy = scored > 0 ? `Used by ${scored} scored ${scored === 1 ? 'match' : 'matches'}` : null
 
+  // Every reason a remove control is refused has to be readable next to that control, so
+  // the sentence and the disabled state are computed from the same value.
+  const actionLock = lockedBy ?? (actions.length === 1 ? 'A ruleset needs at least one action' : null)
+  const terminalLock = lockedBy
+
   const lengthSec = clockToSec(length)
 
   const submit = (e: FormEvent) => {
@@ -109,8 +133,8 @@ export function RulesetDialog({ detail, open, onOpenChange, ruleset }: { detail:
     save.mutate({
       name: name.trim(),
       defaultLengthSec: lengthSec,
-      actions: uniqueKeys(actions.map(a => ({ ...a, key: slug(a.label), label: a.label.trim() }))),
-      terminals: uniqueKeys(terminals.map(t => ({ ...t, key: slug(t.label), label: t.label.trim() }))),
+      actions: withKeys(actions, 'action'),
+      terminals: withKeys(terminals, 'terminal'),
     }, {
       onSuccess: () => onOpenChange(false),
     })
@@ -150,7 +174,8 @@ export function RulesetDialog({ detail, open, onOpenChange, ruleset }: { detail:
                       </TableCell>
                       <RemoveCell
                         label={`Remove ${a.label || 'action'}`}
-                        lockedBy={lockedBy ?? (actions.length === 1 ? 'A ruleset needs at least one action' : null)}
+                        lockedBy={actionLock}
+                        describedBy="rs-actions-lock"
                         onClick={() => setActions(rows => rows.filter((_, j) => j !== i))}
                       />
                     </TableRow>
@@ -162,7 +187,11 @@ export function RulesetDialog({ detail, open, onOpenChange, ruleset }: { detail:
                   </TableRow>
                 </TableBody>
               </Table>
-              {lockedBy && <p className="t2 text-gray-10">{lockedBy}. Removing one would rewrite a settled result.</p>}
+              {actionLock && (
+                <p id="rs-actions-lock" className="t2 text-gray-10">
+                  {actionLock === lockedBy ? `${actionLock}. Removing an action would rewrite a settled result.` : `${actionLock}.`}
+                </p>
+              )}
             </section>
 
             <section className="grid gap-2" aria-label="Terminals">
@@ -190,7 +219,8 @@ export function RulesetDialog({ detail, open, onOpenChange, ruleset }: { detail:
                       </TableCell>
                       <RemoveCell
                         label={`Remove ${t.label || 'terminal'}`}
-                        lockedBy={lockedBy}
+                        lockedBy={terminalLock}
+                        describedBy="rs-terminals-lock"
                         onClick={() => setTerminals(rows => rows.filter((_, j) => j !== i))}
                       />
                     </TableRow>
@@ -202,6 +232,9 @@ export function RulesetDialog({ detail, open, onOpenChange, ruleset }: { detail:
                   </TableRow>
                 </TableBody>
               </Table>
+              {terminalLock && (
+                <p id="rs-terminals-lock" className="t2 text-gray-10">{terminalLock}. Removing a terminal would rewrite a settled result.</p>
+              )}
             </section>
 
             <div className="grid gap-2">

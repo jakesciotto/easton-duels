@@ -8,6 +8,26 @@ import { Label } from '@/components/ui/label'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { CodeField } from '@/components/CodeField'
 
+// The admin token is `base64url(JSON payload).signature` (server/src/auth/tokens.ts);
+// the payload itself carries its own `exp` and is not secret, so it is safe to read
+// without the signing secret. Decoding it locally is what lets the gate tell a
+// genuine 401 expiry apart from clearAdminToken() being called for a deliberate Sign
+// out (AdminShell) -- both look identical as a bare token-present/token-absent
+// transition, and only the token's own recorded expiry can tell them apart.
+function decodeExpiryMs(token: string): number | null {
+  const dot = token.indexOf('.')
+  if (dot < 1) return null
+  const body = token.slice(0, dot).replace(/-/g, '+').replace(/_/g, '/')
+  const padded = body + '='.repeat((4 - (body.length % 4)) % 4)
+  try {
+    const payload: unknown = JSON.parse(atob(padded))
+    const exp = (payload as { exp?: unknown }).exp
+    return typeof exp === 'number' ? exp * 1000 : null
+  } catch {
+    return null
+  }
+}
+
 export function PinGate({ children }: { children: ReactNode }) {
   const token = useAdminToken()
   const [pin, setPin] = useState('')
@@ -17,13 +37,21 @@ export function PinGate({ children }: { children: ReactNode }) {
   // whose 24 hour HMAC token was just cleared (by a 401, or by Sign out). Nothing upstream
   // marks a clear as an expiry, so this is the honest boundary reachable from this file alone.
   const hadToken = useRef(false)
+  // The token's own recorded expiry, so "expired" is only claimed once the clock has
+  // actually passed it -- clearAdminToken() runs identically on a 401 and on Sign out,
+  // so a boolean "was a token ever here" cannot tell a genuine expiry from a normal
+  // sign-out-then-sign-in in the same tab.
+  const expiresAt = useRef<number | null>(null)
   useEffect(() => {
-    if (token) hadToken.current = true
+    if (token) {
+      hadToken.current = true
+      expiresAt.current = decodeExpiryMs(token)
+    }
   }, [token])
 
   if (token) return <>{children}</>
 
-  const expired = hadToken.current
+  const expired = hadToken.current && expiresAt.current !== null && Date.now() >= expiresAt.current
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()

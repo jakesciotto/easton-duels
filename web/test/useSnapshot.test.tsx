@@ -1,7 +1,8 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
-import { renderHook, act } from '@testing-library/react'
-import { useSnapshot } from '@/lib/useSnapshot'
-import { fakeFetch, sampleSnapshot } from './fakes'
+import { useMemo } from 'react'
+import { renderHook, render, act } from '@testing-library/react'
+import { SnapshotStreamContext, useSnapshot } from '@/lib/useSnapshot'
+import { fakeFetch, sampleSnapshot, snapshotFeed } from './fakes'
 
 beforeEach(() => vi.useFakeTimers())
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
@@ -225,6 +226,62 @@ describe('useSnapshot', () => {
     } finally {
       root.remove()
     }
+  })
+
+  // 6.4: three loops against one endpoint from one browser tab meant three request rates
+  // and three version cursors, and a header that could report a freshness the tab under it
+  // did not have.
+  it('serves every consumer under the event body from one poll loop', async () => {
+    const f = fakeFetch(() => ({ json: { version: 1, snapshot: sampleSnapshot({ version: 1 }) } }))
+    function Consumer({ eventId }: { eventId: number }) {
+      useSnapshot(eventId, 1000)
+      return null
+    }
+    function Body() {
+      const stream = useSnapshot(1, 1000)
+      const shared = useMemo(() => ({ eventId: 1, state: stream }), [stream])
+      return (
+        <SnapshotStreamContext value={shared}>
+          <Consumer eventId={1} />
+          <Consumer eventId={1} />
+          {/* Another event is not this provider's, so it keeps its own loop. */}
+          <Consumer eventId={2} />
+        </SnapshotStreamContext>
+      )
+    }
+    render(<Body />)
+    await flush()
+    const forEvent = (id: number) => f.calls.filter(c => c.url.startsWith(`/api/events/${id}/snapshot`)).length
+    expect(forEvent(1)).toBe(1)
+    expect(forEvent(2)).toBe(1)
+    await flush(1000)
+    expect(forEvent(1)).toBe(2)
+  })
+
+  // 4.4 / WCAG 2.2.2. The pause lives on the stream, not on one screen, so the shell can
+  // report it: a header driven by lastSuccessAt alone reads "Live 1s" over a frozen rack.
+  it('freezes the picture while paused, counts what is waiting underneath, and releases the newest', async () => {
+    const feed = snapshotFeed(sampleSnapshot({ version: 1 }))
+    fakeFetch(url => feed.handle(url) ?? { json: {} })
+    const { result } = renderHook(() => useSnapshot(1, 1000))
+    await flush()
+    expect(result.current.snapshot?.version).toBe(1)
+    expect(result.current.paused).toBe(false)
+
+    act(() => { result.current.setPaused(true) })
+    const at = result.current.lastSuccessAt
+    feed.push(sampleSnapshot({}))
+    await flush(1000)
+    expect(result.current.paused).toBe(true)
+    expect(result.current.snapshot?.version).toBe(1)
+    expect(result.current.waiting).toBe(1)
+    // The poll keeps running underneath, which is the only way the wait can be counted.
+    expect(result.current.lastSuccessAt).not.toBe(at)
+
+    act(() => { result.current.setPaused(false) })
+    expect(result.current.paused).toBe(false)
+    expect(result.current.waiting).toBe(0)
+    expect(result.current.snapshot?.version).toBe(2)
   })
 
   it('keeps only the most recent held snapshot when two arrive back to back while engaged', async () => {

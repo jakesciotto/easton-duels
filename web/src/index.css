@@ -146,16 +146,19 @@
 
 @layer utilities {
   /* The console type ramp. Nine steps, three weights, tracking that reverses
-     sign below 14px. */
-  .t1 { font-size: 11px; line-height: 16px; font-weight: 500; letter-spacing: .016em; }
-  .t2 { font-size: 13px; line-height: 18px; font-weight: 500; letter-spacing: .004em; }
-  .t3 { font-size: 14px; line-height: 20px; font-weight: 400; letter-spacing: 0; }
-  .t4 { font-size: 16px; line-height: 22px; font-weight: 600; letter-spacing: -.012em; }
-  .t5 { font-size: 20px; line-height: 26px; font-weight: 600; letter-spacing: -.016em; }
-  .t6 { font-size: 28px; line-height: 32px; font-weight: 600; letter-spacing: -.022em; }
-  .t7 { font-size: 32px; line-height: 34px; font-weight: 500; letter-spacing: -.020em; }
-  .t8 { font-size: 44px; line-height: 44px; font-weight: 500; letter-spacing: -.018em; }
-  .t9 { font-size: 56px; line-height: 56px; font-weight: 600; letter-spacing: .100em; }
+     sign below 14px. Each step also publishes its size as --step, which is what
+     lets the coarse-pointer floor below raise a small control without capping a
+     large one. --step inherits, so a control that takes its size from an ancestor
+     is measured by that ancestor's step. */
+  .t1 { font-size: 11px; --step: 11px; line-height: 16px; font-weight: 500; letter-spacing: .016em; }
+  .t2 { font-size: 13px; --step: 13px; line-height: 18px; font-weight: 500; letter-spacing: .004em; }
+  .t3 { font-size: 14px; --step: 14px; line-height: 20px; font-weight: 400; letter-spacing: 0; }
+  .t4 { font-size: 16px; --step: 16px; line-height: 22px; font-weight: 600; letter-spacing: -.012em; }
+  .t5 { font-size: 20px; --step: 20px; line-height: 26px; font-weight: 600; letter-spacing: -.016em; }
+  .t6 { font-size: 28px; --step: 28px; line-height: 32px; font-weight: 600; letter-spacing: -.022em; }
+  .t7 { font-size: 32px; --step: 32px; line-height: 34px; font-weight: 500; letter-spacing: -.020em; }
+  .t8 { font-size: 44px; --step: 44px; line-height: 44px; font-weight: 500; letter-spacing: -.018em; }
+  .t9 { font-size: 56px; --step: 56px; line-height: 56px; font-weight: 600; letter-spacing: .100em; }
 
   .label { font-size: 13px; line-height: 18px; font-weight: 500; letter-spacing: .004em; color: var(--muted-foreground); }
   .meta { font-size: 13px; line-height: 18px; font-weight: 400; letter-spacing: .004em; color: var(--muted-foreground); }
@@ -172,12 +175,53 @@
   .tabular { font-variant-numeric: tabular-nums; }
   .team-dot { background: var(--team); }
 
+  /* 6.18. Five underline tabs plus their gaps and gutters measure about 438px, which is
+     wider than a 393px phone, so the rail takes its own overflow and the shell never
+     scrolls sideways. The 24px mask is the affordance that says there are tabs behind
+     the edge. Above 640px the row fits, and a scroll container there would only clip
+     the focus ring, so the whole behaviour is inside the breakpoint. */
+  @media (max-width: 639px) {
+    .rail {
+      overflow-x: auto;
+      overscroll-behavior-x: contain;
+      scrollbar-width: none;
+      -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent);
+      mask-image: linear-gradient(to right, black calc(100% - 24px), transparent);
+    }
+    .rail::-webkit-scrollbar { display: none; }
+  }
+
   /* The register tick. The only decorative mark in the product: it marks where
      the digits in a numeric column end. */
   .tick { position: relative; }
   .tick::after {
     content: ''; position: absolute; right: 0; bottom: -9px;
     width: 1px; height: 6px; background: var(--gray-7);
+  }
+}
+
+/* 6.18, and not deferred. iOS Safari zooms the viewport when a control whose text is under
+   16px takes focus, and it does not zoom back out on blur, so one tap on a 13px roster cell
+   leaves every later tap landing on a zoomed layout. t1, t2 and t3 are all below the floor.
+   This is a floor and never a cap: max() keeps the entry and scorer figures at their own
+   step, and --step is what carries that step here (see the ramp above). Unlayered so it
+   outranks the ramp utilities it is raising. Never solved with user-scalable=no, which is
+   a WCAG 1.4.4 failure and which iOS ignores for this case anyway. */
+@media (pointer: coarse) {
+  input, textarea, select, [contenteditable] {
+    font-size: max(16px, var(--step, 1em));
+  }
+
+  /* The floor raises the input but a numeric track resolves ch on its ANCESTOR at the
+     unfloored size, so the two disagree again and the digits overflow the column the
+     register tick marks. The tracks are therefore resolved against the floored size:
+     the mono advance is 0.6em, so one character at 16px is 9.6px. That is wider than a
+     track holding plain text needs, which costs a few pixels of the flexible name track
+     and never overflows. */
+  :root {
+    --col-num-s: calc(2 * 9.6px + 24px);
+    --col-num-m: calc(3 * 9.6px + 24px);
+    --col-num-l: calc(4 * 9.6px + 24px);
   }
 }
 

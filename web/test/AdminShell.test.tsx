@@ -50,6 +50,32 @@ describe('AdminShell freshness readout', () => {
   })
 })
 
+// 4.4 / WCAG 2.2.2: the poll keeps running while the operator has stopped the picture, so
+// a header driven by lastSuccessAt alone would read "Live 1s" over a screen that has not
+// moved since they pressed the button. The two must not disagree.
+describe('AdminShell freshness readout while the stream is paused', () => {
+  it('reads paused with the count waiting instead of a fresh age', () => {
+    vi.useFakeTimers({ now: T0 })
+    mount(<AdminShell title="Event" freshness={{ lastSuccessAt: T0 - 1_000, pollIntervalMs: 1000, paused: true, waiting: 3 }}>content</AdminShell>)
+    expect(screen.getByRole('banner')).toHaveTextContent('Paused, 3 updates waiting')
+    expect(screen.getByRole('banner')).not.toHaveTextContent('1s')
+  })
+
+  it('says update rather than updates when exactly one is waiting', () => {
+    vi.useFakeTimers({ now: T0 })
+    mount(<AdminShell title="Event" freshness={{ lastSuccessAt: T0 - 1_000, pollIntervalMs: 1000, paused: true, waiting: 1 }}>content</AdminShell>)
+    expect(screen.getByRole('banner')).toHaveTextContent('Paused, 1 update waiting')
+  })
+
+  it('goes back to the age readout when the pause is released', () => {
+    vi.useFakeTimers({ now: T0 })
+    const { rerender } = mount(<AdminShell title="Event" freshness={{ lastSuccessAt: T0 - 2_000, pollIntervalMs: 1000, paused: true, waiting: 2 }}>content</AdminShell>)
+    rerender(<MemoryRouter><AdminShell title="Event" freshness={{ lastSuccessAt: T0 - 2_000, pollIntervalMs: 1000, paused: false, waiting: 0 }}>content</AdminShell></MemoryRouter>)
+    expect(screen.getByRole('banner')).not.toHaveTextContent('waiting')
+    expect(screen.getByRole('banner')).toHaveTextContent('Live 2s')
+  })
+})
+
 // Finding 4: the footer band is an owner-set line with no data source yet, so the shell
 // must never fabricate one -- same honest-absence contract as freshness above.
 describe('AdminShell footer band', () => {

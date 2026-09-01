@@ -1,16 +1,79 @@
-import { useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { Snapshot } from '@shared/types'
 import { pollIntervalForSnapshot } from './pollInterval'
-import { operatorEngaged } from './operatorEngaged'
+import { useHeldWhileEngaged } from './operatorEngaged'
 
-export interface StreamState { snapshot: Snapshot | null; connected: boolean; lastSuccessAt: number | null }
+export interface StreamState {
+  snapshot: Snapshot | null
+  connected: boolean
+  lastSuccessAt: number | null
+  /**
+   * 4.4 / WCAG 2.2.2: the operator has stopped the picture. The poll keeps running
+   * underneath, so `waiting` can count what the frozen screen is behind by.
+   */
+  paused: boolean
+  waiting: number
+  setPaused: (on: boolean) => void
+  /**
+   * The newest snapshot, whether or not the picture is frozen. A write acts on the
+   * room rather than on the picture, so it must carry the live sequence: a paused
+   * screen can be several writes behind and the server rejects a stale one.
+   */
+  live: Snapshot | null
+}
 
-// How often the held-snapshot suspension (4.4) rechecks whether the operator is still
-// engaged, once something is waiting to commit.
-const SUSPENSION_RECHECK_MS = 200
+interface SharedStream { eventId: number; state: StreamState }
+
+/**
+ * One event, one poll loop, one pause.
+ *
+ * The shell's freshness readout and every tab under it describe the same data, so they
+ * must come from the same stream: three independent loops against one endpoint from one
+ * browser tab meant three request rates, three version cursors, and a header that reported
+ * fresh data while the screen the operator was reading had been deliberately frozen.
+ *
+ * The event body provides this. A screen outside it -- the board, the scorer -- has no
+ * provider above it and still polls on its own.
+ */
+export const SnapshotStreamContext = createContext<SharedStream | null>(null)
+
+interface PollState { snapshot: Snapshot | null; connected: boolean; lastSuccessAt: number | null }
 
 export function useSnapshot(eventId: number | null, pollMs?: number): StreamState {
-  const [state, setState] = useState<StreamState>({ snapshot: null, connected: false, lastSuccessAt: null })
+  const shared = useContext(SnapshotStreamContext)
+  const covered = eventId !== null && shared !== null && shared.eventId === eventId
+  // Hooks stay unconditional: a covered caller mounts the loop with a null event, which
+  // starts nothing, and reads the stream its provider already owns.
+  const own = useOwnStream(covered ? null : eventId, pollMs)
+  return covered ? shared.state : own
+}
+
+function useOwnStream(eventId: number | null, pollMs?: number): StreamState {
+  const poll = usePoll(eventId, pollMs)
+  // 4.4: what arrives is not what renders. The commit is suspended while the operator is
+  // dragging, typing or holding a dialog open, by the same mechanism the event detail uses.
+  const committed = useHeldWhileEngaged(poll.snapshot, eventId)
+
+  const [frozen, setFrozen] = useState<Snapshot | null>(null)
+  const shown = useRef(committed)
+  shown.current = committed
+  const setPaused = useCallback((on: boolean) => { setFrozen(on ? shown.current : null) }, [])
+  // Versions are per event, so a freeze taken on one event can never be counted against
+  // another event's poll.
+  useEffect(() => { setFrozen(null) }, [eventId])
+
+  const snapshot = frozen ?? committed
+  const paused = frozen !== null
+  const waiting = frozen !== null && poll.snapshot !== null ? Math.max(0, poll.snapshot.version - frozen.version) : 0
+
+  return useMemo(
+    () => ({ snapshot, connected: poll.connected, lastSuccessAt: poll.lastSuccessAt, paused, waiting, setPaused, live: committed }),
+    [snapshot, poll.connected, poll.lastSuccessAt, paused, waiting, setPaused, committed],
+  )
+}
+
+function usePoll(eventId: number | null, pollMs?: number): PollState {
+  const [state, setState] = useState<PollState>({ snapshot: null, connected: false, lastSuccessAt: null })
   const [watching, setWatching] = useState(eventId)
   // Versions are per event, so nothing held for one event can be compared against another
   // event's poll.
@@ -26,37 +89,9 @@ export function useSnapshot(eventId: number | null, pollMs?: number): StreamStat
     let timer: ReturnType<typeof setTimeout> | undefined
     let version = -1
     let inFlight = false
+    let latest: Snapshot | null = null
 
-    // The newest snapshot known, whether or not it has been committed to state yet, and
-    // what state currently holds -- kept apart so a hold never loses an even newer arrival
-    // (4.4: "only the most recent one is kept").
-    let latestData: Snapshot | null = null
-    let committed: Snapshot | null = null
-    let held = false
-    let flushTimer: ReturnType<typeof setTimeout> | undefined
-
-    const nextInterval = () => pollMs ?? pollIntervalForSnapshot(latestData)
-
-    const flushToState = () => {
-      if (latestData === committed) return
-      committed = latestData
-      setState(s => (latestData === s.snapshot ? s : { ...s, snapshot: latestData }))
-    }
-
-    const tryFlush = () => {
-      if (!held || operatorEngaged()) return
-      held = false
-      flushToState()
-    }
-
-    const scheduleRecheck = () => {
-      if (flushTimer) return
-      flushTimer = setTimeout(() => {
-        flushTimer = undefined
-        tryFlush()
-        if (held) scheduleRecheck()
-      }, SUSPENSION_RECHECK_MS)
-    }
+    const nextInterval = () => pollMs ?? pollIntervalForSnapshot(latest)
 
     const tick = async () => {
       if (ignore || inFlight) return
@@ -69,15 +104,8 @@ export function useSnapshot(eventId: number | null, pollMs?: number): StreamStat
         if (ignore) return
         failures = 0
         version = body.version
-        if (body.snapshot) latestData = body.snapshot
-        setState(s => ({ ...s, connected: true, lastSuccessAt: Date.now() }))
-        if (operatorEngaged()) {
-          held = true
-          scheduleRecheck()
-        } else {
-          held = false
-          flushToState()
-        }
+        if (body.snapshot) latest = body.snapshot
+        setState({ snapshot: latest, connected: true, lastSuccessAt: Date.now() })
       } catch {
         if (ignore) return
         failures += 1
@@ -102,7 +130,6 @@ export function useSnapshot(eventId: number | null, pollMs?: number): StreamStat
     return () => {
       ignore = true
       if (timer) clearTimeout(timer)
-      if (flushTimer) clearTimeout(flushTimer)
       document.removeEventListener('visibilitychange', wake)
     }
   }, [eventId, pollMs])

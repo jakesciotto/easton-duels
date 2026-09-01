@@ -40,7 +40,7 @@ export function TeamPlate({ color, name, size = 'desk', showName = true, classNa
       >
         {code}
       </span>
-      {showName && <span className="truncate font-medium text-gray-12">{name}</span>}
+      {showName && <span className="truncate font-sans font-medium text-gray-12">{name}</span>}
       {!showName && <span className="sr-only">{name}</span>}
     </span>
   )

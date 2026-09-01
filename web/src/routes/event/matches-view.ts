@@ -25,7 +25,9 @@ const byOrder = (x: MatchRow, y: MatchRow) => x.orderIndex - y.orderIndex || x.i
  *
  * The event detail owns what the operator is editing: which matches exist, who is in
  * them, their mat, ruleset, length and order. Those refetch from the operator's own
- * writes, so a poll can never move them under a hand (4.4).
+ * writes. What keeps a refetch off the operator's hand is useHeldWhileEngaged, which
+ * holds the arriving detail until the gesture ends, not where the fetch came from: the
+ * detail also refetches on window focus and from another writer's invalidation (4.4).
  *
  * The snapshot owns what the event is doing: status, the clock, and which pending match
  * a mat will call next. That is the freshest account of the room, and it is the reason
@@ -59,6 +61,18 @@ export function matchLines(detail: EventDetail, snapshot: Snapshot | null): Matc
       endedAt: view?.endedAt ?? row.endedAt ?? null,
     }
   })
+}
+
+/**
+ * Every control in a queue row is otherwise named identically on all of them, so an
+ * elements list of a fourteen match queue is fourteen buttons called "Delete match" and
+ * fourteen comboboxes called "Mat", in an order that carries no row identity. The
+ * position is the number the row already prints and the two competitors are what the
+ * operator recognises, so the row's name is built from both. "versus" rather than "vs",
+ * which a screen reader spells out.
+ */
+export function matchLabel(position: number, nameA: string, nameB: string): string {
+  return `match ${position}, ${nameA} versus ${nameB}`
 }
 
 // 6.8 prints the refusal rather than opening a dialog that says no, so every refused

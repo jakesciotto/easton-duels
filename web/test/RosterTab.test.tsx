@@ -1,7 +1,9 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { AdminShell } from '@/components/AdminShell'
 import { RosterTab } from '@/routes/event/RosterTab'
 import { setAdminToken } from '@/lib/auth'
 import type { EventDetail } from '@/lib/types'
@@ -24,9 +26,21 @@ const detail: EventDetail = {
   rulesets: [], mats: [], matches: [], candidateCount: 0,
 }
 
-function mount() {
+// Noah (300) is sitting in a pending match, which is the exact condition the server
+// refuses a delete on.
+const placed: EventDetail = {
+  ...detail,
+  matches: [{
+    id: 1, eventId: 7, matId: null, orderIndex: 0, rulesetId: 1, lengthSec: 300,
+    athleteAId: 300, athleteBId: 200, status: 'pending', winnerAthleteId: null, winType: null,
+    pointsA: 0, pointsB: 0, clockElapsedMs: 0, clockStartedAt: null,
+    pendingTerminalAthleteId: null, pendingTerminalKey: null, lastSeq: 0, why: null,
+  }],
+}
+
+function mount(d: EventDetail = detail) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  render(<QueryClientProvider client={qc}><RosterTab detail={detail} /></QueryClientProvider>)
+  render(<QueryClientProvider client={qc}><RosterTab detail={d} /></QueryClientProvider>)
 }
 
 const rowOf = (scope: HTMLElement, name: string) =>
@@ -48,10 +62,10 @@ describe('RosterTab', () => {
     fakeFetch(() => ({ json: [] }))
     mount()
     const pool = screen.getByRole('region', { name: 'Unassigned' })
-    const age = within(pool).getByRole('button', { name: 'Age for Noah Kid' })
+    const age = within(pool).getByRole('button', { name: 'Age for Noah Kid, missing' })
     expect(age).toHaveTextContent('--')
     expect(age.className).toContain('text-attend')
-    const weight = within(pool).getByRole('button', { name: 'Weight for Zoe Kid' })
+    const weight = within(pool).getByRole('button', { name: 'Weight for Zoe Kid, 60' })
     expect(weight).toHaveTextContent('60')
     expect(weight.className).toContain('decoration-dotted')
     expect(weight).toHaveAttribute('title')
@@ -189,7 +203,7 @@ describe('RosterTab', () => {
     mount()
     const user = userEvent.setup()
     const pool = screen.getByRole('region', { name: 'Unassigned' })
-    await user.click(within(pool).getByRole('button', { name: 'Age for Noah Kid' }))
+    await user.click(within(pool).getByRole('button', { name: 'Age for Noah Kid, missing' }))
     await user.type(within(pool).getByLabelText('Age for Noah Kid'), '9')
     await user.tab()
     await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/athletes/300')).toBe(true))
@@ -201,10 +215,10 @@ describe('RosterTab', () => {
     mount()
     const user = userEvent.setup()
     const pool = screen.getByRole('region', { name: 'Unassigned' })
-    await user.click(within(pool).getByRole('button', { name: 'Age for Noah Kid' }))
+    await user.click(within(pool).getByRole('button', { name: 'Age for Noah Kid, missing' }))
     await user.type(within(pool).getByLabelText('Age for Noah Kid'), '9')
     await user.keyboard('{Escape}')
-    expect(within(pool).getByRole('button', { name: 'Age for Noah Kid' })).toHaveTextContent('--')
+    expect(within(pool).getByRole('button', { name: 'Age for Noah Kid, missing' })).toHaveTextContent('--')
     expect(f.calls.some(c => c.url === '/api/athletes/300')).toBe(false)
   })
 
@@ -218,7 +232,7 @@ describe('RosterTab', () => {
     mount()
     const user = userEvent.setup()
     const pool = screen.getByRole('region', { name: 'Unassigned' })
-    await user.click(within(pool).getByRole('button', { name: 'Age for Zoe Kid' }))
+    await user.click(within(pool).getByRole('button', { name: 'Age for Zoe Kid, 8' }))
     await user.type(within(pool).getByLabelText('Age for Zoe Kid'), '2')
     await user.tab()
     await vi.waitFor(() => expect(rowOf(pool, 'Zoe Kid')).toHaveAttribute('data-state', 'fault'))
@@ -256,6 +270,134 @@ describe('RosterTab', () => {
     fireEvent.pointerMove(window, { clientX: 3, clientY: 0 })
     fireEvent.pointerUp(window, { clientX: 3, clientY: 0 })
     expect(f.calls.some(c => c.url === '/api/events/7/athletes/assign')).toBe(false)
+  })
+
+  // An aria-label REPLACES the name computed from the contents, so labelling the column
+  // discarded the number. A screen reader user could not find the missing weights, which
+  // is the one task this screen exists for.
+  it('speaks the number in the cell name, with an explicit word for a missing one', () => {
+    fakeFetch(() => ({ json: [] }))
+    mount()
+    const pool = screen.getByRole('region', { name: 'Unassigned' })
+    expect(within(pool).getByRole('button', { name: 'Age for Noah Kid, missing' })).toBeInTheDocument()
+    expect(within(pool).getByRole('button', { name: 'Weight for Noah Kid, 60' })).toBeInTheDocument()
+    expect(within(pool).getByRole('button', { name: 'Age for Zoe Kid, 8' })).toBeInTheDocument()
+    // The column-only name is gone: nothing may be named without its value again.
+    expect(within(pool).queryByRole('button', { name: 'Age for Noah Kid' })).not.toBeInTheDocument()
+    expect(within(pool).queryByRole('button', { name: 'Weight for Zoe Kid' })).not.toBeInTheDocument()
+  })
+
+  it('refuses the row remove for a competitor already in a match and prints the reason on the row', () => {
+    fakeFetch(() => ({ json: [] }))
+    mount(placed)
+    const pool = screen.getByRole('region', { name: 'Unassigned' })
+    expect(within(pool).getByRole('button', { name: 'Remove Noah Kid, already in a match' })).toBeDisabled()
+    expect(within(pool).getByText('Grey · M · unrated · In a match')).toBeInTheDocument()
+    expect(within(pool).getByRole('button', { name: 'Remove Zoe Kid' })).toBeEnabled()
+  })
+
+  it('drops the blocked competitors from a bulk remove and prints how many it dropped', async () => {
+    const f = fakeFetch((_url, init) => (init?.method === 'DELETE' ? { status: 204 } : { json: [] }))
+    mount(placed)
+    const user = userEvent.setup()
+    const pool = screen.getByRole('region', { name: 'Unassigned' })
+    await user.click(within(pool).getByRole('checkbox', { name: 'Select Noah Kid' }))
+    await user.click(within(pool).getByRole('checkbox', { name: 'Select Zoe Kid' }))
+    const bar = screen.getByRole('group', { name: 'Selection' })
+    expect(bar).toHaveTextContent('1 already in a match')
+    await user.click(within(bar).getByRole('button', { name: 'Remove' }))
+    const dialog = await screen.findByRole('dialog')
+    // Noah never entered the set, so the dialog counts one and the loop cannot stall on him.
+    expect(within(dialog).getByText('Remove Zoe Kid?')).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
+    await vi.waitFor(() => {
+      expect(f.calls.filter(c => c.init?.method === 'DELETE').map(c => c.url)).toEqual(['/api/athletes/400'])
+    })
+  })
+
+  it('refuses a bulk remove outright when every selected competitor is in a match', async () => {
+    fakeFetch(() => ({ json: [] }))
+    mount(placed)
+    const user = userEvent.setup()
+    const pool = screen.getByRole('region', { name: 'Unassigned' })
+    await user.click(within(pool).getByRole('checkbox', { name: 'Select Noah Kid' }))
+    const bar = screen.getByRole('group', { name: 'Selection' })
+    expect(within(bar).getByRole('button', { name: 'Remove' })).toBeDisabled()
+  })
+
+  it('names the competitor a bulk remove stopped on and keeps the successes out of the retry', async () => {
+    const f = fakeFetch((url, init) => {
+      if (init?.method !== 'DELETE') return { json: [] }
+      if (url === '/api/athletes/400') {
+        return { status: 409, json: { error: { code: 'match_state', message: 'athlete is in a match; delete the match first' } } }
+      }
+      return { status: 204 }
+    })
+    mount()
+    const user = userEvent.setup()
+    const pool = screen.getByRole('region', { name: 'Unassigned' })
+    await user.click(within(pool).getByRole('checkbox', { name: 'Select Noah Kid' }))
+    await user.click(within(pool).getByRole('checkbox', { name: 'Select Zoe Kid' }))
+    await user.click(screen.getByRole('button', { name: 'Remove' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('Remove 2 competitors?')).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
+    // The raw server message names no competitor, which on a bulk remove is the only
+    // fact the organizer needs.
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Zoe Kid was not removed. athlete is in a match')
+    expect(within(dialog).getByText('Remove Zoe Kid?')).toBeInTheDocument()
+    const before = f.calls.filter(c => c.init?.method === 'DELETE').length
+    await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
+    await vi.waitFor(() => expect(f.calls.filter(c => c.init?.method === 'DELETE').length).toBe(before + 1))
+    // The retry re-issues only the one that failed.
+    expect(f.calls.filter(c => c.url === '/api/athletes/300' && c.init?.method === 'DELETE')).toHaveLength(1)
+  })
+
+  it('announces the selection in one polite region that is present and empty from the first render', async () => {
+    fakeFetch(() => ({ json: [] }))
+    mount()
+    const regions = document.querySelectorAll('[aria-live="polite"]')
+    expect(regions).toHaveLength(1)
+    const region = regions[0]
+    expect(region.textContent).toBe('')
+    const user = userEvent.setup()
+    const pool = screen.getByRole('region', { name: 'Unassigned' })
+    await user.click(within(pool).getByRole('checkbox', { name: 'Select Noah Kid' }))
+    // The same node, so the announcement is a text change inside a standing region and
+    // not a region mounted on demand, which a screen reader would never read.
+    expect(region.textContent).toBe('1 competitor selected.')
+    await user.click(within(pool).getByRole('checkbox', { name: 'Select Zoe Kid' }))
+    expect(region.textContent).toBe('2 competitors selected.')
+    await user.click(screen.getByRole('button', { name: 'Clear' }))
+    expect(region.textContent).toBe('')
+  })
+
+  // jsdom applies no stylesheet, so the layer each element lands in is read from the
+  // utilities themselves. What makes this a real check rather than a string compare is
+  // that the two sides come from two different files: it fails if the shell's header
+  // drops to the subhead's level, or the subhead climbs to the header's.
+  it('pins the team subhead below the app header instead of over it', () => {
+    const level = (el: Element): number => {
+      const hit = /(?:^|\s)z-(\d+)(?:\s|$)/.exec(el.className)
+      return hit ? Number(hit[1]) : 0
+    }
+    fakeFetch(() => ({ json: [] }))
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <AdminShell title="Fall Duels"><RosterTab detail={detail} /></AdminShell>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    const header = document.querySelector('header')!
+    const subhead = screen.getByRole('region', { name: 'Unassigned' }).firstElementChild!
+    expect(subhead.className).toContain('sticky')
+    expect(level(subhead)).toBeGreaterThan(0)
+    expect(level(subhead)).toBeLessThan(level(header))
+    // And it clears the header rather than pinning to the same edge.
+    expect(subhead.className).not.toContain('top-0')
+    expect(subhead.className).toContain('top-[var(--app-header-h,57px)]')
   })
 
   it('shows the server validation error when adding a kid fails, without an unhandled rejection', async () => {

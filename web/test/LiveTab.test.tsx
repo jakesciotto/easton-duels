@@ -145,6 +145,31 @@ describe('LiveTab', () => {
     expect(within(one).getByText('Ivy Nolan vs Kai Brooks')).toBeInTheDocument()
   })
 
+  // Finding 1: an unbounded queue pushed the panel's own primary control (the one
+  // control the panel exists to hold) below the fold on a deep rack.
+  it('caps the queue at four pairs and states the count left off', async () => {
+    const deck = [
+      onDeckMatch(11, 'Ava Park', 'Noah Tran'),
+      onDeckMatch(12, 'Emma Cole', 'Ben Ortiz'),
+      onDeckMatch(13, 'Sofia Diaz', 'Jayden Ruiz'),
+      onDeckMatch(14, 'Maya Lopez', 'Liam Shaw'),
+      onDeckMatch(15, 'Ivy Nolan', 'Kai Brooks'),
+      onDeckMatch(16, 'Zoe Chen', 'Leo Park'),
+      onDeckMatch(17, 'Mia Cruz', 'Eli Wong'),
+    ]
+    const feed = snapshotFeed(oneMat({ onDeck: deck, bound: true }))
+    mount(url => feed.handle(url) ?? connectOnly(url))
+    const one = await panel(1)
+    // deck[0] (Ava vs Noah) is the NEXT pair itself; the six behind it are capped at four.
+    expect(within(one).getByText('Emma Cole vs Ben Ortiz')).toBeInTheDocument()
+    expect(within(one).getByText('Sofia Diaz vs Jayden Ruiz')).toBeInTheDocument()
+    expect(within(one).getByText('Maya Lopez vs Liam Shaw')).toBeInTheDocument()
+    expect(within(one).getByText('Ivy Nolan vs Kai Brooks')).toBeInTheDocument()
+    expect(within(one).queryByText('Zoe Chen vs Leo Park')).not.toBeInTheDocument()
+    expect(within(one).queryByText('Mia Cruz vs Eli Wong')).not.toBeInTheDocument()
+    expect(within(one).getByText('2 more matches queued')).toBeInTheDocument()
+  })
+
   it('repaints the panel and its control when the clock runs out', async () => {
     const feed = snapshotFeed(oneMat({ current: scored({ clock: expiredClock }), bound: true }))
     mount(url => feed.handle(url) ?? connectOnly(url))
@@ -328,5 +353,29 @@ describe('LiveTab', () => {
     expect(screen.queryByRole('region', { name: 'Mat 1' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'End match' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Pause updates' })).not.toBeInTheDocument()
+  })
+
+  // Finding 2: the head and each row were separate `auto`-track grid containers, so
+  // each sized its own columns from its own content -- the head's small labels versus
+  // a row's t7 Wins figure and t5 Points/Matches figures, three different `ch`
+  // contexts under one declared track. The literal-px fix must show up on both.
+  it('lands the final result head and rows on the same fixed track', async () => {
+    const feed = snapshotFeed(sampleSnapshot({
+      now: SERVER_NOW,
+      event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'done', matCount: 1 },
+      teams: [
+        { id: 1, name: 'Ridgeline', color: 'red', position: 0, wins: 7, points: 42 },
+        { id: 2, name: 'Lakeside', color: 'blue', position: 1, wins: 5, points: 31 },
+      ],
+      mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: false }],
+      matches: [settled],
+    }))
+    mount(url => feed.handle(url) ?? connectOnly(url), { ...detail, event: { ...detail.event, status: 'done' } })
+    const winsHead = (await screen.findByText('Wins')).parentElement as HTMLElement
+    const winsRow = screen.getByText('7').parentElement as HTMLElement
+    expect(winsHead.className).toMatch(/62\.4px/)
+    expect(winsRow.className).toMatch(/62\.4px/)
+    expect(winsHead.className).not.toMatch(/auto/)
+    expect(winsRow.className).not.toMatch(/auto/)
   })
 })

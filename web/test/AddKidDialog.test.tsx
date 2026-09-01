@@ -3,9 +3,19 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AddKidDialog } from '@/routes/event/AddKidDialog'
+import { CandidateRow } from '@/routes/event/CandidateRow'
 import { setAdminToken } from '@/lib/auth'
 import type { EventDetail, RosterCandidate } from '@/lib/types'
 import { fakeFetch } from './fakes'
+
+vi.mock('@/routes/event/CandidateRow', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/routes/event/CandidateRow')>()
+  // A shallow spy: CandidateRow has no hooks of its own, so wrapping the real function
+  // in a vi.fn() that still calls through preserves rendering while counting how many
+  // times each row was actually invoked -- which memo(CandidateRow) skips entirely for
+  // an unaffected row when its props are unchanged.
+  return { ...actual, CandidateRow: vi.fn(actual.CandidateRow) }
+})
 
 beforeEach(() => { localStorage.clear(); setAdminToken('tok') })
 afterEach(() => vi.unstubAllGlobals())
@@ -110,6 +120,33 @@ describe('AddKidDialog', () => {
     expect(await within(dialog).findByText(/No pool yet/)).toBeInTheDocument()
     await user.click(within(dialog).getByRole('button', { name: 'Sync from WellnessLiving' }))
     expect(onRefresh).toHaveBeenCalledTimes(1)
+  })
+
+  // 6.10: virtualized past 50 rows so a large WellnessLiving import does not mount
+  // hundreds of rows into a 320px well.
+  it('virtualizes the pool once it passes fifty rows', async () => {
+    const bigPool = Array.from({ length: 60 }, (_, i) => cand({ wlUid: `w${i}`, firstName: `F${i}`, lastName: `L${i}`, erp: 5 }))
+    fakeFetch(url => (url.endsWith('/candidates') ? { json: bigPool } : { json: {} }))
+    mount({ ...baseDetail, athletes: [], candidateCount: bigPool.length })
+    await screen.findByText('F0 L0')
+    const rows = screen.getAllByRole('checkbox').filter(cb => cb.getAttribute('aria-label')?.startsWith('Select'))
+    expect(rows.length).toBeLessThan(60)
+    expect(rows.length).toBeGreaterThan(0)
+  })
+
+  // Also flagged: a fresh `v => toggle(...)` closure per row per render defeated a
+  // shallow memo comparison, so every row re-rendered on every unrelated state change.
+  it('does not re-render an unaffected pool row when the pool gains unrelated rows', async () => {
+    fakeFetch(url => (url.endsWith('/candidates') ? { json: pool } : { json: {} }))
+    mount(baseDetail)
+    await screen.findByText('Zoe Martin')
+    const spy = vi.mocked(CandidateRow)
+    const rendersOf = (uid: string) => spy.mock.calls.filter(([props]) => props.candidate.wlUid === uid).length
+    const before = rendersOf('u1') // Zoe Martin, rated, already on screen
+    const user = userEvent.setup()
+    await user.click(screen.getByLabelText('Show unrated competitors'))
+    await screen.findByText('Eli Cruz')
+    expect(rendersOf('u1')).toBe(before)
   })
 
   it('still adds a manual competitor and shows a validation error', async () => {

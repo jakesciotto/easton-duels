@@ -71,6 +71,11 @@ function mountStreaming(snapshot: Snapshot, d: EventDetail = detail) {
 const pendingField = () => screen.getByRole('region', { name: 'Pending matches' })
 const pendingRows = () => within(pendingField()).getAllByRole('row').slice(1)
 
+// Every per-row control is named by its row, so the fixture's two queue rows name
+// themselves here once rather than in eight places.
+const M1 = 'match 1, Mateo Rivera versus Olivia Kim'
+const M2 = 'match 2, Ava Park versus Noah Tran'
+
 describe('MatchesTab', () => {
   it('splits the queue from the history, keeps the why chip, and generates after confirming', async () => {
     const f = mount(detail, () => ({ json: { created: 2, unpairedA: [], unpairedB: [202] } }))
@@ -109,7 +114,7 @@ describe('MatchesTab', () => {
     expect(within(dialog).getByText('2 pending matches will be replaced.')).toBeInTheDocument()
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
 
-    await user.click(within(pendingRows()[0]).getByRole('button', { name: 'Move down' }))
+    await user.click(within(pendingRows()[0]).getByRole('button', { name: `Move ${M1} down` }))
     await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/events/7/matches/reorder')).toBe(true))
     await user.click(screen.getByRole('button', { name: 'Regenerate' }))
     dialog = await screen.findByRole('dialog')
@@ -161,7 +166,7 @@ describe('MatchesTab', () => {
     await user.click(await screen.findByRole('button', { name: 'Kai Wong' }))
     await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/matches/1')).toBe(true))
     expect(f.body(f.calls.findIndex(c => c.url === '/api/matches/1'))).toEqual({ athleteBId: 202 })
-    await user.click(within(pendingRows()[0]).getByRole('button', { name: 'Move down' }))
+    await user.click(within(pendingRows()[0]).getByRole('button', { name: `Move ${M1} down` }))
     await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/events/7/matches/reorder')).toBe(true))
     // Match 3 (done) keeps its slot at the end; only the two pending ids swap.
     expect(f.body(f.calls.findIndex(c => c.url === '/api/events/7/matches/reorder'))).toEqual({ ids: [2, 1, 3] })
@@ -170,8 +175,8 @@ describe('MatchesTab', () => {
   it('disables Move down on the last pending row', () => {
     mount()
     const rows = pendingRows()
-    expect(within(rows[1]).getByRole('button', { name: 'Move down' })).toBeDisabled()
-    expect(within(rows[1]).getByRole('button', { name: 'Move up' })).toBeEnabled()
+    expect(within(rows[1]).getByRole('button', { name: `Move ${M2} down` })).toBeDisabled()
+    expect(within(rows[1]).getByRole('button', { name: `Move ${M2} up` })).toBeEnabled()
   })
 
   it('clears a stale mutation error once a different action succeeds', async () => {
@@ -180,9 +185,9 @@ describe('MatchesTab', () => {
       return { json: {} }
     })
     const user = userEvent.setup()
-    await user.click(within(pendingRows()[0]).getByRole('button', { name: 'Move down' }))
+    await user.click(within(pendingRows()[0]).getByRole('button', { name: `Move ${M1} down` }))
     expect(await screen.findByRole('alert')).toHaveTextContent('ids must be every match of the event exactly once')
-    await user.click(within(pendingRows()[1]).getByRole('button', { name: 'Delete match' }))
+    await user.click(within(pendingRows()[1]).getByRole('button', { name: `Delete ${M2}` }))
     await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/matches/2' && c.init?.method === 'DELETE')).toBe(true))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
@@ -215,7 +220,7 @@ describe('MatchesTab', () => {
     const strip = await screen.findByRole('region', { name: 'Live now' })
     expect(within(strip).getByText('Mateo Rivera')).toBeInTheDocument()
     expect(within(strip).getByText('Live on mat 1')).toBeInTheDocument()
-    expect(within(strip).getByRole('button', { name: 'Delete match' })).toBeDisabled()
+    expect(within(strip).getByRole('button', { name: `Delete ${M1}` })).toBeDisabled()
 
     // The live row has left the working queue, and the queue says which match is next.
     await vi.waitFor(() => expect(pendingRows()).toHaveLength(1))
@@ -240,7 +245,7 @@ describe('MatchesTab', () => {
   it('snaps an out of range length back to the saved value and sends nothing', async () => {
     const f = mount()
     const user = userEvent.setup()
-    const length = within(pendingRows()[0]).getByLabelText('Length')
+    const length = within(pendingRows()[0]).getByLabelText(`Length for ${M1}`)
     await user.clear(length)
     await user.type(length, '5')
     await user.tab()
@@ -253,7 +258,7 @@ describe('MatchesTab', () => {
   it('marks the tab as engaged while a row is being dragged', async () => {
     mount()
     expect(document.querySelector('[data-dragging="true"]')).toBeNull()
-    const grip = within(pendingRows()[0]).getByRole('button', { name: 'Drag to reorder' })
+    const grip = within(pendingRows()[0]).getByRole('button', { name: `Reorder ${M1}` })
     // jsdom has no PointerEvent, so the polyfill is a MouseEvent and drops isPrimary,
     // which is the first thing dnd-kit's pointer sensor checks.
     const down = createEvent.pointerDown(grip, { button: 0, clientX: 0, clientY: 0 })
@@ -291,5 +296,82 @@ describe('MatchesTab', () => {
     expect(await screen.findByRole('option', { name: 'Liam Cruz' })).toBeInTheDocument()
     await user.click(screen.getByRole('option', { name: 'Mateo Rivera (double-booked)' }))
     expect(within(dialog).getByText('Mateo Rivera is already in a pending match')).toBeInTheDocument()
+  })
+
+  // The elements list of a fourteen match queue was fourteen buttons called "Delete
+  // match" and fourteen comboboxes called "Mat", in an order carrying no row identity,
+  // so activating any one destroyed a match the user could not identify beforehand.
+  it('names every per-row control by its own row, so no two rows share a control name', () => {
+    mount()
+    const rows = pendingRows()
+    for (const [row, label] of [[rows[0], M1], [rows[1], M2]] as const) {
+      expect(within(row).getByRole('button', { name: `Reorder ${label}` })).toBeInTheDocument()
+      expect(within(row).getByRole('button', { name: `Move ${label} up` })).toBeInTheDocument()
+      expect(within(row).getByRole('button', { name: `Move ${label} down` })).toBeInTheDocument()
+      expect(within(row).getByRole('button', { name: `Delete ${label}` })).toBeInTheDocument()
+      expect(within(row).getByLabelText(`Mat for ${label}`)).toBeInTheDocument()
+      expect(within(row).getByLabelText(`Ruleset for ${label}`)).toBeInTheDocument()
+      expect(within(row).getByLabelText(`Length for ${label}`)).toBeInTheDocument()
+    }
+    // The row-blind names are gone, and every name on the screen is unique.
+    for (const blind of ['Delete match', 'Mat', 'Ruleset', 'Length', 'Move up', 'Move down', 'Drag to reorder']) {
+      expect(screen.queryAllByLabelText(blind)).toHaveLength(0)
+    }
+    const labelled = Array.from(document.querySelectorAll('[aria-label]'))
+      .map(el => el.getAttribute('aria-label')!)
+      .filter(l => /^(Reorder|Move|Delete|Mat for|Ruleset for|Length for) match /.test(l))
+    expect(labelled).toHaveLength(14)
+    expect(new Set(labelled).size).toBe(labelled.length)
+  })
+
+  it('names the live strip delete by its match too, so several live mats do not collide', async () => {
+    const live = view(1, { status: 'live' })
+    mountStreaming(sampleSnapshot({
+      matches: [live, view(2), view(3, { status: 'done', result: { winnerAthleteId: 100, winType: 'points' } })],
+      mats: [{ id: 1, number: 1, current: live, onDeck: [], bound: true }],
+    }))
+    const strip = await screen.findByRole('region', { name: 'Live now' })
+    expect(within(strip).getByRole('button', { name: `Delete ${M1}` })).toBeInTheDocument()
+    expect(within(strip).queryByRole('button', { name: 'Delete match' })).not.toBeInTheDocument()
+  })
+
+  // React writes a defaultValue once at mount and never again, so a length changed by a
+  // second organizer or by a Regenerate never reached this cell and the operator set a
+  // mat clock from a stale number.
+  it('follows the served length when it changes after mount', () => {
+    fakeFetch((url: string) => noStream(url) ?? { json: {} })
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const { rerender } = render(<QueryClientProvider client={qc}><MatchesTab detail={detail} /></QueryClientProvider>)
+    const length = () => within(pendingRows()[0]).getByLabelText(`Length for ${M1}`)
+    expect(length()).toHaveValue('300')
+
+    const changed: EventDetail = { ...detail, matches: detail.matches.map(m => (m.id === 1 ? { ...m, lengthSec: 600 } : m)) }
+    rerender(<QueryClientProvider client={qc}><MatchesTab detail={changed} /></QueryClientProvider>)
+    expect(length()).toHaveValue('600')
+  })
+
+  it('drops a refused length edit instead of leaving the rejected value looking saved', async () => {
+    mount(detail, (url, init) => (url === '/api/matches/1' && init?.method === 'PATCH'
+      ? { status: 422, json: { error: { code: 'validation', message: 'lengthSec must be between 30 and 1800' } } }
+      : { json: {} }))
+    const user = userEvent.setup()
+    const length = within(pendingRows()[0]).getByLabelText(`Length for ${M1}`)
+    await user.clear(length)
+    await user.type(length, '600')
+    await user.tab()
+    expect(await screen.findByRole('alert')).toHaveTextContent('lengthSec must be between 30 and 1800')
+    await vi.waitFor(() => expect(length).toHaveValue('300'))
+  })
+
+  // 2.1: --gray-9 is decoration only and never carries a word a person reads. jsdom
+  // applies no stylesheet, so the token is read off the element that carries the word.
+  it('spends --gray-10, not the decoration grey, on the words between two competitors', async () => {
+    mount()
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Show' }))
+    for (const word of ['vs', 'beat']) {
+      const el = screen.getByText(word)
+      expect(el.className, word).toContain('text-gray-10')
+      expect(el.className, word).not.toContain('text-gray-9')
+    }
   })
 })

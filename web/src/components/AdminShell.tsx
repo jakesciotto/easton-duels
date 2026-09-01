@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { clearAdminToken } from '@/lib/auth'
 import { Wordmark } from '@/components/Wordmark'
@@ -7,25 +7,36 @@ import { useNow } from '@/lib/useClock'
 import { ageSeconds, formatAge, headerFreshnessLevel } from '@/lib/freshness'
 import { cn } from '@/lib/utils'
 
-// What the shell needs to drive the freshness readout (6.4): the same lastSuccessAt a
-// caller's useSnapshot() already exposes, and the poll interval it is actually using --
+// What the shell needs to drive the freshness readout (6.4): the same lastSuccessAt the
+// event's one useSnapshot() stream exposes, and the poll interval it is actually using --
 // pass pollIntervalForSnapshot(snapshot) unless the caller pinned an explicit one.
 //
-// `freshness` is optional and, as of this writing, no caller passes it: EventPage (6.4's
-// own shell) reads its event through useEventDetail, a one-shot react-query fetch with no
-// lastSuccessAt, while the live snapshot 6.4 wants to report on is polled separately inside
-// event/LiveTab. Wiring that through means lifting the poll out of LiveTab and into
-// EventPage, which is out of this file's scope. Until that lands, the honest behaviour is
-// the one below: no freshness prop means no status region, never a region claiming
-// freshness it does not have. Do not default this to a fake "Live" state.
+// `freshness` stays optional, and absence still means no status region at all rather than
+// a region claiming freshness it does not have. Do not default this to a fake "Live" state.
+//
+// `paused` is the other half of that honesty (4.4 / WCAG 2.2.2). The poll keeps running
+// while the operator has stopped the picture, so a header driven by lastSuccessAt alone
+// would read "Live 1s" over a screen that has not moved since they pressed the button.
 export interface ShellFreshness {
   lastSuccessAt: number | null
   pollIntervalMs: number
+  paused?: boolean
+  waiting?: number
 }
 
 function FreshnessSlot({ freshness }: { freshness: ShellFreshness }) {
-  const now = useNow(freshness.lastSuccessAt !== null, 1000)
+  const now = useNow(freshness.lastSuccessAt !== null && !freshness.paused, 1000)
   const ageSec = ageSeconds(freshness.lastSuccessAt, now)
+
+  if (freshness.paused) {
+    const waiting = freshness.waiting ?? 0
+    return (
+      <span aria-live="off" className="ml-auto flex shrink-0 items-center gap-2 t2 text-attend">
+        <span aria-hidden className="size-1.5 rounded-full bg-attend" />
+        Paused, <span className="fig fig-2">{waiting}</span> {waiting === 1 ? 'update' : 'updates'} waiting
+      </span>
+    )
+  }
 
   if (ageSec === null) {
     return (
@@ -50,6 +61,27 @@ function FreshnessSlot({ freshness }: { freshness: ShellFreshness }) {
   )
 }
 
+/**
+ * The header wraps below 640px, so its height is not a constant any other sticky can
+ * assume. It publishes its measured height instead, and an in-page sticky offsets by
+ * that. A hardcoded offset and a wrapping header disagree at exactly the width where
+ * the subhead would cover the wordmark.
+ */
+function useHeaderHeight() {
+  const ref = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const publish = () => document.documentElement.style.setProperty('--app-header-h', `${el.offsetHeight}px`)
+    publish()
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(publish)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  return ref
+}
+
 export function AdminShell({ title, status, actions, meta, freshness, footer, children }: {
   title: string
   status?: ReactNode
@@ -63,10 +95,16 @@ export function AdminShell({ title, status, actions, meta, freshness, footer, ch
   footer?: ReactNode
   children: ReactNode
 }) {
+  const headerRef = useHeaderHeight()
   return (
     <div className="flex min-h-dvh flex-col">
-      <header className="sticky top-0 z-10 border-b border-gray-7 bg-background py-3">
-        <div className="mx-auto flex max-w-6xl items-center gap-4 px-6">
+      {/* z-20 keeps the app header above every in-page sticky. A subhead that pins at
+          the same level wins on document order and paints over the wordmark. */}
+      <header ref={headerRef} className="sticky top-0 z-20 border-b border-gray-7 bg-background py-3">
+        {/* 6.18: below 640px the shell is one column with 16px gutters and must not
+            introduce horizontal scroll, so the band wraps rather than pushing the page
+            sideways. At 640px and above every item fits on one line and nothing wraps. */}
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-2 px-4 sm:px-6">
           <Link to="/admin" className="flex items-center gap-2.5 rounded-md outline-none focus-visible:shadow-focus">
             <img src="/easton-logo.png" alt="Easton Training Center" width={24} height={24} className="size-6 shrink-0 rounded-full" />
             <Wordmark />
@@ -82,14 +120,14 @@ export function AdminShell({ title, status, actions, meta, freshness, footer, ch
         </div>
       </header>
       <main className="mx-auto w-full max-w-6xl flex-1 t3">
-        <div className="grid gap-2 px-6 pt-6 pb-4">
+        <div className="grid gap-2 px-4 pt-6 pb-4 sm:px-6">
           <h1 className="truncate t6 text-gray-12">{title}</h1>
           {meta}
         </div>
         {children}
       </main>
       {footer && (
-        <footer className="sticky bottom-0 z-10 border-t border-gray-7 bg-gray-1 px-6 py-2 t2 text-gray-10">
+        <footer className="sticky bottom-0 z-10 border-t border-gray-7 bg-gray-1 px-4 py-2 t2 text-gray-10 sm:px-6">
           <div className="mx-auto max-w-6xl">{footer}</div>
         </footer>
       )}

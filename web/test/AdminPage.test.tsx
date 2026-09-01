@@ -35,6 +35,32 @@ describe('AdminPage', () => {
     expect(router.state.location.pathname).toBe('/events/7')
   })
 
+  // Finding 5: `ch` (and so var(--col-num-s)) resolves against each element's own
+  // font-size. A head left on the sans face at t1 and a row inheriting the shell's
+  // ambient t3 resolved the identical declared track to two different pixel widths.
+  it('pins the event list head and rows to the same mono step', async () => {
+    fakeFetch(url => url === '/api/events' ? { json: [summary] } : { json: { event: summary, teams: summary.teams, athletes: [], rulesets: [], mats: [], matches: [] } })
+    mount()
+    const dateHead = (await screen.findByText('Date')).parentElement as HTMLElement
+    const dateRow = screen.getByText('2026-10-03').parentElement as HTMLElement
+    expect(dateHead.className).toMatch(/font-mono/)
+    expect(dateHead.className).toMatch(/(^|\s)t2(\s|$)/)
+    expect(dateRow.className).toMatch(/font-mono/)
+    expect(dateRow.className).toMatch(/(^|\s)t2(\s|$)/)
+  })
+
+  // Finding 6 / 7.10: a sentence with no control is a dead end. The empty state's
+  // action has to actually open the create flow, not sit there as plain grey text.
+  it('opens the new event dialog from the empty state action', async () => {
+    fakeFetch(url => url === '/api/events' ? { json: [] } : { json: {} })
+    mount()
+    const user = userEvent.setup()
+    expect(await screen.findByText('No events yet.')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Create the first one' }))
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByLabelText('Event name')).toBeInTheDocument()
+  })
+
   it('creates an event from the dialog and navigates to it', async () => {
     const f = fakeFetch((url, init) => {
       if (url === '/api/events' && init?.method === 'POST') return { status: 201, json: { event: { ...summary, id: 9 }, teams: summary.teams, athletes: [], rulesets: [], mats: [], matches: [] } }

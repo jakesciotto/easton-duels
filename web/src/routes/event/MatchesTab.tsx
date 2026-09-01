@@ -13,8 +13,8 @@ import { cn } from '@/lib/utils'
 import { KidPickerDialog } from './KidPickerDialog'
 import { AddMatchDialog } from './AddMatchDialog'
 import {
-  endedLabel, liveReason, matchLines, readyNote, regenerateBlockedReason, regenerateWarning, skipNote,
-  type MatchLine,
+  endedLabel, liveReason, matchLabel, matchLines, readyNote, regenerateBlockedReason, regenerateWarning,
+  skipNote, type MatchLine,
 } from './matches-view'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -110,7 +110,7 @@ function LiveStrip({ line, teamA, teamB, nameA, nameB, serverNow, lastSuccessAt,
           <TeamPlate color={teamA.color} name={teamA.name} size="inline" showName={false} />
           <span className="truncate">{nameA}</span>
         </span>
-        <span className="t1 text-gray-9 uppercase">vs</span>
+        <span className="t1 text-gray-10 uppercase">vs</span>
         <span className="flex min-w-0 items-center gap-2" onMouseEnter={() => onHover(line.row.athleteBId)} onMouseLeave={() => onHover(null)}>
           <TeamPlate color={teamB.color} name={teamB.name} size="inline" showName={false} />
           <span className="truncate">{nameB}</span>
@@ -118,9 +118,58 @@ function LiveStrip({ line, teamA, teamB, nameA, nameB, serverNow, lastSuccessAt,
       </div>
       <div className="flex items-center gap-4">
         <span className="t2 text-gray-10">{reason}</span>
-        <Button size="sm" variant="destructive" aria-label="Delete match" title={reason} disabled>Delete</Button>
+        <Button
+          size="sm" variant="destructive" title={reason} disabled
+          aria-label={`Delete ${matchLabel(line.position, nameA, nameB)}`}
+        >
+          Delete
+        </Button>
       </div>
     </div>
+  )
+}
+
+/**
+ * Controlled, because React writes a `defaultValue` once at mount and never again: a
+ * length another operator or a Regenerate changed never reached this cell, and the
+ * operator set a mat clock from a number the model had already replaced. The draft is
+ * dropped whenever the served value moves and whenever a write is refused, so a value
+ * on screen is either the served one or one the operator is still typing.
+ */
+function LengthCell({ label, value, onSave }: {
+  label: string
+  value: number
+  onSave: (v: number, onRefused: () => void) => void
+}) {
+  const [draft, setDraft] = useState<string | null>(null)
+  const [served, setServed] = useState(value)
+  if (served !== value) {
+    setServed(value)
+    setDraft(null)
+  }
+  const revert = () => setDraft(null)
+
+  const commit = () => {
+    if (draft === null) return
+    const v = Number(draft)
+    if (!Number.isInteger(v) || v < 30 || v > 1800 || v === value) {
+      // A refused value must not sit on screen looking saved.
+      revert()
+      return
+    }
+    onSave(v, revert)
+  }
+
+  return (
+    <input
+      aria-label={label}
+      inputMode="numeric"
+      autoComplete="off"
+      value={draft ?? String(value)}
+      onChange={e => setDraft(e.target.value)}
+      onBlur={commit}
+      className="fig fig-4 h-8 w-full rounded-md bg-transparent px-3 text-right outline-none transition-colors duration-150 ease-standard hover:bg-gray-3 focus-visible:bg-gray-3 focus-visible:shadow-focus"
+    />
   )
 }
 
@@ -136,7 +185,7 @@ function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, d
   highlight: boolean
   onHover: Hover
   onPick: (p: Pick) => void
-  onPatch: (id: number, body: Partial<MatchRow>) => void
+  onPatch: (id: number, body: Partial<MatchRow>, onError?: () => void) => void
   onDelete: (id: number) => void
   onMove: (index: number, dir: -1 | 1) => void
 }) {
@@ -145,6 +194,10 @@ function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, d
   const [teamA, teamB] = teams
   const attend = doubleBooked || line.state === 'skipped'
   const ready = line.state === 'ready' ? readyNote(line) : null
+  const nameA = name(m.athleteAId, teamA)
+  const nameB = name(m.athleteBId, teamB)
+  // Every control below is otherwise named the same on all fourteen rows.
+  const row = matchLabel(line.position, nameA, nameB)
 
   return (
     <TableRow
@@ -156,7 +209,7 @@ function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, d
     >
       <TableCell className="w-[var(--col-act)] pr-0">
         <Button
-          type="button" variant="ghost" size="icon" aria-label="Drag to reorder"
+          type="button" variant="ghost" size="icon" aria-label={`Reorder ${row}`}
           className="cursor-grab" {...attributes} {...listeners}
         >
           <GripVerticalIcon />
@@ -174,7 +227,7 @@ function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, d
           onValueChange={v => { const next = String(v ?? ''); onPatch(m.id, { matId: next ? Number(next) : null }) }}
           items={matItems}
         >
-          <SelectTrigger size="sm" aria-label="Mat"><SelectValue /></SelectTrigger>
+          <SelectTrigger size="sm" aria-label={`Mat for ${row}`}><SelectValue /></SelectTrigger>
           <SelectContent>
             {matItems.map(i => <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>)}
           </SelectContent>
@@ -183,12 +236,12 @@ function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, d
       <TableCell className="min-w-0">
         <div className="grid min-w-0">
           <CompetitorLine
-            team={teamA} name={name(m.athleteAId, teamA)}
+            team={teamA} name={nameA}
             onHover={on => onHover(on ? m.athleteAId : null)}
             onPick={() => onPick({ matchId: m.id, side: 'a', teamId: teamA.id })}
           />
           <CompetitorLine
-            team={teamB} name={name(m.athleteBId, teamB)}
+            team={teamB} name={nameB}
             onHover={on => onHover(on ? m.athleteBId : null)}
             onPick={() => onPick({ matchId: m.id, side: 'b', teamId: teamB.id })}
           />
@@ -214,21 +267,10 @@ function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, d
         Never type="number" (7.8): the spinner steals the track and the scroll wheel.
       */}
       <TableCell numeric className="w-[var(--col-num-l)] p-0">
-        <input
-          aria-label="Length"
-          inputMode="numeric"
-          autoComplete="off"
-          defaultValue={m.lengthSec}
-          onBlur={e => {
-            const v = Number(e.target.value)
-            if (Number.isInteger(v) && v >= 30 && v <= 1800) {
-              if (v !== m.lengthSec) onPatch(m.id, { lengthSec: v })
-              return
-            }
-            // A refused value must not sit on screen looking saved.
-            e.target.value = String(m.lengthSec)
-          }}
-          className="fig fig-4 h-8 w-full rounded-md bg-transparent px-3 text-right outline-none transition-colors duration-150 ease-standard hover:bg-gray-3 focus-visible:bg-gray-3 focus-visible:shadow-focus"
+        <LengthCell
+          label={`Length for ${row}`}
+          value={m.lengthSec}
+          onSave={(lengthSec, onRefused) => onPatch(m.id, { lengthSec }, onRefused)}
         />
       </TableCell>
       <TableCell className="w-[168px]">
@@ -237,7 +279,7 @@ function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, d
           onValueChange={v => { const next = String(v ?? ''); if (next) onPatch(m.id, { rulesetId: Number(next) }) }}
           items={rulesetItems}
         >
-          <SelectTrigger size="sm" aria-label="Ruleset"><SelectValue /></SelectTrigger>
+          <SelectTrigger size="sm" aria-label={`Ruleset for ${row}`}><SelectValue /></SelectTrigger>
           <SelectContent>
             {rulesetItems.map(i => <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>)}
           </SelectContent>
@@ -245,10 +287,10 @@ function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, d
       </TableCell>
       <TableCell className="w-px whitespace-nowrap">
         <div className="flex items-center gap-2">
-          <Button size="sm" variant="ghost" aria-label="Move up" disabled={index === 0} onClick={() => onMove(index, -1)}>Up</Button>
-          <Button size="sm" variant="ghost" aria-label="Move down" disabled={index === count - 1} onClick={() => onMove(index, 1)}>Down</Button>
+          <Button size="sm" variant="ghost" aria-label={`Move ${row} up`} disabled={index === 0} onClick={() => onMove(index, -1)}>Up</Button>
+          <Button size="sm" variant="ghost" aria-label={`Move ${row} down`} disabled={index === count - 1} onClick={() => onMove(index, 1)}>Down</Button>
           {/* 7.7: a destructive control never sits flush against the row's most repeated one. */}
-          <Button size="sm" variant="destructive" className="ml-4" aria-label="Delete match" onClick={() => onDelete(m.id)}>Delete</Button>
+          <Button size="sm" variant="destructive" className="ml-4" aria-label={`Delete ${row}`} onClick={() => onDelete(m.id)}>Delete</Button>
         </div>
       </TableCell>
     </TableRow>
@@ -283,7 +325,8 @@ function SettledRow({ line, teams, name, highlight, onHover }: {
             <TeamPlate color={winner.team.color} name={winner.team.name} size="inline" showName={false} />
             <span className="truncate t3 font-medium text-white">{name(winner.id, winner.team)}</span>
           </span>
-          <span className="shrink-0 t2 text-gray-9">beat</span>
+          {/* 2.1: --gray-9 is decoration only. This is the verb of the row's sentence. */}
+          <span className="shrink-0 t2 text-gray-10">beat</span>
           <span
             className="flex min-w-0 items-center gap-2"
             onMouseEnter={() => onHover(loser.id)}
@@ -404,9 +447,11 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
     patch.mutate({ id: pick.matchId, body: pick.side === 'a' ? { athleteAId: athleteId } : { athleteBId: athleteId } })
     setPick(null)
   }
-  const onPatchAction = (id: number, body: Partial<MatchRow>) => {
+  // onError is how a cell that holds a draft learns its write was refused, so the
+  // rejected value never stays on screen looking saved.
+  const onPatchAction = (id: number, body: Partial<MatchRow>, onError?: () => void) => {
     resetExcept('patch')
-    patch.mutate({ id, body })
+    patch.mutate({ id, body }, onError ? { onError } : undefined)
   }
   const onDeleteAction = (id: number) => {
     resetExcept('del')
@@ -500,7 +545,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
           <span className="t2 text-gray-10"><span className="fig">{pendingCount}</span> to run</span>
           <span className="ml-auto flex items-center gap-3">
             <TeamPlate color={teamA.color} name={teamA.name} />
-            <span className="t1 text-gray-9 uppercase">vs</span>
+            <span className="t1 text-gray-10 uppercase">vs</span>
             <TeamPlate color={teamB.color} name={teamB.name} />
           </span>
         </div>

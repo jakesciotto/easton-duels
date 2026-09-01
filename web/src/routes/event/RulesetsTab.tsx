@@ -6,7 +6,7 @@ import type { EventDetail, RulesetRow } from '@/lib/types'
 import { RulesetDialog } from './RulesetDialog'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { FieldSet, FieldHead, FieldRow } from '@/components/ui/field-set'
+import { FieldSet, FieldRow } from '@/components/ui/field-set'
 
 const ROW = 'flex h-8 items-center gap-3'
 
@@ -28,21 +28,40 @@ function ActionGridPreview({ actions, terminals }: { actions: RulesetAction[]; t
   )
 }
 
-function RulesetCard({ ruleset, used, locked, onEdit, onDelete }: {
+function RulesetCard({ ruleset, matchCount, onlyRuleset, onEdit, onDelete }: {
   ruleset: RulesetRow
-  used: boolean
-  locked: boolean
+  matchCount: number
+  onlyRuleset: boolean
   onEdit: () => void
   onDelete: () => void
 }) {
+  // Refuse rather than ask, which means the refusal is legible. A grey Delete with the
+  // reason nowhere on the card is a control the organizer clicks until they conclude the
+  // app is broken.
+  const blocked = matchCount > 0
+    ? `Used by ${matchCount} ${matchCount === 1 ? 'match' : 'matches'}`
+    : onlyRuleset ? 'The event needs one ruleset' : null
+  const blockedId = `rs-${ruleset.id}-blocked`
   return (
     <FieldSet data-frame="card">
-      <FieldHead className="flex h-8 items-center gap-2">
-        <span className="min-w-0 flex-1 truncate t3 font-medium text-gray-12">{ruleset.name}</span>
-        <span className="fig text-gray-10">{formatClock(ruleset.defaultLengthSec * 1000)}</span>
+      {/* 6.7 asks for a titled ledger field, so the title row borrows the head's height and
+          recessed ground but not the column head treatment: uppercase inherits, and neither
+          a ruleset's own name nor its two controls are column labels. */}
+      <div className="flex h-8 items-center gap-2 bg-gray-1 px-3">
+        <span title={ruleset.name} className="min-w-0 flex-1 truncate t3 font-medium text-gray-12">{ruleset.name}</span>
+        <span className="shrink-0 fig text-gray-10">{formatClock(ruleset.defaultLengthSec * 1000)}</span>
         <Button size="sm" variant="ghost" onClick={onEdit}>Edit</Button>
-        <Button size="sm" variant="destructive" onClick={onDelete} disabled={used || locked}>Delete</Button>
-      </FieldHead>
+        {blocked && <span id={blockedId} className="shrink-0 t2 text-gray-10">{blocked}</span>}
+        <Button
+          size="sm"
+          variant="destructive"
+          onClick={onDelete}
+          aria-describedby={blocked ? blockedId : undefined}
+          disabled={blocked !== null}
+        >
+          Delete
+        </Button>
+      </div>
       {/* 6.7: action points read as a column of values on a fixed numeric track, not badges --
           the shape an organizer scans to find the one value that is wrong. */}
       {ruleset.actions.map(a => (
@@ -66,7 +85,8 @@ export function RulesetsTab({ detail }: { detail: EventDetail }) {
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<RulesetRow | undefined>(undefined)
   const remove = useAdminMutation(detail.event.id, (id: number) => adminApi(`/api/rulesets/${id}`, { method: 'DELETE' }))
-  const used = new Set(detail.matches.map(m => m.rulesetId))
+  const matchCounts = new Map<number, number>()
+  for (const m of detail.matches) matchCounts.set(m.rulesetId, (matchCounts.get(m.rulesetId) ?? 0) + 1)
 
   return (
     <div className="grid gap-6">
@@ -84,8 +104,8 @@ export function RulesetsTab({ detail }: { detail: EventDetail }) {
           <RulesetCard
             key={r.id}
             ruleset={r}
-            used={used.has(r.id)}
-            locked={detail.rulesets.length === 1}
+            matchCount={matchCounts.get(r.id) ?? 0}
+            onlyRuleset={detail.rulesets.length === 1}
             onEdit={() => { setEditing(r); setOpen(true) }}
             onDelete={() => remove.mutate(r.id)}
           />

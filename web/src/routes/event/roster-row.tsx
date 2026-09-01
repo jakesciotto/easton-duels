@@ -77,7 +77,11 @@ function EditableCell({ label, value, source, onSave }: {
     <button
       ref={button}
       type="button"
-      aria-label={label}
+      // An aria-label REPLACES the name computed from the contents, so labelling the
+      // column alone discards the one thing the cell exists to say. The value, and an
+      // explicit word for the missing case, belong in the name: finding the
+      // competitors with no weight is the task this screen is for.
+      aria-label={`${label}, ${value === null ? 'missing' : value}`}
       title={estimated ? 'Estimated from the leaderboard until it is typed over' : undefined}
       onClick={() => setDraft(value === null ? '' : String(value))}
       onKeyDown={e => {
@@ -98,10 +102,12 @@ function EditableCell({ label, value, source, onSave }: {
   )
 }
 
-export function RosterRow({ kid, selected, fault, onSelect, onPatch, onRemove, onDragStart }: {
+export function RosterRow({ kid, selected, fault, inMatch, onSelect, onPatch, onRemove, onDragStart }: {
   kid: AthleteRow
   selected: boolean
   fault: boolean
+  /** The server refuses a delete for anyone sitting in a match, so the row refuses first. */
+  inMatch: boolean
   onSelect: (v: boolean, range: boolean) => void
   onPatch: (body: Partial<AthleteRow>) => void
   onRemove: () => void
@@ -110,7 +116,14 @@ export function RosterRow({ kid, selected, fault, onSelect, onPatch, onRemove, o
   const name = athleteName(kid)
   const range = useRef(false)
   const state = fault ? 'fault' : kid.age === null || kid.weightLbs === null ? 'attend' : 'ok'
-  const meta = [beltLabel(kid.belt), kid.gender, kid.erp === null ? 'unrated' : `ERP ${kid.erp.toFixed(1)}`]
+  // The refusal is printed on the row's own meta line, because a disabled control
+  // takes no pointer events and so can never show a title.
+  const meta = [
+    beltLabel(kid.belt),
+    kid.gender,
+    kid.erp === null ? 'unrated' : `ERP ${kid.erp.toFixed(1)}`,
+    inMatch ? 'In a match' : null,
+  ]
     .filter(Boolean)
     .join(' · ')
 
@@ -160,7 +173,8 @@ export function RosterRow({ kid, selected, fault, onSelect, onPatch, onRemove, o
       <Button
         variant="ghost"
         size="icon"
-        aria-label={`Remove ${name}`}
+        aria-label={inMatch ? `Remove ${name}, already in a match` : `Remove ${name}`}
+        disabled={inMatch}
         onClick={onRemove}
         className="text-gray-9 hover:text-fault group-hover/row:text-fault group-focus-within/row:text-fault"
       >

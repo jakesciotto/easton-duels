@@ -47,6 +47,25 @@ describe('PasteRosterDialog', () => {
     expect(screen.getByRole('button', { name: /Add 0 competitors/ })).toBeDisabled()
   })
 
+  it('does not nest a second scroll container around the preview table (finding 4)', async () => {
+    fakeFetch(() => ({ json: {} }))
+    mount()
+    await screen.findByRole('dialog')
+    await userEvent.setup().type(screen.getByLabelText('Roster text'), 'Mateo Rivera, 8, 62, grey, M')
+    const table = screen.getByRole('table')
+    // Table's own div is the single scrollport now (finding 4's fix folds the caller's
+    // vertical scroll into it via wrapperClassName), carrying the preview's own
+    // max-h-[224px]. The dialog body further out is a separate, legitimate scroller
+    // for the whole dialog at its own, different max-height; what must NOT exist is a
+    // second 224px-constrained wrapper directly around the table -- that was the old
+    // bug, and it is what stranded the sticky head on a scrollport with no room of
+    // its own.
+    const wrapper = table.parentElement as HTMLElement
+    expect(wrapper.className).toMatch(/max-h-\[224px\]/)
+    expect(wrapper.className).toMatch(/overflow-y-auto/)
+    expect(wrapper.parentElement?.className ?? '').not.toMatch(/max-h-\[224px\]/)
+  })
+
   it('posts every parsed row on the chosen team', async () => {
     const f = fakeFetch(() => ({ status: 201, json: [] }))
     mount()

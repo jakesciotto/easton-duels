@@ -19,8 +19,8 @@ import { QrCode } from '@/components/QrCode'
 import { TeamPlate } from '@/components/TeamPlate'
 import { ResultDialog } from './ResultDialog'
 import {
-  lastResultOf, matPanelModel, needsDecision, resultScore, resultSentence, resultTime, waitingLabel,
-  type PanelTone,
+  NEXT_QUEUE_CAP, lastResultOf, matPanelModel, needsDecision, queueRemainderLabel, resultScore,
+  resultSentence, resultTime, waitingLabel, type PanelTone,
 } from './live-panel'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -45,11 +45,11 @@ const NEXT_COLS = 'grid grid-cols-[var(--col-state)_minmax(0,1fr)] items-stretch
 
 export function LiveTab({ detail }: { detail: EventDetail }) {
   const eventId = detail.event.id
-  const { snapshot, connected, lastSuccessAt } = useSnapshot(eventId)
+  // 4.4 / WCAG 2.2.2: the operator can stop the picture. The pause lives on the shared
+  // stream, not here, so the shell's freshness readout reports the frozen rack instead
+  // of claiming live data over a screen the operator deliberately stopped.
+  const { snapshot: view, connected, lastSuccessAt, paused, waiting, setPaused, live } = useSnapshot(eventId)
   const [connect, setConnect] = useState<ConnectInfo | null>(null)
-  // 4.4 / WCAG 2.2.2: the operator can stop the picture. The frozen snapshot is what
-  // the rack renders; the poll keeps running underneath so the wait can be counted.
-  const [frozen, setFrozen] = useState<Snapshot | null>(null)
   const [editing, setEditing] = useState<MatchView | null>(null)
   const [ending, setEnding] = useState<EndTarget | null>(null)
   const [finishOpen, setFinishOpen] = useState(false)
@@ -86,10 +86,7 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
     status.mutate('done', { onSuccess: closeFinish })
   }
 
-  const view = frozen ?? snapshot
-  const paused = frozen !== null
-  const waiting = frozen !== null && snapshot !== null ? Math.max(0, snapshot.version - frozen.version) : 0
-  const pollIntervalMs = pollIntervalForSnapshot(snapshot)
+  const pollIntervalMs = pollIntervalForSnapshot(live)
 
   const runEnd = (target: EndTarget, winnerAthleteId?: number) => {
     status.reset()
@@ -98,8 +95,8 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
     const entryId = endIds.current[match.id] ?? (endIds.current[match.id] = newEventId())
     // The action lands on the room, not on the picture: while the rack is paused the
     // frozen match view can be several writes behind, and the guard rejects a stale seq.
-    const live = snapshot?.matches.find(m => m.id === match.id) ?? match
-    end.mutate({ id: match.id, entryId, lastSeq: live.lastSeq, winnerAthleteId }, {
+    const newest = live?.matches.find(m => m.id === match.id) ?? match
+    end.mutate({ id: match.id, entryId, lastSeq: newest.lastSeq, winnerAthleteId }, {
       onSuccess: () => {
         delete endIds.current[match.id]
         setEnding(null)
@@ -140,9 +137,9 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
             <Button
               variant="secondary"
               size="sm"
-              disabled={snapshot === null}
+              disabled={live === null}
               aria-label={paused ? waitingLabel(waiting) : 'Pause updates'}
-              onClick={() => setFrozen(paused ? null : snapshot)}
+              onClick={() => setPaused(!paused)}
             >
               {paused
                 ? <>Paused, <span className="fig text-attend">{waiting}</span> {waiting === 1 ? 'update' : 'updates'} waiting</>
@@ -166,7 +163,7 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
       {done ? (
         // The record is never a paused picture, so it reads the live snapshot even if the
         // rack was frozen when the event finished.
-        <FinalResult view={snapshot} eventId={eventId} />
+        <FinalResult view={live} eventId={eventId} />
       ) : (
         <>
           <ConnectCard connect={connect} eventId={eventId} matUrl={matUrl} collapsed={allBound} matCount={mats.length} />
@@ -286,7 +283,11 @@ function MatPanel({ mat, view, paused, lastSuccessAt, pollIntervalMs, busy, team
 
   const model = matPanelModel(mat, view.event.status, expired)
   const last = lastResultOf(view.matches, mat.id)
-  const queue = mat.onDeck.slice(1)
+  // Finding 1 / 6.9: capped at four pairs so a deep rack cannot push the panel's
+  // primary control below the fold; the remainder line still states the depth.
+  const rest = mat.onDeck.slice(1)
+  const queue = rest.slice(0, NEXT_QUEUE_CAP)
+  const queueRemainder = rest.length - queue.length
 
   return (
     <section
@@ -354,6 +355,12 @@ function MatPanel({ mat, view, paused, lastSuccessAt, pollIntervalMs, busy, team
                         <span className="truncate t2 text-gray-10">{m.a.name} vs {m.b.name}</span>
                       </div>
                     ))}
+                    {queueRemainder > 0 && (
+                      <div className="grid grid-cols-[var(--col-state)_minmax(0,1fr)] gap-x-3">
+                        <span />
+                        <span className="truncate t2 text-gray-10">{queueRemainderLabel(queueRemainder)}</span>
+                      </div>
+                    )}
                   </div>
                 )}
               </>
@@ -448,7 +455,15 @@ function PanelMenu({ label, items }: { label: string; items: MenuItemSpec[] }) {
 function FinalResult({ view, eventId }: { view: Snapshot | null; eventId: number }) {
   if (view === null) return <p className="t3 text-gray-10">Waiting for the first update from the server.</p>
   const played = (teamId: number) => view.matches.filter(m => m.status === 'done' && (m.a.teamId === teamId || m.b.teamId === teamId)).length
-  const cols = 'grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-x-6 font-mono'
+  // Finding 2: the head and each row were separate grid containers with `auto` numeric
+  // tracks, so each sized its own columns from its own content -- the head from its
+  // 11px labels, a row from Wins at t7 and Points/Matches at t5, three different `ch`
+  // contexts in one declared track. `ch` only resolves against the element it is
+  // declared on, so a shared literal-px track (2.7's own resolved-widths table, not a
+  // relative one) is what lets the head and every row land on the identical register
+  // regardless of which type step each renders its own figure at: Wins is 2ch at t7
+  // (62.4px), Points and Matches are 3ch at t5 (60px).
+  const cols = 'grid grid-cols-[minmax(0,1fr)_62.4px_60px_60px] items-center gap-x-6'
   return (
     <div className="grid gap-4">
       <FieldSet>

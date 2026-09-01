@@ -74,45 +74,51 @@ export function PasteRosterDialog({ detail, open, onOpenChange }: { detail: Even
           </div>
 
           {lines.length > 0 && (
-            <div className="max-h-[224px] overflow-y-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[var(--col-state)] p-0"><span className="sr-only">Line state</span></TableHead>
-                    <TableHead numeric className="w-[var(--col-num-s)]">Line</TableHead>
-                    <TableHead>Name</TableHead>
-                    <TableHead numeric className="w-[var(--col-num-s)]">Age</TableHead>
-                    <TableHead numeric className="w-[var(--col-num-m)]">Weight</TableHead>
-                    <TableHead>Belt</TableHead>
-                    <TableHead>Gender</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {lines.map(l => (
-                    <TableRow key={l.n}>
-                      <TableCell className="w-[var(--col-state)] p-0">
-                        <span aria-hidden className={cn('block h-8 w-[var(--col-state)]', l.problem !== null && 'bg-fault')} />
+            // finding 4: the caller's vertical scroll folds into Table's own wrapper
+            // instead of adding a second scrolling div around it. Two nested scroll
+            // containers leave the sticky head stuck to the inner one, which has no
+            // scrolling room of its own, so it scrolls away on the first wheel tick.
+            <Table wrapperClassName="max-h-[224px] overflow-y-auto">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[var(--col-state)] p-0"><span className="sr-only">Line state</span></TableHead>
+                  <TableHead numeric className="w-[var(--col-num-s)]">Line</TableHead>
+                  <TableHead>Name</TableHead>
+                  <TableHead numeric className="w-[var(--col-num-s)]">Age</TableHead>
+                  {/* finding 3: "Weight" at the body's own t2 mono step is still wider
+                      than the col-num-m track it sits on, so the head keeps overriding
+                      it. "lb" is the label the roster and candidate heads already use
+                      for this same track. */}
+                  <TableHead numeric className="w-[var(--col-num-m)]">lb</TableHead>
+                  <TableHead>Belt</TableHead>
+                  <TableHead>Gender</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {lines.map(l => (
+                  <TableRow key={l.n}>
+                    <TableCell className="w-[var(--col-state)] p-0">
+                      <span aria-hidden className={cn('block h-8 w-[var(--col-state)]', l.problem !== null && 'bg-fault')} />
+                    </TableCell>
+                    <TableCell numeric className="text-gray-10">{l.n}</TableCell>
+                    {l.problem !== null ? (
+                      <TableCell colSpan={5}>
+                        <span className="truncate text-gray-10">{l.text}</span>
+                        <span className="ml-3 t2 text-fault">{l.problem}</span>
                       </TableCell>
-                      <TableCell numeric className="text-gray-10">{l.n}</TableCell>
-                      {l.problem !== null ? (
-                        <TableCell colSpan={5}>
-                          <span className="truncate text-gray-10">{l.text}</span>
-                          <span className="ml-3 t2 text-fault">{l.problem}</span>
-                        </TableCell>
-                      ) : (
-                        <>
-                          <TableCell className="text-gray-12">{l.row?.firstName} {l.row?.lastName}</TableCell>
-                          <TableCell numeric>{l.row?.age ?? '--'}</TableCell>
-                          <TableCell numeric>{l.row?.weightLbs ?? '--'}</TableCell>
-                          <TableCell className="text-gray-11">{beltLabel(l.row?.belt ?? null)}</TableCell>
-                          <TableCell className="text-gray-11">{l.row?.gender ?? '--'}</TableCell>
-                        </>
-                      )}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+                    ) : (
+                      <>
+                        <TableCell className="text-gray-12">{l.row?.firstName} {l.row?.lastName}</TableCell>
+                        <TableCell numeric>{l.row?.age ?? '--'}</TableCell>
+                        <TableCell numeric>{l.row?.weightLbs ?? '--'}</TableCell>
+                        <TableCell className="text-gray-11">{beltLabel(l.row?.belt ?? null)}</TableCell>
+                        <TableCell className="text-gray-11">{l.row?.gender ?? '--'}</TableCell>
+                      </>
+                    )}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           )}
 
           {add.error && (

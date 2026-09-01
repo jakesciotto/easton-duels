@@ -134,3 +134,15 @@ export function resultTime(endedAt: string | null | undefined): string | null {
 export function waitingLabel(count: number): string {
   return `Paused, ${count} update${count === 1 ? '' : 's'} waiting`
 }
+
+// 6.9: the NEXT lane's queue is capped at four pairs so a deep rack cannot push the
+// panel's primary control (the one control the panel exists to hold) below the fold.
+// Finding 1: rendering the whole remaining on-deck list gave a two mat event with 40
+// generated matches about 20 lines on one mat's queue.
+export const NEXT_QUEUE_CAP = 4
+
+// The remainder line still states the depth "when is my kid up" exists to answer, at
+// a bounded height instead of an unbounded one.
+export function queueRemainderLabel(count: number): string {
+  return `${count} more ${count === 1 ? 'match' : 'matches'} queued`
+}

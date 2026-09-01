@@ -1,10 +1,11 @@
+import { useMemo } from 'react'
 import { useParams, Link } from 'react-router'
 import type { EventStatus } from '@shared/types'
 import { PinGate } from '@/components/PinGate'
 import { AdminShell } from '@/components/AdminShell'
 import { RouteFallback } from '@/components/RouteFallback'
 import { useEventDetail } from '@/lib/queries'
-import { useSnapshot } from '@/lib/useSnapshot'
+import { SnapshotStreamContext, useSnapshot } from '@/lib/useSnapshot'
 import { pollIntervalForSnapshot } from '@/lib/pollInterval'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
@@ -22,15 +23,16 @@ const STATUS: Record<EventStatus, { label: string; variant: 'default' | 'live' |
   done: { label: 'Done', variant: 'done' },
 }
 
-const PANEL = 'px-6 pt-6 pb-10'
+// 6.18: one column with 16px gutters below 640px. The panel gutter matches the shell's.
+const PANEL = 'px-4 pt-6 pb-10 sm:px-6'
 
 function EventBody({ eventId }: { eventId: number }) {
   const q = useEventDetail(eventId)
-  // 6.4: the header's freshness readout wants the same lastSuccessAt a poll already
-  // produces. This is a poll of its own, independent of whatever the Live tab is doing --
-  // lifting a single shared poll out of LiveTab would mean editing a file outside this
-  // task's scope, so the shell asks on its own rather than fabricate a status it can't see.
-  const { snapshot, lastSuccessAt } = useSnapshot(eventId)
+  // 6.4 / 7.15: the one poll for this event. The header's freshness readout and every tab
+  // under the provider read this same stream, so the shell can never report fresh data for
+  // a screen that is deliberately frozen, and one browser tab makes one request per tick.
+  const stream = useSnapshot(eventId)
+  const shared = useMemo(() => ({ eventId, state: stream }), [eventId, stream])
   if (q.isLoading) return <RouteFallback rung="two-line" />
   if (q.error || !q.data) {
     return (
@@ -49,7 +51,12 @@ function EventBody({ eventId }: { eventId: number }) {
       title={detail.event.name}
       status={<Badge variant={STATUS[detail.event.status].variant}>{STATUS[detail.event.status].label}</Badge>}
       actions={<Link to={`/board/${eventId}`} target="_blank" className={buttonVariants({ variant: 'secondary', size: 'sm' })}>Open board</Link>}
-      freshness={{ lastSuccessAt, pollIntervalMs: pollIntervalForSnapshot(snapshot) }}
+      freshness={{
+        lastSuccessAt: stream.lastSuccessAt,
+        pollIntervalMs: pollIntervalForSnapshot(stream.snapshot),
+        paused: stream.paused,
+        waiting: stream.waiting,
+      }}
       meta={
         <div className="flex items-center gap-3 t2 text-gray-10">
           <span className="fig">{detail.event.date}</span>
@@ -58,20 +65,22 @@ function EventBody({ eventId }: { eventId: number }) {
         </div>
       }
     >
-      <Tabs defaultValue="roster" className="gap-0">
-        <TabsList className="px-6">
-          <TabsTrigger value="roster">Roster<span className="ml-1.5 fig text-gray-10">{detail.athletes.length}</span></TabsTrigger>
-          <TabsTrigger value="entry">Entry</TabsTrigger>
-          <TabsTrigger value="rulesets">Rulesets</TabsTrigger>
-          <TabsTrigger value="matches">Matches<span className="ml-1.5 fig text-gray-10">{detail.matches.length}</span></TabsTrigger>
-          <TabsTrigger value="live">Live</TabsTrigger>
-        </TabsList>
-        <TabsContent value="roster" className={PANEL}><RosterTab detail={detail} /></TabsContent>
-        <TabsContent value="entry" className={PANEL}><EntryTab detail={detail} /></TabsContent>
-        <TabsContent value="rulesets" className={PANEL}><RulesetsTab detail={detail} /></TabsContent>
-        <TabsContent value="matches" className={PANEL}><MatchesTab detail={detail} /></TabsContent>
-        <TabsContent value="live" className={PANEL}><LiveTab detail={detail} /></TabsContent>
-      </Tabs>
+      <SnapshotStreamContext value={shared}>
+        <Tabs defaultValue="roster" className="gap-0">
+          <TabsList className="px-4 sm:px-6">
+            <TabsTrigger value="roster">Roster<span className="ml-1.5 fig text-gray-10">{detail.athletes.length}</span></TabsTrigger>
+            <TabsTrigger value="entry">Entry</TabsTrigger>
+            <TabsTrigger value="rulesets">Rulesets</TabsTrigger>
+            <TabsTrigger value="matches">Matches<span className="ml-1.5 fig text-gray-10">{detail.matches.length}</span></TabsTrigger>
+            <TabsTrigger value="live">Live</TabsTrigger>
+          </TabsList>
+          <TabsContent value="roster" className={PANEL}><RosterTab detail={detail} /></TabsContent>
+          <TabsContent value="entry" className={PANEL}><EntryTab detail={detail} /></TabsContent>
+          <TabsContent value="rulesets" className={PANEL}><RulesetsTab detail={detail} /></TabsContent>
+          <TabsContent value="matches" className={PANEL}><MatchesTab detail={detail} /></TabsContent>
+          <TabsContent value="live" className={PANEL}><LiveTab detail={detail} /></TabsContent>
+        </Tabs>
+      </SnapshotStreamContext>
     </AdminShell>
   )
 }

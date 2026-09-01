@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, type FormEvent, type UIEvent } from 'react'
 import { KIDS_BELTS } from '@shared/types'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import { ApiError } from '@/lib/api'
@@ -21,6 +21,20 @@ import { CandidateHead, CandidateRow } from './CandidateRow'
 const BELT_ITEMS = [{ value: null as string | null, label: 'No belt' }, ...KIDS_BELTS.map(b => ({ value: b as string | null, label: beltLabel(b) }))]
 const GENDER_ITEMS = [{ value: null as string | null, label: 'Not set' }, { value: 'M', label: 'M' }, { value: 'F', label: 'F' }]
 const MANUAL_FORM_ID = 'add-competitor-manual-form'
+
+// 6.10: the pool is virtualized past 50 rows so a large WellnessLiving import does not
+// mount hundreds of rows into a 320px well. CandidateRow renders at the `default` rung
+// (2.7), a fixed 40px, so a window can be computed from scroll position without a
+// measurement library.
+const POOL_ROW_H = 40
+const POOL_OVERSCAN = 8
+const POOL_VIRTUALIZE_AT = 50
+const POOL_DEFAULT_ROWS = Math.ceil(320 / POOL_ROW_H) + POOL_OVERSCAN
+
+// CandidateRow is a plain presentational component (no hooks of its own), so wrapping
+// it here is enough to skip a row whose props did not change -- which only pays off if
+// the row also gets a stable onCheckedChange, below.
+const MemoCandidateRow = memo(CandidateRow)
 
 interface FormState {
   firstName: string
@@ -49,6 +63,12 @@ export function AddKidDialog({ detail, open, onOpenChange, onRefresh }: {
   const [showUnrated, setShowUnrated] = useState(false)
   const [poolTeamId, setPoolTeamId] = useState<number | null>(null)
   const [picked, setPicked] = useState<Set<string>>(new Set())
+  // Also flagged: below the virtualization threshold the pool still re-rendered every
+  // row on each keystroke, because a fresh `v => toggle(...)` closure per row per
+  // render defeats MemoCandidateRow's shallow prop comparison. One stable handler per
+  // uid, created once and reused, is what lets an unaffected row skip re-rendering.
+  const toggleHandlers = useRef(new Map<string, (v: boolean) => void>())
+  const [poolWindow, setPoolWindow] = useState<[number, number]>([0, POOL_DEFAULT_ROWS])
   const addCandidates = useAdminMutation(eventId, (v: { candidates: RosterCandidate[]; teamId: number | null }) =>
     adminApi(`/api/events/${eventId}/athletes`, { method: 'POST', body: v.teamId === null ? { candidates: v.candidates } : { candidates: v.candidates, teamId: v.teamId } }))
 
@@ -66,6 +86,8 @@ export function AddKidDialog({ detail, open, onOpenChange, onRefresh }: {
     setShowUnrated(false)
     setPoolTeamId(null)
     setPicked(new Set())
+    setPoolWindow([0, POOL_DEFAULT_ROWS])
+    toggleHandlers.current.clear()
     addCandidates.reset()
     adminApi<RosterCandidate[]>(`/api/events/${eventId}/candidates`)
       .then(rows => { if (!ignore) setPool(rows) })
@@ -89,6 +111,33 @@ export function AddKidDialog({ detail, open, onOpenChange, onRefresh }: {
     else n.delete(uid)
     return n
   })
+  const getToggle = (uid: string) => {
+    let fn = toggleHandlers.current.get(uid)
+    if (!fn) {
+      fn = v => toggle(uid, v)
+      toggleHandlers.current.set(uid, fn)
+    }
+    return fn
+  }
+
+  const poolVirtual = visible.length > POOL_VIRTUALIZE_AT
+  const poolRef = useRef<HTMLDivElement | null>(null)
+  // A new search or filter is a new list from the top. Resetting the window alone is not
+  // enough: the scrollport keeps its offset, so a filter applied halfway down a 300 row
+  // pool leaves the reader looking at the spacer below the rows that now exist.
+  useEffect(() => {
+    setPoolWindow([0, POOL_DEFAULT_ROWS])
+    if (poolRef.current) poolRef.current.scrollTop = 0
+  }, [search, showUnrated])
+  const onPoolScroll = (e: UIEvent<HTMLDivElement>) => {
+    if (!poolVirtual) return
+    const el = e.currentTarget
+    const first = Math.max(0, Math.floor(el.scrollTop / POOL_ROW_H) - POOL_OVERSCAN)
+    const rows = Math.ceil((el.clientHeight || 320) / POOL_ROW_H) + POOL_OVERSCAN * 2
+    setPoolWindow([first, first + rows])
+  }
+  const [poolStart, poolEnd] = poolVirtual ? poolWindow : [0, visible.length]
+  const poolRows = poolVirtual ? visible.slice(poolStart, poolEnd) : visible
 
   const submitManual = (e: FormEvent) => {
     e.preventDefault()
@@ -162,16 +211,22 @@ export function AddKidDialog({ detail, open, onOpenChange, onRefresh }: {
                     <Button size="sm" variant="ghost" onClick={onRefresh}>Refresh from WellnessLiving</Button>
                   </div>
                   {/* 2.6: inner = max(0, 12 - 16) = 0, so the list is flush inside the padded body. */}
-                  <FieldSet className="max-h-[320px] overflow-y-auto rounded-none">
+                  <FieldSet ref={poolRef} className="max-h-[320px] overflow-y-auto rounded-none" onScroll={onPoolScroll}>
                     <CandidateHead valueLabel="ERP" />
                     {visible.length === 0
                       ? <EmptyState
                           message="No competitors match. Clear the search."
                           action={<Button size="sm" variant="ghost" onClick={() => setSearch('')}>Clear search</Button>}
                         />
-                      : visible.map(c => (
-                        <CandidateRow key={c.wlUid} candidate={c} checked={picked.has(c.wlUid)} onCheckedChange={v => toggle(c.wlUid, v)} />
-                      ))}
+                      : (
+                        <>
+                          {poolStart > 0 && <div aria-hidden style={{ height: poolStart * POOL_ROW_H }} />}
+                          {poolRows.map(c => (
+                            <MemoCandidateRow key={c.wlUid} candidate={c} checked={picked.has(c.wlUid)} onCheckedChange={getToggle(c.wlUid)} />
+                          ))}
+                          {poolEnd < visible.length && <div aria-hidden style={{ height: (visible.length - poolEnd) * POOL_ROW_H }} />}
+                        </>
+                      )}
                   </FieldSet>
                 </>
               )}

@@ -8,6 +8,14 @@ import { fakeFetch } from './fakes'
 beforeEach(() => localStorage.clear())
 afterEach(() => vi.unstubAllGlobals())
 
+// The admin token's payload is `{ role, exp }` base64url-encoded, unsigned client
+// side and not secret (server/src/auth/tokens.ts); PinGate reads `exp` straight out
+// of it, so a fake token only needs the same shape to exercise that path.
+function fakeToken(expSec: number): string {
+  const body = btoa(JSON.stringify({ role: 'admin', exp: expSec })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  return `${body}.sig`
+}
+
 // The PIN field is six independent character wells (CodeField), not one input long enough
 // to fake a length, so every well is addressed by index rather than by a shared label.
 async function typePin(user: ReturnType<typeof userEvent.setup>, digits: string) {
@@ -42,8 +50,8 @@ describe('PinGate', () => {
     expect(screen.queryByText(/session expired/i)).not.toBeInTheDocument()
   })
 
-  it('shows session expired copy, not a bare error, when an existing token is cleared', async () => {
-    setAdminToken('stale-tok')
+  it('shows session expired copy, not a bare error, when a token past its own exp is cleared', async () => {
+    setAdminToken(fakeToken(Math.floor(Date.now() / 1000) - 60))
     render(<PinGate><p>secret area</p></PinGate>)
     expect(await screen.findByText('secret area')).toBeInTheDocument()
     // Stands in for the 401 that queries.ts's adminApi reacts to by clearing the token --
@@ -51,5 +59,18 @@ describe('PinGate', () => {
     act(() => clearAdminToken())
     expect(await screen.findByText('Your session expired. Enter the PIN to continue.')).toBeInTheDocument()
     expect(screen.queryByText('secret area')).not.toBeInTheDocument()
+  })
+
+  // clearAdminToken() runs identically for a 401 (queries.ts) and for a deliberate
+  // Sign out (AdminShell), so "a token was ever present" cannot tell them apart -- a
+  // normal sign-out-then-sign-in wrongly claimed the session had expired.
+  it('does not claim the session expired when a still-valid token is cleared by a sign out', async () => {
+    setAdminToken(fakeToken(Math.floor(Date.now() / 1000) + 3600))
+    render(<PinGate><p>secret area</p></PinGate>)
+    expect(await screen.findByText('secret area')).toBeInTheDocument()
+    act(() => clearAdminToken()) // mirrors AdminShell's Sign out button exactly
+    await screen.findByRole('button', { name: 'Continue' })
+    expect(screen.getAllByRole('textbox')).toHaveLength(6)
+    expect(screen.queryByText(/session expired/i)).not.toBeInTheDocument()
   })
 })
