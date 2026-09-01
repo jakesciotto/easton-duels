@@ -7,7 +7,8 @@ import {
 import { clockRefusal, minusRefusal, REASONS, scoreRefusal, undoRefusal } from '@/routes/scorer/refusals'
 import { fitsScorer } from '@/routes/scorer/viewport'
 import {
-  ALERT, COMMIT, LINE, MOAT, PAD, REASON, SECONDARY, SHORTEST_VIEWPORT, STALE_LINE, columnBudget,
+  ALERT, COMMIT, HEAD_LINE, IPAD_SCREEN_HEIGHT, LINE, MAX_BROWSER_CHROME, MINUS_ROW, MOAT, PAD,
+  REASON, SECONDARY, SHORTEST_VIEWPORT, STACK, STACK_COMMIT, STALE_LINE, columnBudget,
 } from '@/routes/scorer/budget'
 import { sampleMatch } from './fakes'
 
@@ -120,10 +121,18 @@ describe('refusals', () => {
     expect(undoRefusal(true, live, null, false)).toMatch(/Nothing to take back/)
   })
 
-  it('refuses undo of the clock running out', () => {
+  // Time being up does not tell this tablet what the newest event is. The server writes a
+  // pause at expiry, but the desk can record an advantage after it, and the reason that
+  // named the clock on that assumption was then simply wrong. The refusal now says only
+  // what is true either way, and undo of this tablet's own post-expiry score still works.
+  it('does not blame the clock for an event it cannot see, expired or not', () => {
     const expired = { ...live, lastSeq: 4 }
-    expect(undoRefusal(true, expired, null, true)).toMatch(/does not reach the clock/)
+    expect(undoRefusal(true, expired, null, true)).toMatch(/came from elsewhere/)
+    expect(undoRefusal(true, expired, null, true)).not.toMatch(/does not reach the clock/)
+    expect(undoRefusal(true, expired, action({ seq: 1 }), true)).toMatch(/came from elsewhere/)
     expect(undoRefusal(true, expired, action({ seq: 4 }), true)).toBeNull()
+    // The clock is only named when this tablet recorded the clock press itself.
+    expect(undoRefusal(true, expired, clockAction({ seq: 4 }), true)).toMatch(/does not reach the clock/)
   })
 
   // The server removes the newest event and nothing else: it turns down an undo of a pause,
@@ -164,27 +173,74 @@ describe('refusals', () => {
 })
 
 /**
- * 6.16 sizes the commit controls in millimetres and the route accepts a 1024 x 768 iPad,
- * which is the shortest viewport it is designed against. jsdom computes no layout, so this
- * is where a stack that does not fit gets caught: the column and the test read the same
- * declared boxes out of budget.ts.
+ * 6.16 sizes the commit controls in millimetres and the route accepts a 1024 x 768 iPad.
+ * jsdom computes no layout, so this is where a stack that does not fit gets caught: the
+ * column and the test read the same declared boxes out of budget.ts.
+ *
+ * What is proved here is the GUARANTEE, not a positive slack number. At the real worst
+ * case there is no slack to speak of, so the question is which element gives: never the
+ * expiry alarm, never End match.
  */
 describe('the centre column budget', () => {
-  it('fits the shortest tablet with room for the alarm that the End match button answers', () => {
-    const b = columnBudget(SHORTEST_VIEWPORT)
-    expect(b.slack).toBeGreaterThanOrEqual(ALERT + LINE)
-    // Late polls print "Not updating Ns" under the clock, which comes out of the same slack.
-    expect(b.slack - STALE_LINE).toBeGreaterThanOrEqual(ALERT)
+  // The number this was measured against for a whole revision was the iPad's SCREEN
+  // height. The column lays out in the visual viewport, which is the screen minus the
+  // browser's chrome, so 768 overstated the room by 50 to 90px and the alarm went into a
+  // scroll box on real hardware while this file reported 75px of slack.
+  it('is measured against the layout viewport, not the tablet screen', () => {
+    expect(SHORTEST_VIEWPORT).toBe(IPAD_SCREEN_HEIGHT - MAX_BROWSER_CHROME)
+    expect(SHORTEST_VIEWPORT).toBeLessThan(IPAD_SCREEN_HEIGHT - 50)
+    expect(MAX_BROWSER_CHROME).toBeGreaterThanOrEqual(90)
   })
 
-  it('only ever has more room on a taller tablet', () => {
-    let previous = columnBudget(SHORTEST_VIEWPORT).slack
-    for (let h = SHORTEST_VIEWPORT; h <= 1400; h += 8) {
+  // The whole point. The head, the expiry Alert and the three commit controls have to be on
+  // screen at every height the route accepts, with the alarm SHOWING, which is the moment
+  // the column is asked to hold the most. A step of 1 catches a threshold that only fails
+  // between two multiples of 8.
+  it('keeps the expiry alarm and End match on screen at every height from the shortest layout viewport up', () => {
+    for (let h = SHORTEST_VIEWPORT; h <= 1400; h += 1) {
       const b = columnBudget(h)
-      expect(b.slack, `${h}px`).toBeGreaterThanOrEqual(ALERT + LINE)
-      expect(b.slack).toBeGreaterThanOrEqual(previous)
-      previous = b.slack
+      expect(b.guaranteed, `${h}px`).toBeLessThanOrEqual(h)
+      expect(b.fixed, `${h}px`).toBeLessThanOrEqual(h)
+      expect(b.slack, `${h}px`).toBeGreaterThanOrEqual(0)
     }
+  })
+
+  // "Not updating Ns" takes the head's identity slot rather than adding a row to it, so a
+  // late poll cannot spend 18px of a guarantee that has 3 to give.
+  it('does not let a late poll add a row to the head', () => {
+    expect(HEAD_LINE).toBe(Math.max(16, STALE_LINE))
+    expect(columnBudget(SHORTEST_VIEWPORT).guaranteed + STALE_LINE).toBeGreaterThan(SHORTEST_VIEWPORT)
+  })
+
+  // 6.16's floors are not negotiable, so the shortest tablet does not fit everything. What
+  // yields is the secondary minus row -- never a commit control, never the alarm.
+  it('buys the fit with the secondary row, never by shrinking a commit control', () => {
+    const b = columnBudget(SHORTEST_VIEWPORT)
+    expect(b.minusRowFixed).toBe(false)
+    expect(b.fixed).toBe(b.guaranteed)
+    // Proof that it genuinely does not fit, rather than that somebody trimmed a control.
+    expect(b.guaranteed + MINUS_ROW).toBeGreaterThan(SHORTEST_VIEWPORT)
+    expect(STACK - STACK_COMMIT).toBe(MINUS_ROW)
+    expect(STACK_COMMIT).toBeGreaterThanOrEqual(3 * COMMIT)
+  })
+
+  // Once a tablet is tall enough for the minus row it never loses it again, so the stack's
+  // shape is a fact about the device rather than something that moves mid match.
+  it('returns the minus row to the stack as height allows, and never takes it back', () => {
+    let seen = false
+    for (let h = SHORTEST_VIEWPORT; h <= 1400; h += 1) {
+      const on = columnBudget(h).minusRowFixed
+      if (on) seen = true
+      expect(on || !seen, `${h}px`).toBe(true)
+    }
+    expect(seen).toBe(true)
+  })
+
+  // What the alarm displaces is the reference content, which is the trade this whole
+  // arrangement exists to make.
+  it('has room for the last action line whenever the alarm is not showing', () => {
+    const b = columnBudget(SHORTEST_VIEWPORT)
+    expect(b.slack + ALERT).toBeGreaterThanOrEqual(LINE)
   })
 
   it('keeps every box on the 4px grid and at or above the size 6.16 gives it', () => {

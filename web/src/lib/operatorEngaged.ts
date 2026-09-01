@@ -22,7 +22,16 @@ export function operatorEngaged(): boolean {
 
   // Any open dialog, and any open listbox (the popup a Select trigger opens), counts as
   // engaged: an arriving snapshot must not rewrite the options under an open list.
-  if (document.querySelector('[data-slot="dialog-content"][data-open], [role="dialog"], [role="listbox"]')) return true
+  //
+  // One exception, and it has to be asked for by name. A dialog whose CONTENT IS the live
+  // state cannot be held: holding it shows the operator a stale reading and lets them commit
+  // against it. The scorer's confirm sheet is that case, and it carries its own check that
+  // refuses the commit and makes the operator read the new result. Every other dialog is
+  // held, because everywhere else an arriving poll is an interruption rather than the point.
+  const dialogs = document.querySelectorAll('[data-slot="dialog-content"][data-open], [role="dialog"], [role="listbox"]')
+  for (const dialog of dialogs) {
+    if (!dialog.hasAttribute('data-poll-through')) return true
+  }
 
   return false
 }

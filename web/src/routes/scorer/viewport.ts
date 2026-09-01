@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { SHORTEST_VIEWPORT } from './budget'
 
 /**
  * 6.16: the scorer is locked to landscape at 900 CSS px or wider. At a phone's density a
@@ -28,4 +29,34 @@ export function useFitsScorer(): boolean {
     }
   }, [])
   return fits
+}
+
+/**
+ * The LAYOUT viewport's height, which is what `h-dvh` on the scorer shell resolves to and
+ * what the centre column actually gets. On iPadOS Safari it is already the screen height
+ * minus the browser's chrome; `screen.height` is the number that made budget.ts wrong.
+ */
+export function viewportHeight(): number {
+  return window.innerHeight
+}
+
+/**
+ * Read once and on a real resize or rotation, never per render, so the column's shape is a
+ * fact about the tablet rather than something that moves under the operator's thumb. The
+ * server default is the worst case, because a column budgeted short is one that fits.
+ */
+export function useViewportHeight(): number {
+  const [height, setHeight] = useState(() =>
+    typeof window === 'undefined' ? SHORTEST_VIEWPORT : viewportHeight())
+  useEffect(() => {
+    const read = () => setHeight(viewportHeight())
+    read()
+    window.addEventListener('resize', read)
+    window.addEventListener('orientationchange', read)
+    return () => {
+      window.removeEventListener('resize', read)
+      window.removeEventListener('orientationchange', read)
+    }
+  }, [])
+  return height
 }

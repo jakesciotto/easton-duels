@@ -55,6 +55,21 @@ describe('operatorEngaged', () => {
     expect(operatorEngaged()).toBe(true)
   })
 
+  // The one dialog that must not be held is the one whose content is the live match: held,
+  // it shows the operator a stale reading and lets them commit against it. It has to ask for
+  // that by name, so a dialog that forgets to ask is still held.
+  it('lets a dialog that carries the opt out see the poll', () => {
+    document.body.innerHTML = '<div data-slot="dialog-content" data-open="" data-poll-through=""></div>'
+    expect(operatorEngaged()).toBe(false)
+  })
+
+  it('still holds every dialog that does not carry the opt out, including beside one that does', () => {
+    document.body.innerHTML =
+      '<div data-slot="dialog-content" data-open="" data-poll-through=""></div>'
+      + '<div role="dialog"></div>'
+    expect(operatorEngaged()).toBe(true)
+  })
+
   it('is true while a Select listbox is open, even if focus has moved to an item', () => {
     document.body.innerHTML = '<div role="listbox"><div role="option" tabindex="0"></div></div>'
     const option = document.querySelector('[role="option"]') as HTMLElement

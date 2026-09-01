@@ -22,7 +22,7 @@ export const NO_MATCH = 'No match on this mat.'
 export const ENDED = 'This match has ended.'
 export const NOT_STARTED = 'This match has not started.'
 export const TIME_UP = 'Time is up. Record the result.'
-/** The expiry pause and both clock presses: the server's undo reaches none of them. */
+/** Both clock presses this tablet recorded: the server's undo reaches neither. */
 export const CLOCK_EVENT = 'Undo does not reach the clock.'
 export const ELSEWHERE = 'The newest action came from elsewhere.'
 
@@ -66,12 +66,17 @@ export function undoRefusal(
   connected: boolean,
   match: MatchView | null,
   last: LocalAction | null,
-  expired: boolean,
+  // Kept because the caller passes it; deliberately unused. Time being up does NOT tell
+  // this tablet what the newest event was. The server writes a pause at expiry, but the
+  // desk can record an advantage after it, and naming the clock on that assumption printed
+  // a reason that was simply wrong. An event this tablet cannot see gets the one sentence
+  // that is true either way.
+  _expired: boolean,
 ): string | null {
   const gone = unavailable(connected, match)
   if (gone) return gone
   if (match!.lastSeq === 0) return NOTHING
-  if (!last || last.seq !== match!.lastSeq) return expired ? CLOCK_EVENT : ELSEWHERE
+  if (!last || last.seq !== match!.lastSeq) return ELSEWHERE
   if (last.kind === 'clock') return CLOCK_EVENT
   return null
 }

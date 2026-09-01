@@ -3,6 +3,10 @@ import { render, screen, act, within, cleanup } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { routes } from '@/router'
+import { SHORTEST_VIEWPORT } from '@/routes/scorer/budget'
+import { CenterColumn } from '@/routes/scorer/CenterColumn'
+import { ConfirmSheet } from '@/routes/scorer/ConfirmSheet'
+import type { Sheet as SheetState } from '@/routes/scorer/useScorer'
 import { setMatBinding } from '@/lib/auth'
 import { playExpired, playRejected } from '@/lib/sounds'
 import { fakeFetch, snapshotFeed, sampleMatch, sampleSnapshot } from './fakes'
@@ -37,6 +41,17 @@ async function mount() {
 const expiredMatch = () => sampleMatch({ clock: { elapsedMs: 300_000, startedAt: null, lengthMs: 300_000 } })
 const onOneMat = (match: ReturnType<typeof sampleMatch>) =>
   sampleSnapshot({ mats: [{ id: 1, number: 1, current: match, onDeck: [], bound: true }], matches: [match] })
+
+// jsdom computes no layout, so what can be proved here is STRUCTURE: which elements sit
+// inside the one region that is allowed to scroll. The budget suite proves the arithmetic.
+function centreColumn() {
+  return screen.getByRole('button', { name: 'End match' }).closest('.w-80') as HTMLElement
+}
+function referenceRegion() {
+  const found = centreColumn().querySelector('.overflow-y-auto')
+  expect(found, 'the centre column has exactly one scroller').not.toBeNull()
+  return found as HTMLElement
+}
 
 describe('ScorerPage', () => {
   it('disables scoring until the stream connects, then posts a tap with the match seq', async () => {
@@ -279,6 +294,75 @@ describe('ScorerPage', () => {
     expect(playExpired).toHaveBeenCalledTimes(1)
   })
 
+  // 1024 x 768 is the iPad's SCREEN. Safari lays this column out in the screen minus its
+  // own chrome, and at the bottom of that range 6.16's floors do not all fit. What must
+  // never happen is the two things that make the screen work going into a scroll box: the
+  // scorer answers the alarm with End match, and both have to be reachable without a
+  // scroll gesture on a tablet the operator is not looking at.
+  it('keeps the expiry alarm and End match out of the scroller on the shortest layout viewport', async () => {
+    vi.stubGlobal('innerWidth', 1024)
+    vi.stubGlobal('innerHeight', SHORTEST_VIEWPORT)
+    const feed = snapshotFeed(onOneMat(expiredMatch()))
+    fakeFetch(url => feed.handle(url) ?? { json: {} })
+    await mount()
+
+    const alarm = await screen.findByText('Time expired. Record the result.')
+    const end = screen.getByRole('button', { name: 'End match' })
+    const scroller = referenceRegion()
+    expect(scroller.contains(alarm)).toBe(false)
+    expect(scroller.contains(end)).toBe(false)
+    expect(scroller.contains(screen.getByRole('button', { name: /^Undo/ }))).toBe(false)
+    expect(scroller.contains(screen.getByRole('button', { name: 'Start' }))).toBe(false)
+    // Nothing above the column may scroll either, or the whole stack goes with it.
+    expect(centreColumn().className).not.toContain('overflow-y-auto')
+
+    // What gives instead: the reference content, and at this height the SECONDARY minus
+    // row goes with it. No commit control is shrunk to buy the fit.
+    expect(scroller.contains(screen.getByText(/No action recorded on this tablet yet/))).toBe(true)
+    expect(scroller.contains(screen.getByRole('button', { name: /Minus.*Mateo Rivera/ }))).toBe(true)
+    for (const name of [/^Undo/, 'Start', 'End match'] as const) {
+      expect(screen.getByRole('button', { name }).style.height).toBe('104px')
+    }
+  })
+
+  it('keeps the minus row in the commit stack on a tablet tall enough to hold it', async () => {
+    vi.stubGlobal('innerWidth', 1194)
+    vi.stubGlobal('innerHeight', 900)
+    const feed = snapshotFeed(sampleSnapshot())
+    fakeFetch(url => feed.handle(url) ?? { json: {} })
+    await mount()
+    await screen.findByRole('region', { name: 'Mateo Rivera' })
+    expect(referenceRegion().contains(screen.getByRole('button', { name: /Minus.*Mateo Rivera/ }))).toBe(false)
+  })
+
+  // 7.6's staleness notice takes the head's identity slot rather than adding a row under
+  // the clock: a row added to the head is a row taken straight out of the guarantee above,
+  // and at the shortest layout viewport there are three pixels to give.
+  it('prints the staleness notice in the head slot instead of adding a row to it', () => {
+    vi.stubGlobal('innerWidth', 1024)
+    vi.stubGlobal('innerHeight', SHORTEST_VIEWPORT)
+    const match = expiredMatch()
+    const mat = { id: 1, number: 1, current: match, onDeck: [], bound: true }
+    const refusals = { clock: null, undo: null, minusA: null, minusB: null }
+    const props = {
+      mat, match, serverNow: sampleSnapshot().now, pollIntervalMs: 1000, expired: true,
+      lastAction: null, refusals, error: null,
+      onClock: () => {}, onUndo: () => {}, onMinus: () => {}, onEnd: () => {},
+    }
+
+    const fresh = render(<CenterColumn {...props} lastSuccessAt={Date.now()} />)
+    expect(screen.getByText(/MAT 1/)).toBeInTheDocument()
+    expect(screen.queryByText(/Not updating/)).toBeNull()
+    fresh.unmount()
+
+    render(<CenterColumn {...props} lastSuccessAt={Date.now() - 60_000} />)
+    const notice = screen.getByText(/Not updating/)
+    // One notice, in the identity slot, and not inside the region that scrolls.
+    expect(screen.getAllByText(/Not updating/)).toHaveLength(1)
+    expect(screen.queryByText(/MAT 1/)).toBeNull()
+    expect(referenceRegion().contains(notice)).toBe(false)
+  })
+
   it('does not steal the screen with a sheet when the clock runs out under a tie pick', async () => {
     const feed = snapshotFeed(sampleSnapshot())
     fakeFetch(url => feed.handle(url) ?? { json: {} })
@@ -407,5 +491,84 @@ describe('ScorerPage', () => {
     cleanup()
     await act(async () => { await vi.advanceTimersByTimeAsync(20_000) })
     expect(heartbeats()).toHaveLength(2)
+  })
+})
+
+// 4.4's held commit means an open dialog suspends the snapshot on this route too, so the
+// changed-score path is driven here directly rather than through a poll. useScorer's own
+// suite proves that the second confirm() sends nothing; what is proved here is that the
+// operator is not handed a way to press through it without reading it.
+describe('ConfirmSheet', () => {
+  const teams = sampleSnapshot().teams
+  const tie = { winner: null, winType: null, scores: { a: 0, b: 0 } }
+  const decided = { winner: 200, winType: 'points' as const, scores: { a: 0, b: 3 } }
+
+  function renderSheet(sheet: SheetState, over: Partial<{ match: ReturnType<typeof sampleMatch>; error: string | null; onPick: (id: number) => void; onConfirm: () => void }> = {}) {
+    const props = {
+      match: sampleMatch({ b: { ...sampleMatch().b, score: 3 } }),
+      error: null as string | null,
+      onPick: () => {},
+      onConfirm: () => {},
+      ...over,
+    }
+    render(<ConfirmSheet sheet={sheet} teams={teams} busy={false} onCancel={() => {}} {...props} />)
+    return props
+  }
+
+  // The refusal returned synchronously with the newly derived winner already set and the
+  // affirmative still enabled, in place and immediately valid, so the second half of a
+  // double tap recorded a win for the competitor the operator never picked -- the same
+  // silent wrong winner the refusal exists to stop, one press further along.
+  it('offers no affirmative until the operator answers the change with a new decision', async () => {
+    const picks: number[] = []
+    const onConfirm = vi.fn()
+    renderSheet(
+      { reason: 'end', shown: decided, changed: { was: tie, now: decided }, winner: null, winType: null },
+      { onPick: id => picks.push(id), onConfirm, error: 'The score changed. Read the new result, then record it.' },
+    )
+    const sheet = await screen.findByRole('dialog')
+    expect(within(sheet).getByRole('alert')).toHaveTextContent('It now says Olivia Kim on points, 0 to 3')
+
+    const record = within(sheet).getByRole('button', { name: /^Record win/ })
+    expect(record).toBeDisabled()
+    await userEvent.setup().click(record)
+    expect(onConfirm).not.toHaveBeenCalled()
+
+    // The only way forward names a competitor, and it is not the control the double tap
+    // was already landing on.
+    const answer = within(sheet).getByRole('button', { name: 'Olivia Kim wins on points' })
+    expect(answer).not.toBe(record)
+    await userEvent.setup().click(answer)
+    expect(picks).toEqual([200])
+  })
+
+  // A change that lands on a tie has no derived winner to name, so the operator picks one
+  // -- and that pick is the acknowledgement.
+  it('asks for a decision again when the change leaves the match tied', async () => {
+    const picks: number[] = []
+    renderSheet(
+      { reason: 'end', shown: tie, changed: { was: decided, now: tie }, winner: null, winType: null },
+      { onPick: id => picks.push(id) },
+    )
+    const sheet = await screen.findByRole('dialog')
+    expect(within(sheet).getByRole('alert')).toHaveTextContent('It now says a tie, 0 to 0')
+    expect(within(sheet).getByRole('button', { name: /^Record win/ })).toBeDisabled()
+    await userEvent.setup().click(within(sheet).getByRole('button', { name: 'Mateo Rivera wins' }))
+    expect(picks).toEqual([100])
+  })
+
+  // 6.16's restatement froze the winner and the win type but read the score live, so
+  // between the raise and the press it could print a score that contradicted the
+  // competitor it named.
+  it('restates the score the sheet was raised on, never the live one', async () => {
+    renderSheet(
+      { reason: 'end', shown: { winner: 100, winType: 'points', scores: { a: 4, b: 2 } }, changed: null, winner: 100, winType: 'points' },
+      // The desk has since put the other competitor ahead. The line must not print 4 to 9
+      // beside a sentence saying Mateo Rivera won.
+      { match: sampleMatch({ a: { ...sampleMatch().a, score: 4 }, b: { ...sampleMatch().b, score: 9 } }) },
+    )
+    const sheet = await screen.findByRole('dialog')
+    expect(sheet).toHaveTextContent('Mateo Rivera wins on points,4to2')
+    expect(sheet).not.toHaveTextContent('9')
   })
 })

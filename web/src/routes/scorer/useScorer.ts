@@ -14,10 +14,25 @@ const HEARTBEAT_MS = 20_000
 
 export type SheetReason = 'terminal' | 'end' | 'time'
 export interface Outcome { winner: number | null; winType: WinType | null }
+
+/**
+ * An outcome AND the scores that produced it, read at one instant. The sheet's restatement
+ * prints these rather than the live match: pairing a frozen winner with a live score means
+ * that between the raise and the press the line can read a score that contradicts the
+ * competitor it names.
+ */
+export interface Statement extends Outcome { scores: { a: number; b: number } }
+
 export interface Sheet extends Outcome {
   reason: SheetReason
   /** What the match derived when the sheet was raised: the statement the operator answers. */
-  shown: Outcome
+  shown: Statement
+  /**
+   * Set when the match moved out from under an open sheet. While it is set there is no
+   * affirmative to press: the refusal has to be answered by a new decision naming the new
+   * winner, not by the second half of the double tap that ran into it.
+   */
+  changed: { was: Statement; now: Statement } | null
 }
 
 interface PendingOp {
@@ -34,6 +49,10 @@ function derive(match: MatchView, ruleset: RulesetView | null): Outcome {
   if (match.a.score > match.b.score) return { winner: match.a.athleteId, winType: 'points' }
   if (match.b.score > match.a.score) return { winner: match.b.athleteId, winType: 'points' }
   return { winner: null, winType: null }
+}
+
+function statement(match: MatchView, ruleset: RulesetView | null): Statement {
+  return { ...derive(match, ruleset), scores: { a: match.a.score, b: match.b.score } }
 }
 
 export function useScorer(binding: MatBinding, snapshot: Snapshot | null, connected: boolean) {
@@ -54,6 +73,8 @@ export function useScorer(binding: MatBinding, snapshot: Snapshot | null, connec
   const opSeq = useRef(0)
   const inFlight = useRef(0)
   const offset = useRef(0)
+  // A terminal is a commit control, so it takes one press. See terminal() below.
+  const terminating = useRef(false)
 
   useEffect(() => {
     if (snapshot?.now) offset.current = Date.parse(snapshot.now) - Date.now()
@@ -234,35 +255,64 @@ export function useScorer(binding: MatBinding, snapshot: Snapshot | null, connec
     undo()
   }
 
-  const raise = (reason: SheetReason, shown: Outcome) => setSheet({ reason, shown, ...shown })
+  const raise = (reason: SheetReason, shown: Statement) =>
+    setSheet({ reason, shown, changed: null, winner: shown.winner, winType: shown.winType })
+
+  // The sheet is where a refused confirm gets said, so the error leaves with it. Left set,
+  // it reappeared in the centre column the moment the match ended successfully.
+  const close = () => { setSheet(null); setError(null) }
 
   const terminal = async (athleteId: number, actionKey: string) => {
-    // No busy guard: the chain serialises this behind any tap still in flight, where a
-    // guard would drop the press with nothing said.
-    if (!current || !connected) return
+    // Serialising behind the write chain is NOT enough. The second press is not a stale
+    // write, it is a duplicate, and the half only disables once the pending terminal comes
+    // back on a response -- so the window is the whole round trip. Two terminals land at
+    // seq 1 and seq 2, one "Back to match" removes only the newer, and the mat is left
+    // refused with a terminal still standing on the server and nothing on screen naming it.
+    // A control that ends a match takes one press.
+    if (!current || !connected || terminating.current) return
+    terminating.current = true
     setError(null)
-    const r = await enqueue((matchId, seq) => postMatchEvent(matchId, binding.token, { type: 'terminal', athleteId, actionKey, lastSeq: seq }), null)
-    if (r) raise('terminal', derive(r.match, ruleset))
+    try {
+      const r = await enqueue((matchId, seq) => postMatchEvent(matchId, binding.token, { type: 'terminal', athleteId, actionKey, lastSeq: seq }), null)
+      if (r) raise('terminal', statement(r.match, ruleset))
+    } finally {
+      terminating.current = false
+    }
   }
 
   const openEnd = (reason: 'end' | 'time' = 'end') => {
     if (!current) return
-    raise(reason, derive(current, ruleset))
+    raise(reason, statement(current, ruleset))
   }
 
-  const pickWinner = (athleteId: number) => setSheet(s => s ? { ...s, winner: athleteId, winType: s.winType ?? 'decision' } : s)
+  /**
+   * The operator's decision about who won, and the ONLY way past a changed-score refusal:
+   * clearing `changed` costs a press on a control that names a competitor, which is what
+   * makes it a new decision rather than the tail of a double tap.
+   */
+  const pickWinner = (athleteId: number) => setSheet(s => (s
+    ? { ...s, winner: athleteId, winType: s.winType ?? s.changed?.now.winType ?? 'decision', changed: null }
+    : s))
 
   const confirm = async () => {
-    if (!sheet || sheet.winner === null || sheetBusy) return
-    // 4.4 suspends the poll under an open dialog everywhere else; the scorer cannot, because
-    // an expiry under this sheet still has to sound and paint. So the sheet checks that the
-    // match still says what it said when it was raised. The server derives the winner from
+    // A refusal is not answered by pressing the same button again. Until the operator has
+    // acknowledged the new state through pickWinner, there is nothing to record.
+    if (!sheet || sheet.changed || sheet.winner === null || sheetBusy) return
+    // 4.4 holds the poll under every other dialog. This one opts out, because its content
+    // IS the live match: held, it would show a stale reading and let the operator commit
+    // against it, and an expiry under it would never sound. Opting out is only safe because
+    // of the check below, which requires the match to still say what it said when the sheet
+    // was raised. The server derives the winner from
     // its own events and IGNORES winnerAthleteId once a tie is broken, so a decision picked
     // against a score that has since moved would silently record the other competitor.
-    const now = current ? derive(current, ruleset) : sheet.shown
+    const now = current ? statement(current, ruleset) : sheet.shown
     if (now.winner !== sheet.shown.winner || now.winType !== sheet.shown.winType) {
-      raise(sheet.reason, now)
-      setError('The score changed. Check the result, then record it.')
+      // NOT raise(): raise would hand the sheet the new winner and leave the affirmative
+      // enabled, in place and immediately valid, so the second press of a double tap would
+      // record the competitor the operator never picked -- the very thing this refusal is
+      // here to stop. The affirmative goes away until pickWinner names the new one.
+      setSheet({ reason: sheet.reason, shown: now, changed: { was: sheet.shown, now }, winner: null, winType: null })
+      setError('The score changed. Read the new result, then record it.')
       playRejected()
       return
     }
@@ -270,7 +320,7 @@ export function useScorer(binding: MatBinding, snapshot: Snapshot | null, connec
     try {
       const tie = sheet.shown.winner === null
       const r = await enqueue((matchId, seq) => endMatch(matchId, binding.token, { lastSeq: seq, ...(tie ? { winnerAthleteId: sheet.winner! } : {}) }), null)
-      if (r) setSheet(null)
+      if (r) close()
     } finally {
       setSheetBusy(false)
     }
@@ -292,7 +342,7 @@ export function useScorer(binding: MatBinding, snapshot: Snapshot | null, connec
         setSheetBusy(false)
       }
     }
-    setSheet(null)
+    close()
   }
 
   return { mat, current, ruleset, busy, sheetBusy, error, sheet, lastAction, tap, terminal, clock, undo, minus, openEnd, pickWinner, confirm, cancel }

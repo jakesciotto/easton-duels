@@ -22,3 +22,9 @@ export function pollIntervalForSnapshot(snapshot: Snapshot | null): number {
   const clockRunning = snapshot.mats.some(mat => mat.current !== null && mat.current.clock.startedAt !== null)
   return clockRunning ? POLL_CLOCK_RUNNING_MS : POLL_LIVE_IDLE_MS
 }
+
+/**
+ * The floor on a poll's deadline. A request that outlives three intervals is not slow, it is
+ * a socket the network dropped without closing, and the app has to notice rather than wait.
+ */
+export const POLL_DEADLINE_MIN_MS = 4000

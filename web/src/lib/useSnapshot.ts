@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { Snapshot } from '@shared/types'
-import { pollIntervalForSnapshot } from './pollInterval'
+import { POLL_DEADLINE_MIN_MS, pollIntervalForSnapshot } from './pollInterval'
 import { useHeldWhileEngaged } from './operatorEngaged'
 
 export interface StreamState {
@@ -97,8 +97,15 @@ function usePoll(eventId: number | null, pollMs?: number): PollState {
       if (ignore || inFlight) return
       if (document.hidden) { timer = setTimeout(tick, nextInterval()); return }
       inFlight = true
+      // A dropped access point can leave a socket open with nothing coming back. Without a
+      // deadline the await never settles, so the in-flight flag is never cleared, no later
+      // tick ever runs, the failure count never rises, and the app reports connected for the
+      // rest of the afternoon. On the scorer that means every control stays enabled while
+      // nothing sends. The deadline is generous against the interval and still bounded.
+      const deadline = new AbortController()
+      const cutOff = setTimeout(() => deadline.abort(), Math.max(POLL_DEADLINE_MIN_MS, nextInterval() * 3))
       try {
-        const res = await fetch(`/api/events/${eventId}/snapshot?since=${version}`)
+        const res = await fetch(`/api/events/${eventId}/snapshot?since=${version}`, { signal: deadline.signal })
         if (!res.ok) throw new Error(String(res.status))
         const body = await res.json() as { version: number; snapshot?: Snapshot }
         if (ignore) return
@@ -111,6 +118,7 @@ function usePoll(eventId: number | null, pollMs?: number): PollState {
         failures += 1
         if (failures >= 3) setState(s => (s.connected ? { ...s, connected: false } : s))
       } finally {
+        clearTimeout(cutOff)
         inFlight = false
       }
       if (!ignore) timer = setTimeout(tick, nextInterval())

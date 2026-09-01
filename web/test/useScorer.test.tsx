@@ -52,7 +52,12 @@ describe('useScorer', () => {
     act(() => result.current.tap(100, 'takedown'))
     await settle(result)
     act(() => result.current.openEnd())
-    expect(result.current.sheet).toEqual({ reason: 'end', winner: 100, winType: 'points', shown: { winner: 100, winType: 'points' } })
+    expect(result.current.sheet).toEqual({
+      reason: 'end', winner: 100, winType: 'points', changed: null,
+      // The scores travel with the winner they produced, so the sheet's restatement cannot
+      // pair a frozen winner with a live score that contradicts it.
+      shown: { winner: 100, winType: 'points', scores: { a: 2, b: 0 } },
+    })
   })
 
   it("hands authority to a newer-version poll even when its seq is lower, as with another device's undo", async () => {
@@ -337,7 +342,12 @@ describe('useScorer', () => {
   // match still says what it said when it was raised: the server derives the winner from
   // its own events and IGNORES winnerAthleteId once a tie is broken, so a decision picked
   // against a score that has since moved would record the other competitor in silence.
-  it('will not record a decision the score stopped supporting while the sheet was open', async () => {
+  //
+  // The refusal is not enough on its own. Returning synchronously with the newly derived
+  // winner already set left the affirmative enabled, in place and immediately valid, so
+  // the SECOND press of a double tap recorded the competitor the operator never picked --
+  // the same silent wrong winner the refusal exists to stop.
+  it('will not let the second press of a double tap record the winner the refusal just derived', async () => {
     const f = fakeFetch(url => (url.endsWith('/end')
       ? { json: { match: sampleMatch({ status: 'done' }), version: 4 } }
       : { json: { ok: true } }))
@@ -353,14 +363,103 @@ describe('useScorer', () => {
 
     expect(f.calls.some(c => c.url === '/api/matches/10/end')).toBe(false)
     expect(result.current.error).toMatch(/score changed/)
-    expect(result.current.sheet).toMatchObject({ winner: 200, winType: 'points' })
+    // No affirmative to press: the sheet holds no winner, and it says what moved.
+    expect(result.current.sheet).toMatchObject({
+      winner: null,
+      winType: null,
+      shown: { winner: 200, winType: 'points', scores: { a: 0, b: 3 } },
+      changed: {
+        was: { winner: null, winType: null, scores: { a: 0, b: 0 } },
+        now: { winner: 200, winType: 'points', scores: { a: 0, b: 3 } },
+      },
+    })
 
-    // The restated sheet is what the second press answers, and that one goes through.
+    // The second half of the double tap. It must not record anything.
+    await act(async () => { await result.current.confirm() })
+    expect(f.calls.some(c => c.url === '/api/matches/10/end')).toBe(false)
+    expect(result.current.sheet).not.toBeNull()
+
+    // Only a new decision naming the new winner clears it, and then the record goes through.
+    act(() => result.current.pickWinner(200))
+    expect(result.current.sheet).toMatchObject({ winner: 200, winType: 'points', changed: null })
     await act(async () => { await result.current.confirm() })
     await settle(result)
     const end = f.calls.findIndex(c => c.url === '/api/matches/10/end')
     expect(end).toBeGreaterThanOrEqual(0)
     expect(f.body(end)).not.toHaveProperty('winnerAthleteId')
     expect(result.current.sheet).toBeNull()
+  })
+
+  // The write chain serialises, it does not deduplicate. A terminal ends the match and the
+  // half only disables once the pending terminal comes back on a response, so a double tap
+  // had the whole round trip to send a SECOND terminal: the server wrote both, one "Back to
+  // match" removed only the newer, and the mat was left refused with a terminal standing.
+  it('sends one terminal for a double tap, not two', async () => {
+    let release!: () => void
+    const held = new Promise<void>(resolve => { release = resolve })
+    const f = fakeFetch(async url => {
+      if (url !== '/api/matches/10/events') return { json: { ok: true } }
+      await held
+      return { json: { match: sampleMatch({ lastSeq: 1, pendingTerminal: { athleteId: 100, actionKey: 'submission' } }), version: 2 } }
+    })
+    const { result } = renderHook(() => useScorer(binding, sampleSnapshot(), true))
+
+    act(() => {
+      void result.current.terminal(100, 'submission')
+      void result.current.terminal(100, 'submission')
+    })
+    release()
+    await settle(result)
+
+    expect(f.calls.filter(c => c.url === '/api/matches/10/events')).toHaveLength(1)
+    expect(result.current.sheet).toMatchObject({ reason: 'terminal', winner: 100, winType: 'submission' })
+
+    // The guard releases with the write, so a terminal for the other competitor after a
+    // "Back to match" is not locked out for the rest of the match.
+    await act(async () => { await result.current.terminal(200, 'submission') })
+    expect(f.calls.filter(c => c.url === '/api/matches/10/events')).toHaveLength(2)
+  })
+
+  // The sheet is where a refused confirm is printed, so the error has to leave with it.
+  // Left set, it reappeared in the centre column the moment the match ended successfully.
+  it('clears the refusal error when the sheet closes', async () => {
+    let ends = 0
+    const f = fakeFetch(url => {
+      if (!url.endsWith('/end')) return { json: { ok: true } }
+      ends += 1
+      if (ends === 1) return { status: 409, json: { error: { code: 'match_state', message: 'match is done' } } }
+      return { json: { match: sampleMatch({ status: 'done' }), version: 4 } }
+    })
+    const { result } = renderHook(() => useScorer(binding, sampleSnapshot(), true))
+
+    act(() => result.current.openEnd())
+    act(() => result.current.pickWinner(100))
+    await act(async () => { await result.current.confirm() })
+    await settle(result)
+    expect(result.current.error).toMatch(/Reopen it from the Live tab/)
+    expect(result.current.sheet).not.toBeNull()
+
+    await act(async () => { await result.current.confirm() })
+    await settle(result)
+    expect(result.current.sheet).toBeNull()
+    expect(result.current.error).toBeNull()
+    expect(f.calls.filter(c => c.url === '/api/matches/10/end')).toHaveLength(2)
+  })
+
+  it('clears the refusal error when the operator goes back to the match', async () => {
+    fakeFetch(url => (url.endsWith('/end')
+      ? { status: 409, json: { error: { code: 'match_state', message: 'match is done' } } }
+      : { json: { ok: true } }))
+    const { result } = renderHook(() => useScorer(binding, sampleSnapshot(), true))
+
+    act(() => result.current.openEnd())
+    act(() => result.current.pickWinner(100))
+    await act(async () => { await result.current.confirm() })
+    await settle(result)
+    expect(result.current.error).not.toBeNull()
+
+    await act(async () => { await result.current.cancel() })
+    expect(result.current.sheet).toBeNull()
+    expect(result.current.error).toBeNull()
   })
 })

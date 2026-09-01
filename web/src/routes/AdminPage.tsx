@@ -40,7 +40,9 @@ function EventRow({ ev }: { ev: EventSummary }) {
         {/* The name is the row's link, so the whole row has to be its target. Left as
             text alone the hit area is the glyphs: an event named "test" gives a 25 by
             20px target in a 1102 by 40px row, which reads as a row that does nothing.
-            The overlay also carries the row past the 44px minimum touch target. */}
+            The overlay takes the target to the row itself, which is the default 40px
+            rung by the full column width. That clears WCAG 2.5.8's 24px minimum; it
+            does not reach the 44px of 2.5.5, which the rung would have to grow for. */}
         <Link
           to={`/events/${ev.id}`}
           className="truncate t3 font-medium text-gray-12 outline-none after:absolute after:inset-0 after:rounded-none focus-visible:shadow-focus"

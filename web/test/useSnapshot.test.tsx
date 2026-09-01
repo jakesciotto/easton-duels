@@ -21,6 +21,34 @@ describe('useSnapshot', () => {
     expect(result.current.connected).toBe(true)
   })
 
+  // A dropped access point leaves a socket open with nothing coming back. Without a deadline
+  // the await never settles, the in-flight flag is never cleared, no later tick runs, the
+  // failure count never rises, and the app reports connected for the rest of the afternoon.
+  // On the scorer that means every control stays enabled while nothing sends.
+  it('gives up on a socket that never answers and reports the drop', async () => {
+    let started = 0
+    let aborted = 0
+    vi.stubGlobal('fetch', (_url: string, init?: RequestInit) => {
+      started += 1
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          aborted += 1
+          reject(new DOMException('aborted', 'AbortError'))
+        })
+      })
+    })
+    const { result } = renderHook(() => useSnapshot(1))
+    await flush()
+    expect(started).toBe(1)
+    expect(result.current.connected).toBe(false)
+
+    // Three deadlines, so three counted failures, which is the threshold the banner uses.
+    await flush(60_000)
+    expect(aborted).toBeGreaterThanOrEqual(3)
+    expect(started).toBeGreaterThanOrEqual(3)
+    expect(result.current.connected).toBe(false)
+  })
+
   it('keeps the same snapshot object identity on an unchanged { version, now } response', async () => {
     const snap = sampleSnapshot({ version: 1 })
     let call = 0
