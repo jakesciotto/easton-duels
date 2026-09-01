@@ -1,25 +1,49 @@
-import { useEffect, useRef, useState } from 'react'
-import { Navigate, useParams } from 'react-router'
+import { useEffect, useRef } from 'react'
+import { Link, Navigate, useParams } from 'react-router'
 import { getMatBinding, type MatBinding } from '@/lib/auth'
 import { useSnapshot } from '@/lib/useSnapshot'
 import { useClock } from '@/lib/useClock'
 import { useWakeLock } from '@/lib/useWakeLock'
-import { beep, unlockAudio } from '@/lib/sounds'
+import { pollIntervalForSnapshot } from '@/lib/pollInterval'
+import { playExpired, unlockAudio } from '@/lib/sounds'
+import { buttonVariants } from '@/components/ui/button'
 import { Connecting } from '@/components/Connecting'
 import { ScoreSide } from './scorer/ScoreSide'
 import { CenterColumn } from './scorer/CenterColumn'
 import { ConfirmSheet } from './scorer/ConfirmSheet'
 import { useScorer } from './scorer/useScorer'
+import { clockRefusal, minusRefusal, scoreRefusal, undoRefusal } from './scorer/refusals'
+import { useFitsScorer } from './scorer/viewport'
+
+// 6.16: below 900 CSS px, or out of landscape, the honest answer is a plain page. A phone
+// cannot hold a 20mm target in a three up grid, and this route is where a QR scan lands.
+function WrongDevice({ binding }: { binding: MatBinding }) {
+  const path = `/board/${binding.eventId}`
+  const origin = typeof window === 'undefined' ? '' : window.location.origin
+  return (
+    <main className="grid min-h-dvh place-items-center bg-background p-6">
+      <div className="grid max-w-md gap-4">
+        <h1 className="t5 text-gray-12">Use a tablet for scoring</h1>
+        <p className="t3 text-gray-11">
+          Scoring runs on an iPad held sideways. The buttons have to stay big enough to hit without
+          looking, and a phone cannot hold them at that size.
+        </p>
+        <p className="t3 text-gray-11">To follow the scores from here, open the board instead.</p>
+        <Link to={path} className={buttonVariants({ size: 'lg' })}>Open the board</Link>
+        <p className="fig t2 break-all text-gray-10">{origin}{path}</p>
+      </div>
+    </main>
+  )
+}
 
 function Scorer({ binding }: { binding: MatBinding }) {
-  const { snapshot, connected } = useSnapshot(binding.eventId)
+  const { snapshot, connected, lastSuccessAt } = useSnapshot(binding.eventId)
   const s = useScorer(binding, snapshot, connected)
   const { remainingMs } = useClock(s.current?.clock ?? null, snapshot?.now ?? null)
-  const [flash, setFlash] = useState(false)
-  // Which match we last reacted to an expiry for, and whether the clock has run since then.
+  // Which match we last sounded an expiry for, and whether the clock has run since then.
   // Gating on "ran since" (not just "already fired for this match id") means a genuine second
-  // expiry on the same match can still surface, while merely re-rendering after Cancel -- with
-  // the clock still frozen at zero -- can't retrigger it.
+  // expiry on the same match can still surface, while merely re-rendering with the clock
+  // still frozen at zero can't retrigger it.
   const firedForId = useRef<number | null>(null)
   const ranSinceFire = useRef(false)
 
@@ -50,33 +74,33 @@ function Scorer({ binding }: { binding: MatBinding }) {
     }
   }, [wakeLock.active, wakeLock.request])
 
-  // Time up: beep and flash once per expiry, once the server confirms the clock paused
-  // (m.clock.elapsedMs only reflects that after a fresh snapshot, so this waits for the real thing
-  // rather than guessing off the locally ticking countdown). Only opens the sheet if none is
-  // already open -- a referee mid-pick on an "End match" tie must not lose that pick when the
-  // clock happens to hit zero at the same moment.
+  const m = s.current
+  // Server confirmed, not merely counted down: m.clock.elapsedMs only reaches the length
+  // once a snapshot carries the pause the server wrote, so this waits for the real thing
+  // rather than guessing off the locally ticking countdown.
+  const expired = m !== null && m.status === 'live' && !m.pendingTerminal
+    && remainingMs <= 0 && m.clock.elapsedMs >= m.clock.lengthMs
+
+  // 6.16: the alarm is the frame and the Alert, both of which hold until the result is
+  // recorded. The tone is a near field cue for whoever is holding the tablet, and it plays
+  // exactly once per expiry -- no flash, no toast, no repeat.
   useEffect(() => {
-    const m = s.current
     if (m?.clock.startedAt) ranSinceFire.current = true
-    if (!m || m.status !== 'live' || m.pendingTerminal || remainingMs > 0 || m.clock.elapsedMs < m.clock.lengthMs) return
+    if (!expired || !m) return
     if (firedForId.current === m.id && !ranSinceFire.current) return
     firedForId.current = m.id
     ranSinceFire.current = false
-    beep()
-    setFlash(true)
-    if (!s.sheet) s.openEnd('time')
-  }, [remainingMs, s])
+    playExpired()
+  }, [expired, m])
 
-  // Kept in its own effect, keyed only on the flash flag, so a re-render elsewhere (another
-  // mat's score, a heartbeat-triggered snapshot) can never clear this timer early.
-  useEffect(() => {
-    if (!flash) return
-    const t = setTimeout(() => setFlash(false), 1500)
-    return () => clearTimeout(t)
-  }, [flash])
-
-  const disabled = !connected || s.busy || !s.current || s.current.status !== 'live'
   const teams = snapshot?.teams ?? []
+  const halfRefusal = scoreRefusal(connected, m)
+  const refusals = {
+    clock: clockRefusal(connected, m, expired),
+    undo: undoRefusal(connected, m, s.lastAction, expired),
+    minusA: m ? minusRefusal(connected, m, s.lastAction, m.a.athleteId) : null,
+    minusB: m ? minusRefusal(connected, m, s.lastAction, m.b.athleteId) : null,
+  }
 
   return (
     <main className="relative flex h-dvh select-none flex-col overflow-hidden bg-background">
@@ -89,35 +113,48 @@ function Scorer({ binding }: { binding: MatBinding }) {
           Screen may sleep. Keep this tablet awake in its settings.
         </div>
       )}
-      {!s.current || !s.mat ? (
-        <div className="grid flex-1 place-items-center text-2xl text-muted-foreground">No match on this mat. Waiting for the organizer.</div>
+      {!m || !s.mat ? (
+        <div className="grid flex-1 place-items-center t5 text-gray-10">No match on this mat. Waiting for the organizer.</div>
       ) : (
-        <div className="flex min-h-0 flex-1">
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_320px_minmax(0,1fr)]">
           <ScoreSide
-            side={s.current.a}
-            team={teams.find(t => t.id === s.current!.a.teamId)}
+            side={m.a}
+            team={teams.find(t => t.id === m.a.teamId)}
             ruleset={s.ruleset}
-            disabled={disabled}
-            pendingKey={s.current.pendingTerminal?.actionKey ?? null}
-            onTap={k => s.tap(s.current!.a.athleteId, k)}
-            onTerminal={k => s.terminal(s.current!.a.athleteId, k)}
+            edge="left"
+            lead={m.a.score >= m.b.score}
+            expired={expired}
+            refusal={halfRefusal}
+            onTap={k => s.tap(m.a.athleteId, k)}
+            onTerminal={k => void s.terminal(m.a.athleteId, k)}
           />
-          <CenterColumn mat={s.mat} match={s.current} serverNow={snapshot?.now ?? null} disabled={disabled} flash={flash} onClock={s.clock} onUndo={s.undo} onEnd={() => s.openEnd('end')} />
+          <CenterColumn
+            mat={s.mat}
+            match={m}
+            serverNow={snapshot?.now ?? null}
+            lastSuccessAt={lastSuccessAt}
+            pollIntervalMs={pollIntervalForSnapshot(snapshot)}
+            expired={expired}
+            lastAction={s.lastAction}
+            refusals={refusals}
+            error={s.sheet ? null : s.error}
+            onClock={s.clock}
+            onUndo={s.undo}
+            onMinus={s.minus}
+            onEnd={() => s.openEnd(expired ? 'time' : 'end')}
+          />
           <ScoreSide
-            side={s.current.b}
-            team={teams.find(t => t.id === s.current!.b.teamId)}
+            side={m.b}
+            team={teams.find(t => t.id === m.b.teamId)}
             ruleset={s.ruleset}
-            disabled={disabled}
-            pendingKey={s.current.pendingTerminal?.actionKey ?? null}
-            onTap={k => s.tap(s.current!.b.athleteId, k)}
-            onTerminal={k => s.terminal(s.current!.b.athleteId, k)}
+            edge="right"
+            lead={m.b.score >= m.a.score}
+            expired={expired}
+            refusal={halfRefusal}
+            onTap={k => s.tap(m.b.athleteId, k)}
+            onTerminal={k => void s.terminal(m.b.athleteId, k)}
           />
-          <ConfirmSheet sheet={s.sheet} match={s.current} teams={teams} busy={s.busy} error={s.error} onPick={s.pickWinner} onConfirm={s.confirm} onCancel={s.cancel} />
-        </div>
-      )}
-      {s.error && !s.sheet && (
-        <div role="alert" className="fixed inset-x-0 bottom-3 z-30 mx-auto w-fit max-w-[90%] rounded-lg border border-destructive/40 bg-card px-4 py-2 text-sm font-medium text-destructive shadow-dialog">
-          {s.error}
+          <ConfirmSheet sheet={s.sheet} match={m} teams={teams} busy={s.sheetBusy} error={s.error} onPick={s.pickWinner} onConfirm={() => void s.confirm()} onCancel={() => void s.cancel()} />
         </div>
       )}
     </main>
@@ -127,6 +164,8 @@ function Scorer({ binding }: { binding: MatBinding }) {
 export default function ScorerPage() {
   const { matId } = useParams()
   const binding = getMatBinding()
+  const fits = useFitsScorer()
   if (!binding || binding.matId !== Number(matId)) return <Navigate to="/mat" replace />
+  if (!fits) return <WrongDevice binding={binding} />
   return <Scorer binding={binding} />
 }
