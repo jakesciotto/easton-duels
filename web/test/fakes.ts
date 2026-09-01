@@ -57,8 +57,8 @@ export function sampleSnapshot(over: Partial<Snapshot> = {}): Snapshot {
     version: 1, now: '2026-10-03T16:00:00.000Z',
     event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'live', matCount: 1 },
     teams: [
-      { id: 1, name: 'Boulder', color: 'red', position: 0, wins: 0, points: 0 },
-      { id: 2, name: 'Denver', color: 'blue', position: 1, wins: 0, points: 0 },
+      { id: 1, name: 'Ridgeline', color: 'red', position: 0, wins: 0, points: 0 },
+      { id: 2, name: 'Lakeside', color: 'blue', position: 1, wins: 0, points: 0 },
     ],
     rulesets: [{ id: 1, name: 'Default', defaultLengthSec: 300,
       actions: [{ key: 'takedown', label: 'Takedown', points: 2 }, { key: 'mount', label: 'Mount', points: 4 }, { key: 'penalty', label: 'Penalty', points: -1 }],

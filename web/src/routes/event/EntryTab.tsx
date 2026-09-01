@@ -1,51 +1,92 @@
-import { useMemo, useRef, useState, type FormEvent, type Ref } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { PencilLine } from 'lucide-react'
 import type { WinType } from '@shared/types'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import { newEventId } from '@/lib/ids'
-import type { AthleteRow, EventDetail, MatchRow } from '@/lib/types'
+import type { AthleteRow, EventDetail, MatchRow, TeamRow } from '@/lib/types'
 import { athleteName, winTypeLabel } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { defaultOutcome } from './entry-defaults'
+import {
+  CUE_MS, LEDGER_LIMIT, SAVED_LABEL_MS, SAVE_TIMEOUT_MS,
+  clearDraft, clockLabel, isRepeatPair, loadDraft, pairKey, saveDraft, saveErrorCopy, teamWins,
+  type EntryDraft, type SaveErrorCopy,
+} from './entry-state'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { EmptyState } from '@/components/ui/empty-state'
 import { Label } from '@/components/ui/label'
-import { Segment } from '@/components/ui/segment'
 import { List, ListRow } from '@/components/ui/list'
-import { TeamDot } from '@/components/TeamDot'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Toggle } from '@/components/ui/toggle'
+import { TeamPlate } from '@/components/TeamPlate'
 
-interface Form {
-  aId: string
-  bId: string
-  pointsA: string
-  pointsB: string
-  winner: 'a' | 'b' | null
-  winType: WinType
-  touched: boolean
-  editingId: number | null
-  entryId: string
-}
+interface Form extends EntryDraft { touched: boolean }
 
-// entryId is minted once per form fill and reused on a retry, so the server dedupes a double submit.
-const fresh = (): Form => ({ aId: '', bId: '', pointsA: '', pointsB: '', winner: null, winType: 'points', touched: false, editingId: null, entryId: newEventId() })
+// The entryId is minted when the form opens and held through every attempt,
+// including retries and a reload, so the server dedupes a resend. Only a 2xx
+// mints the next one.
+const fresh = (): Form => ({
+  entryId: newEventId(), aId: '', bId: '', pointsA: '', pointsB: '',
+  winner: null, winType: 'points', touched: false, editingId: null,
+})
 
-const WIN_TYPES: { value: WinType; label: string }[] = [
-  { value: 'points', label: 'On points' },
-  { value: 'submission', label: 'By submission' },
-  { value: 'decision', label: 'By decision' },
+const draftOf = (f: Form): EntryDraft => ({
+  entryId: f.entryId, aId: f.aId, bId: f.bId, pointsA: f.pointsA, pointsB: f.pointsB,
+  winner: f.winner, winType: f.winType, editingId: f.editingId,
+})
+
+const WIN_TYPES: { value: WinType; label: string; hint: string }[] = [
+  { value: 'points', label: 'On points', hint: 'P' },
+  { value: 'submission', label: 'By submission', hint: 'S' },
+  { value: 'decision', label: 'By decision', hint: 'D' },
 ]
-const WIN_TYPE_SHORT: Record<WinType, string> = { points: 'Points', submission: 'Submission', decision: 'Decision' }
+const WIN_TYPE_WORD: Record<WinType, string> = { points: 'Points', submission: 'Submission', decision: 'Decision' }
+const WIN_TYPE_KEY: Record<string, WinType> = { p: 'points', s: 'submission', d: 'decision' }
+
+// One set of tracks for the head and every row: name, points, the win type as a
+// word, points, name, time, one action. Declared on a mono element or ch
+// measures the sans zero and the head stops lining up with its own digits.
+const LEDGER_COLS =
+  'grid grid-cols-[minmax(0,1fr)_calc(2ch_+_16px)_88px_calc(2ch_+_16px)_minmax(0,1fr)_calc(5ch_+_8px)_var(--col-act)] items-center gap-x-3 px-3 font-mono t2'
 
 interface NewEntryBody { entryId: string; athleteAId: number; athleteBId: number; pointsA: number; pointsB: number; winnerAthleteId: number; winType: WinType }
 interface CorrectionBody { entryId: string; pointsA: number; pointsB: number; winnerAthleteId: number; winType: WinType }
+interface EntryResponse { match?: { id?: number } | null; version?: number }
 
 export function EntryTab({ detail }: { detail: EventDetail }) {
   const eventId = detail.event.id
   const [teamA, teamB] = detail.teams
-  const [f, setF] = useState<Form>(fresh)
-  const [saved, setSaved] = useState<string | null>(null)
-  const firstField = useRef<HTMLSelectElement>(null)
+  const [f, setF] = useState<Form>(() => {
+    const draft = loadDraft(eventId)
+    return draft ? { ...draft, touched: draft.winner !== null } : fresh()
+  })
+  // A restored draft says so, or the desk finds a filled form on a reload with no
+  // account of where it came from.
+  const [failure, setFailure] = useState<SaveErrorCopy | null>(() => (
+    loadDraft(eventId) ? { title: 'This entry never sent', body: 'It was kept on this device. Check it, then press Save.' } : null
+  ))
+  const [pairPrompt, setPairPrompt] = useState<string | null>(null)
+  const [savedLabel, setSavedLabel] = useState(false)
+  const [announce, setAnnounce] = useState('')
+  const [timedOut, setTimedOut] = useState(false)
+  const [savedAt, setSavedAt] = useState<Record<number, number>>({})
+  const [cue, setCue] = useState<{ id: number; on: boolean } | null>(null)
+  const pairLog = useRef<Record<string, number>>({})
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([])
+  const watchdog = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const formRef = useRef<HTMLFormElement>(null)
+
+  const later = (fn: () => void, ms: number) => { timers.current.push(setTimeout(fn, ms)) }
+  useEffect(() => () => {
+    for (const t of timers.current) clearTimeout(t)
+    if (watchdog.current) clearTimeout(watchdog.current)
+  }, [])
+
   const byId = useMemo(() => new Map(detail.athletes.map(a => [a.id, a])), [detail.athletes])
-  const kidsOf = (teamId: number) => detail.athletes.filter(a => a.teamId === teamId).sort((x, y) => x.lastName.localeCompare(y.lastName) || x.firstName.localeCompare(y.firstName))
+  const kidsOf = (teamId: number) => detail.athletes
+    .filter(a => a.teamId === teamId)
+    .sort((x, y) => x.lastName.localeCompare(y.lastName) || x.firstName.localeCompare(y.firstName))
   const kidsA = kidsOf(teamA.id)
   const kidsB = kidsOf(teamB.id)
 
@@ -56,234 +97,490 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   const winType = f.touched ? f.winType : auto.winType
   const a = f.aId ? byId.get(Number(f.aId)) : undefined
   const b = f.bId ? byId.get(Number(f.bId)) : undefined
-  const canSave = !!a && !!b && winner !== null
 
-  const create = useAdminMutation(eventId, (body: NewEntryBody) => adminApi(`/api/events/${eventId}/entries`, { method: 'POST', body }))
-  const correct = useAdminMutation(eventId, (v: { id: number; body: CorrectionBody }) => adminApi(`/api/matches/${v.id}/entry`, { method: 'POST', body: v.body }))
+  const create = useAdminMutation(eventId, (body: NewEntryBody) => adminApi<EntryResponse>(`/api/events/${eventId}/entries`, { method: 'POST', body }))
+  const correct = useAdminMutation(eventId, (v: { id: number; body: CorrectionBody }) => adminApi<EntryResponse>(`/api/matches/${v.id}/entry`, { method: 'POST', body: v.body }))
   const start = useAdminMutation<void>(eventId, () => adminApi(`/api/events/${eventId}`, { method: 'PATCH', body: { status: 'live' } }))
+
+  // Every terminal outcome re-enables Save, the watchdog included, because a POST
+  // that never answers must not leave a reload as the only way out.
+  const inFlight = (create.isPending || correct.isPending) && !timedOut
+  const canSave = !!a && !!b && winner !== null
+  const wins = useMemo(() => teamWins(detail.matches, detail.athletes), [detail.matches, detail.athletes])
+  const winsA = wins.get(teamA.id) ?? 0
+  const winsB = wins.get(teamB.id) ?? 0
 
   // A points edit alone never resets touched: auto-derivation from points only
   // drives the suggestion until the organizer picks a winner or a win type (or
   // loads a match to correct); after that the pick sticks until Save or Cancel edit.
-  const setPoints = (key: 'pointsA' | 'pointsB') => (v: string) => setF(s => ({ ...s, [key]: v.replace(/\D/g, '') }))
+  const setPoints = (key: 'pointsA' | 'pointsB') => (v: string) => setF(s => ({ ...s, [key]: v.replace(/\D/g, '').slice(0, 2) }))
+  const pickKid = (key: 'aId' | 'bId') => (v: string) => {
+    setPairPrompt(null)
+    setF(s => ({ ...s, [key]: v }))
+  }
   const pickWinner = (w: 'a' | 'b') => setF(s => {
     const nextWinType = s.touched ? s.winType : (defaultOutcome(pA, pB).winner === null ? 'decision' : defaultOutcome(pA, pB).winType)
     return { ...s, winner: w, winType: nextWinType, touched: true }
   })
   const pickType = (t: WinType) => setF(s => ({ ...s, winner, winType: t, touched: true }))
 
-  const submit = (e: FormEvent) => {
-    e.preventDefault()
-    if (!a || !b || winner === null) return
-    const winnerAthleteId = winner === 'a' ? a.id : b.id
-    const loser = winner === 'a' ? b : a
-    const message = `Saved: ${athleteName(winner === 'a' ? a : b)} beat ${athleteName(loser)} ${winTypeLabel(winType)}, ${pA} to ${pB}`
-    const onSaved = () => {
-      setSaved(message)
-      setF(fresh())
-      firstField.current?.focus()
+  const focusFirstField = () => formRef.current?.querySelector<HTMLElement>('#entry-a-competitor')?.focus()
+  const focusPoints = () => {
+    const well = formRef.current?.querySelector<HTMLInputElement>('#entry-a-points')
+    well?.focus()
+    well?.select()
+  }
+
+  const settle = () => {
+    if (watchdog.current) clearTimeout(watchdog.current)
+    watchdog.current = null
+  }
+
+  const onSaved = (res: EntryResponse | undefined, key: string, sentence: string) => {
+    settle()
+    clearDraft(eventId)
+    pairLog.current[key] = Date.now()
+    const id = res?.match?.id
+    if (typeof id === 'number') {
+      const at = Date.now()
+      setSavedAt(s => ({ ...s, [id]: at }))
+      setCue({ id, on: true })
     }
+    setFailure(null)
+    setPairPrompt(null)
+    setTimedOut(false)
+    setSavedLabel(true)
+    setAnnounce(sentence)
+    later(() => setSavedLabel(false), SAVED_LABEL_MS)
+    setF(fresh())
+    focusFirstField()
+  }
+
+  const onFailed = (payload: Form, error: unknown) => {
+    settle()
+    saveDraft(eventId, draftOf(payload))
+    setFailure(saveErrorCopy(error))
+  }
+
+  const submit = (e?: FormEvent) => {
+    e?.preventDefault()
+    if (!a || !b || winner === null || inFlight) return
+    const key = pairKey(a.id, b.id)
+    if (f.editingId === null && pairPrompt !== key && isRepeatPair(pairLog.current, key, Date.now())) {
+      setPairPrompt(key)
+      return
+    }
+    const winnerAthleteId = winner === 'a' ? a.id : b.id
+    const won = winner === 'a' ? a : b
+    const lost = winner === 'a' ? b : a
+    const sentence = `Saved. ${athleteName(won)} beat ${athleteName(lost)} ${winTypeLabel(winType)}, ${pA} to ${pB}.`
+    const payload = f
+
+    setTimedOut(false)
+    settle()
+    watchdog.current = setTimeout(() => {
+      setTimedOut(true)
+      onFailed(payload, new Error('timeout'))
+    }, SAVE_TIMEOUT_MS)
+
     if (f.editingId !== null) {
       const body: CorrectionBody = { entryId: f.entryId, pointsA: pA, pointsB: pB, winnerAthleteId, winType }
-      correct.mutate({ id: f.editingId, body }, { onSuccess: onSaved })
+      correct.mutate({ id: f.editingId, body }, {
+        onSuccess: res => onSaved(res, key, sentence),
+        onError: err => onFailed(payload, err),
+      })
     } else {
       const body: NewEntryBody = { entryId: f.entryId, athleteAId: a.id, athleteBId: b.id, pointsA: pA, pointsB: pB, winnerAthleteId, winType }
-      create.mutate(body, { onSuccess: onSaved })
+      create.mutate(body, {
+        onSuccess: res => onSaved(res, key, sentence),
+        onError: err => onFailed(payload, err),
+      })
+    }
+  }
+
+  // Single keys on top of the tab order. Letters are read even inside a points
+  // well, which takes digits only, so the operator never has to leave the well
+  // to name a winner. The Select owns its own typeahead and is left alone.
+  const onKeyDown = (e: KeyboardEvent<HTMLFormElement>) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return
+    const el = e.target as HTMLElement
+    if (el.closest('[data-slot="select-trigger"], [data-slot="select-content"]')) return
+    const typing = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
+    if (e.key === 'Enter' && typing) { e.preventDefault(); submit(); return }
+    if (/^\d$/.test(e.key) && !typing) {
+      e.preventDefault()
+      setPoints('pointsA')(e.key)
+      formRef.current?.querySelector<HTMLInputElement>('#entry-a-points')?.focus()
+      return
+    }
+    const k = e.key.toLowerCase()
+    if (k === 'a' || k === 'b') {
+      if ((k === 'a' && !a) || (k === 'b' && !b)) return
+      e.preventDefault()
+      pickWinner(k)
+      return
+    }
+    if (k in WIN_TYPE_KEY) {
+      e.preventDefault()
+      pickType(WIN_TYPE_KEY[k])
     }
   }
 
   const load = (m: MatchRow) => {
-    const w = m.winnerAthleteId === m.athleteAId ? 'a' : 'b'
     setF({
       aId: String(m.athleteAId), bId: String(m.athleteBId),
       pointsA: String(m.pointsA), pointsB: String(m.pointsB),
-      winner: w, winType: m.winType ?? 'points',
+      winner: m.winnerAthleteId === m.athleteAId ? 'a' : 'b', winType: m.winType ?? 'points',
       touched: true, editingId: m.id, entryId: newEventId(),
     })
-    setSaved(null)
+    setFailure(null)
+    setPairPrompt(null)
+    setAnnounce('')
+    focusPoints()
   }
-  const use = (m: MatchRow) => setF({ ...fresh(), aId: String(m.athleteAId), bId: String(m.athleteBId) })
+  const use = (m: MatchRow) => {
+    setPairPrompt(null)
+    setF({ ...fresh(), aId: String(m.athleteAId), bId: String(m.athleteBId) })
+    focusPoints()
+  }
+  // Cancelling an edit drops the stored draft with it: a correction sets one
+  // match's result rather than creating a win, so re-sending it under a new id
+  // cannot double anything, and a kept draft would reappear on the next load as
+  // an entry nobody meant to make.
+  const cancelEdit = () => {
+    clearDraft(eventId)
+    setFailure(null)
+    setF(fresh())
+  }
 
-  const done = detail.matches.filter(m => m.status === 'done').sort((x, y) => y.id - x.id)
+  // Instant on, released over 600ms, exactly once. The release waits a beat so
+  // the row that just landed paints the highlight before it starts to fade.
+  useEffect(() => {
+    if (!cue?.on) return
+    const id = cue.id
+    const on = setTimeout(() => setCue(c => (c && c.id === id ? { id, on: false } : c)), 50)
+    const off = setTimeout(() => setCue(c => (c && c.id === id ? null : c)), 50 + CUE_MS)
+    return () => { clearTimeout(on); clearTimeout(off) }
+  }, [cue])
+
+  const done = useMemo(() => detail.matches.filter(m => m.status === 'done').sort((x, y) => y.id - x.id), [detail.matches])
+  const shown = done.slice(0, LEDGER_LIMIT)
   const pending = detail.matches.filter(m => m.status === 'pending').sort((x, y) => x.orderIndex - y.orderIndex)
   const name = (id: number) => { const k = byId.get(id); return k ? athleteName(k) : 'Unknown' }
-  const error = create.error ?? correct.error ?? start.error
+  const startError = start.error
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+    <div className="grid gap-6">
+      <p aria-live="polite" className="sr-only">{announce}</p>
+
+      <section aria-label="Running team score" className="grid grid-cols-[1fr_auto_1fr] items-center gap-8 rounded-lg bg-gray-1 px-6 py-4">
+        <div className="flex min-w-0 items-center gap-4">
+          <TeamPlate color={teamA.color} name={teamA.name} />
+          <Figure value={winsA} lead={winsA >= winsB} />
+        </div>
+        <span className="t1 whitespace-nowrap text-gray-9 uppercase">Match wins</span>
+        <div className="flex min-w-0 items-center justify-end gap-4">
+          <Figure value={winsB} lead={winsB >= winsA} />
+          <TeamPlate color={teamB.color} name={teamB.name} />
+        </div>
+      </section>
+
       {detail.event.status === 'setup' && (
-        <div className="flex items-center gap-3 rounded-lg border border-border bg-card p-2.5 pl-3.5 lg:col-span-2">
-          <p className="text-soft">The board shows this event as in progress once you start it.</p>
-          <Button size="sm" className="ml-auto" onClick={() => start.mutate()} disabled={start.isPending}>Start event</Button>
+        <div className="flex items-center gap-3 rounded-lg bg-gray-1 px-4 py-3">
+          <p className="t2 text-gray-11">The board shows this event as in progress once you start it.</p>
+          <Button size="sm" variant="secondary" className="ml-auto" onClick={() => start.mutate()} disabled={start.isPending}>Start event</Button>
         </div>
       )}
-      <div className="grid gap-6">
-        <form onSubmit={submit} className="grid gap-4 rounded-lg border border-border bg-card p-4">
-          {/*
-            One flat grid, not two nested per-team grids: spec 9.2 fixes the tab
-            order (competitor A, competitor B, points A, points B, winner A,
-            winner B, win type, save), so every field is placed here via explicit
-            grid-column and grid-row, and DOM order matches the required tab
-            order while the column-start/row-start placement recreates the
-            two-column look.
-          */}
-          <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-[1fr_auto_1fr]">
-            <TeamHead color={teamA.color} name={teamA.name} role="Team A" className="sm:col-start-1 sm:row-start-1" />
-            <span aria-hidden className="text-xs text-gray-9 sm:col-start-2 sm:row-span-4 sm:row-start-1 sm:self-center sm:justify-self-center">vs</span>
-            <TeamHead color={teamB.color} name={teamB.name} role="Team B" className="sm:col-start-3 sm:row-start-1" />
+      {startError && (
+        <Alert>
+          <AlertTitle>The event did not start</AlertTitle>
+          <AlertDescription>{startError.message}</AlertDescription>
+        </Alert>
+      )}
 
-            <KidSelect
-              id="a-kid" label={`${teamA.name} competitor`} kids={kidsA} value={f.aId}
-              onChange={v => setF(s => ({ ...s, aId: v }))} selectRef={firstField}
-              className="sm:col-start-1 sm:row-start-2"
-            />
-            <KidSelect
-              id="b-kid" label={`${teamB.name} competitor`} kids={kidsB} value={f.bId}
-              onChange={v => setF(s => ({ ...s, bId: v }))}
-              className="sm:col-start-3 sm:row-start-2"
-            />
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+        <div className="grid gap-6">
+          <form ref={formRef} onSubmit={submit} onKeyDown={onKeyDown} className="rounded-lg bg-gray-2 p-4">
+            <div className="mb-1 flex items-baseline gap-3">
+              <h3 className="t4">{f.editingId !== null ? 'Correct a result' : 'New result'}</h3>
+              {f.editingId !== null && <span className="t2 text-attend">Editing a saved result</span>}
+            </div>
+            <p className="mb-4 t2 text-gray-10">Type each result as it comes off the mat. Pick both competitors, enter points, press Save.</p>
 
-            <PointsField id="a-points" label={`${teamA.name} points`} value={f.pointsA} onChange={setPoints('pointsA')} className="sm:col-start-1 sm:row-start-3" />
-            <PointsField id="b-points" label={`${teamB.name} points`} value={f.pointsB} onChange={setPoints('pointsB')} className="sm:col-start-3 sm:row-start-3" />
+            {/*
+              One flat grid, not two nested per-team grids: spec 9.2 fixes the tab
+              order (competitor A, competitor B, points A, points B, winner A,
+              winner B, win type, save), so every field is placed here via explicit
+              grid-column and grid-row, and DOM order matches the required tab
+              order while the column-start/row-start placement recreates the
+              two-column look.
+            */}
+            <div className="grid grid-cols-1 items-end gap-x-4 gap-y-3 sm:grid-cols-[1fr_auto_1fr]">
+              <KidField
+                id="entry-a-competitor" team={teamA} kids={kidsA} value={f.aId} onChange={pickKid('aId')}
+                className="sm:col-start-1 sm:row-start-1"
+              />
+              <KidField
+                id="entry-b-competitor" team={teamB} kids={kidsB} value={f.bId} onChange={pickKid('bId')}
+                align="right" className="sm:col-start-3 sm:row-start-1"
+              />
+              <span aria-hidden className="t1 hidden text-gray-9 uppercase sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:block sm:self-center">vs</span>
+              <PointsField id="entry-a-points" team={teamA} value={f.pointsA} onChange={setPoints('pointsA')} className="sm:col-start-1 sm:row-start-2" />
+              <PointsField id="entry-b-points" team={teamB} value={f.pointsB} onChange={setPoints('pointsB')} align="right" className="sm:col-start-3 sm:row-start-2" />
 
-            <WinnerButton kid={a} color={teamA.color} pressed={winner === 'a'} onClick={() => pickWinner('a')} className="sm:col-start-1 sm:row-start-4" />
-            <WinnerButton kid={b} color={teamB.color} pressed={winner === 'b'} onClick={() => pickWinner('b')} className="sm:col-start-3 sm:row-start-4" />
-          </div>
-          <Segment value={winType} onValueChange={v => pickType(v as WinType)} options={WIN_TYPES} aria-label="Win type" />
-          {winner === null && a && b && <p className="text-[13px] text-gray-10">Scores are tied. Pick the winner.</p>}
-          {error && <p role="alert" className="text-[13px] text-destructive">{error.message}</p>}
-          <div className="flex items-center gap-3">
-            <Button type="submit" disabled={!canSave || create.isPending || correct.isPending}>
-              {f.editingId !== null ? 'Save correction' : 'Save result'}
-            </Button>
-            {f.editingId !== null && <Button type="button" variant="ghost" onClick={() => setF(fresh())}>Cancel edit</Button>}
-            {saved && <span aria-live="polite" className="text-[13px] text-gray-10">{saved}</span>}
-          </div>
-        </form>
-        {pending.length > 0 && (
-          <section aria-label="Pending pairs" className="grid gap-3">
-            <h3 className="label">Pending pairs</h3>
-            <List>
-              {pending.map(m => (
-                <ListRow key={m.id} className="flex items-center gap-3">
-                  <span className="min-w-0 flex-1 truncate text-sm">{name(m.athleteAId)} vs {name(m.athleteBId)}</span>
-                  {m.why && <span className="text-xs text-gray-10">{m.why}</span>}
-                  <Button size="sm" variant="secondary" onClick={() => use(m)}>Use</Button>
-                </ListRow>
+              <WinnerToggle kid={a} team={teamA} hint="A" pressed={winner === 'a'} onPress={() => pickWinner('a')} className="sm:col-start-1 sm:row-start-3" />
+              <WinnerToggle kid={b} team={teamB} hint="B" pressed={winner === 'b'} onPress={() => pickWinner('b')} className="sm:col-start-3 sm:row-start-3" />
+            </div>
+
+            <div className="mt-4 grid gap-2 sm:grid-cols-3">
+              {WIN_TYPES.map(t => (
+                <Toggle
+                  key={t.value}
+                  pressed={winType === t.value}
+                  onPressedChange={() => pickType(t.value)}
+                  aria-label={t.label}
+                  aria-keyshortcuts={t.hint}
+                  className="w-full"
+                >
+                  {WIN_TYPE_WORD[t.value]}
+                  <Hint>{t.hint}</Hint>
+                </Toggle>
               ))}
-            </List>
-          </section>
-        )}
+            </div>
+
+            {winner === null && a && b && <p className="mt-3 t2 text-gray-11">Scores are tied. Pick the winner.</p>}
+
+            {pairPrompt !== null && (
+              <Alert variant="attend" className="mt-4">
+                <AlertTitle variant="attend">These two were just entered</AlertTitle>
+                <AlertDescription>{a && b ? `${athleteName(a)} and ${athleteName(b)} have a result from the last minute. Press Save again to record a second one.` : 'Press Save again to record a second result.'}</AlertDescription>
+              </Alert>
+            )}
+            {failure && (
+              <Alert className="mt-4">
+                <AlertTitle>{failure.title}</AlertTitle>
+                <AlertDescription>{failure.body}</AlertDescription>
+              </Alert>
+            )}
+
+            <div className="mt-4 flex items-center gap-3">
+              <Button type="submit" size="lg" aria-keyshortcuts="Enter" disabled={!canSave || inFlight} className="flex-1">
+                {savedLabel ? 'Saved' : inFlight ? 'Saving' : f.editingId !== null ? 'Save correction' : 'Save'}
+                {!savedLabel && !inFlight && <Hint tone="on-white">Enter</Hint>}
+              </Button>
+              {f.editingId !== null && <Button type="button" variant="ghost" size="lg" onClick={cancelEdit}>Cancel edit</Button>}
+            </div>
+          </form>
+
+          {pending.length > 0 && (
+            <section aria-label="Pending pairs" className="grid gap-3">
+              <h3 className="t4">Pending pairs</h3>
+              <List>
+                {pending.map(m => (
+                  <ListRow key={m.id} className="flex items-center gap-3">
+                    <span className="min-w-0 flex-1 truncate t3">{name(m.athleteAId)} vs {name(m.athleteBId)}</span>
+                    {m.why && <span className="t2 text-gray-10">{m.why}</span>}
+                    <Button size="sm" variant="secondary" onClick={() => use(m)}>Use</Button>
+                  </ListRow>
+                ))}
+              </List>
+            </section>
+          )}
+        </div>
+
+        <section aria-label="Results" className="overflow-hidden rounded-lg bg-gray-2">
+          <div className="flex items-baseline gap-3 px-4 pt-4 pb-3">
+            <h3 className="t4">Results</h3>
+            <span className="ml-auto t2 text-gray-10">
+              {done.length > shown.length
+                ? <>Newest <span className="fig">{shown.length}</span> of <span className="fig">{done.length}</span></>
+                : <><span className="fig">{done.length}</span> saved, newest first</>}
+            </span>
+          </div>
+          <div className={cn(LEDGER_COLS, 'h-8 bg-gray-1')}>
+            <span className="truncate font-sans t1 text-gray-10 uppercase">{teamA.name}</span>
+            <span className="tick text-right font-sans t1 text-gray-10 uppercase">Pts</span>
+            <span className="text-center font-sans t1 text-gray-10 uppercase">Win by</span>
+            <span className="tick text-right font-sans t1 text-gray-10 uppercase">Pts</span>
+            <span className="truncate text-right font-sans t1 text-gray-10 uppercase">{teamB.name}</span>
+            <span className="text-right font-sans t1 text-gray-10 uppercase">At</span>
+            <span className="sr-only">Edit</span>
+          </div>
+          {shown.length === 0
+            ? <EmptyState message="No results yet. Type the first one on the left." />
+            : shown.map(m => (
+              <LedgerRow
+                key={m.id}
+                match={m}
+                nameA={name(m.athleteAId)}
+                nameB={name(m.athleteBId)}
+                at={savedAt[m.id]}
+                cued={cue?.id === m.id && cue.on}
+                cueing={cue?.id === m.id}
+                onEdit={() => load(m)}
+              />
+            ))}
+        </section>
       </div>
-      <section aria-label="Results" className="grid gap-3">
-        <h3 className="label">Results ({done.length})</h3>
-        {done.length === 0 ? (
-          <List>
-            <ListRow className="text-[13px] text-gray-10">No results yet</ListRow>
-          </List>
-        ) : (
-          <List>
-            {done.map(m => {
-              const aWon = m.winnerAthleteId === m.athleteAId
-              const bWon = m.winnerAthleteId === m.athleteBId
-              return (
-                <ListRow key={m.id} className="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-3">
-                  <div className={cn('flex min-w-0 items-center gap-2 font-medium', !aWon && 'font-normal text-gray-10')}>
-                    <TeamDot color={teamA.color} />
-                    <span className="truncate">{name(m.athleteAId)}</span>
-                    <span className="font-mono tabular text-soft">{m.pointsA}</span>
-                  </div>
-                  <span className="min-w-[84px] text-center text-xs text-muted-foreground">{m.winType ? WIN_TYPE_SHORT[m.winType] : ''}</span>
-                  <div className={cn('flex min-w-0 items-center justify-end gap-2 font-medium', !bWon && 'font-normal text-gray-10')}>
-                    <span className="font-mono tabular text-soft">{m.pointsB}</span>
-                    <span className="truncate">{name(m.athleteBId)}</span>
-                    <TeamDot color={teamB.color} />
-                  </div>
-                  <Button size="sm" variant="ghost" onClick={() => load(m)}>Edit</Button>
-                </ListRow>
-              )
-            })}
-          </List>
-        )}
-      </section>
     </div>
   )
 }
 
-function TeamHead({ color, name, role, className }: { color: string; name: string; role: string; className?: string }) {
+// 7.5: the whole numeral crossfades, 100ms, and never moves. The resting colour
+// is the leading or trailing figure token, which is the only thing separating
+// the two numbers.
+function Figure({ value, lead }: { value: number; lead: boolean }) {
+  const [shown, setShown] = useState(value)
+  const [fading, setFading] = useState(false)
+  useEffect(() => {
+    if (value === shown) return
+    setFading(true)
+    const t = setTimeout(() => { setShown(value); setFading(false) }, 100)
+    return () => clearTimeout(t)
+  }, [value, shown])
   return (
-    <div className={cn('flex items-center gap-2', className)}>
-      <TeamDot color={color} name={name} />
-      <span className="ml-auto shrink-0 text-xs text-gray-10">{role}</span>
-    </div>
+    <span
+      className={cn(
+        'fig fig-2 inline-block t7 text-center transition-opacity duration-100 ease-out',
+        lead ? 'text-fig-lead' : 'text-fig-trail',
+        fading ? 'opacity-0' : 'opacity-100',
+      )}
+    >
+      {shown}
+    </span>
   )
 }
 
-function KidSelect({ id, label, kids, value, onChange, selectRef, className }: {
+function Hint({ children, tone = 'on-dark' }: { children: ReactNode; tone?: 'on-dark' | 'on-white' }) {
+  // aria-hidden because the accessible name stays the verb; the key itself is
+  // published to assistive technology as aria-keyshortcuts on the control.
+  return <span aria-hidden className={cn('font-mono t2', tone === 'on-white' ? 'text-gray-9' : 'text-gray-10')}>{children}</span>
+}
+
+function KidField({ id, team, kids, value, onChange, align = 'left', className }: {
   id: string
-  label: string
+  team: TeamRow
   kids: AthleteRow[]
   value: string
   onChange: (v: string) => void
-  selectRef?: Ref<HTMLSelectElement>
+  align?: 'left' | 'right'
   className?: string
 }) {
+  const items = kids.map(k => ({ value: String(k.id), label: athleteName(k) }))
   return (
     <div className={cn('grid gap-1.5', className)}>
-      <Label htmlFor={id}>{label}</Label>
-      <select
-        id={id}
-        ref={selectRef}
-        required
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        className="h-9 w-full rounded-md border border-input bg-card px-2.5 text-sm text-foreground outline-none transition-[color,background-color,box-shadow] duration-150 focus-visible:border-transparent focus-visible:shadow-focus"
-      >
-        <option value="">Pick a competitor</option>
-        {kids.map(k => <option key={k.id} value={k.id}>{athleteName(k)}</option>)}
-      </select>
+      <Label htmlFor={id} className={cn(align === 'right' && 'justify-end')}>{team.name} competitor</Label>
+      <Select value={value} onValueChange={v => onChange(String(v ?? ''))} items={items}>
+        <SelectTrigger id={id}><SelectValue placeholder="Pick a competitor" /></SelectTrigger>
+        <SelectContent>
+          {items.map(i => <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>)}
+        </SelectContent>
+      </Select>
     </div>
   )
 }
 
-function PointsField({ id, label, value, onChange, className }: {
+// The well is one of the app's signature objects: 88px, black fill, radius 0
+// because inner = max(0, 8 - 16) = 0 inside a padded field, one t8 numeral in a
+// two character slot so 9 and 12 occupy the same box.
+function PointsField({ id, team, value, onChange, align = 'left', className }: {
   id: string
-  label: string
+  team: TeamRow
   value: string
   onChange: (v: string) => void
+  align?: 'left' | 'right'
   className?: string
 }) {
   return (
     <div className={cn('grid gap-1.5', className)}>
-      <Label htmlFor={id}>{label}</Label>
-      <Input
-        id={id}
-        type="number"
-        min={0}
-        max={99}
-        inputMode="numeric"
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        className="h-[72px] rounded-lg bg-background text-center font-mono text-[40px] font-medium tabular"
-      />
+      <div className={cn('flex items-center gap-2', align === 'right' && 'flex-row-reverse')}>
+        <Label htmlFor={id}>{team.name} points</Label>
+        <Hint>0 to 9</Hint>
+      </div>
+      <div className="grid h-[88px] place-items-center border border-gray-7 bg-background focus-within:shadow-focus">
+        <input
+          id={id}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          inputMode="numeric"
+          autoComplete="off"
+          maxLength={2}
+          className="fig fig-2 w-full bg-transparent text-center t8 text-white outline-none"
+        />
+      </div>
     </div>
   )
 }
 
-function WinnerButton({ kid, color, pressed, onClick, className }: { kid: AthleteRow | undefined; color: string; pressed: boolean; onClick: () => void; className?: string }) {
+function WinnerToggle({ kid, team, hint, pressed, onPress, className }: {
+  kid: AthleteRow | undefined
+  team: TeamRow
+  hint: string
+  pressed: boolean
+  onPress: () => void
+  className?: string
+}) {
   return (
-    <button
-      type="button"
-      aria-pressed={pressed}
+    <Toggle
+      pressed={pressed}
+      onPressedChange={onPress}
       disabled={!kid}
-      onClick={onClick}
+      aria-keyshortcuts={hint}
+      className={cn('w-full', className)}
+    >
+      <span className="truncate">{kid ? `${athleteName(kid)} wins` : `Pick a ${team.name} competitor first`}</span>
+      <Hint>{hint}</Hint>
+    </Toggle>
+  )
+}
+
+// The paper sheet's row: the winner carries its own mark on whichever side it
+// falls, the win type is a word, and the loser is --gray-10 at 400 and never
+// red, because red means delete in this app.
+function LedgerRow({ match, nameA, nameB, at, cued, cueing, onEdit }: {
+  match: MatchRow
+  nameA: string
+  nameB: string
+  at: number | undefined
+  cued: boolean
+  cueing: boolean
+  onEdit: () => void
+}) {
+  const aWon = match.winnerAthleteId === match.athleteAId
+  const winnerName = aWon ? nameA : nameB
+  const loserName = aWon ? nameB : nameA
+  return (
+    <div
       className={cn(
-        'inline-flex h-9 items-center justify-center gap-2 rounded-md text-sm font-medium text-soft shadow-[0_0_0_1px_var(--input)] transition-[color,background-color,box-shadow] duration-150 focus-visible:shadow-focus aria-pressed:bg-secondary aria-pressed:text-foreground aria-pressed:shadow-ring disabled:pointer-events-none disabled:opacity-40',
-        className,
+        LEDGER_COLS, 'h-10 border-t border-gray-7',
+        cueing && 'transition-colors duration-600 ease-out',
+        cued ? 'bg-gray-6' : 'bg-transparent',
       )}
     >
-      {kid && <TeamDot color={color} />}
-      <span>{kid ? `${athleteName(kid)} wins` : 'Pick a competitor first'}</span>
-    </button>
+      <span data-side="a" data-outcome={aWon ? 'win' : 'loss'} className={cn('flex min-w-0 items-center font-sans t3', aWon ? 'font-medium text-white' : 'text-gray-10')}>
+        {aWon && <Mark side="left" />}
+        <span className="truncate">{nameA}</span>
+      </span>
+      <span className={cn('fig text-right', aWon ? 'text-white' : 'text-gray-10')}>{match.pointsA}</span>
+      <span className="truncate text-center font-sans t2 text-gray-10">{match.winType ? WIN_TYPE_WORD[match.winType] : ''}</span>
+      <span className={cn('fig text-right', aWon ? 'text-gray-10' : 'text-white')}>{match.pointsB}</span>
+      <span data-side="b" data-outcome={aWon ? 'loss' : 'win'} className={cn('flex min-w-0 items-center justify-end font-sans t3', aWon ? 'text-gray-10' : 'font-medium text-white')}>
+        <span className="truncate">{nameB}</span>
+        {!aWon && <Mark side="right" />}
+      </span>
+      <span className="text-right t1 text-gray-9">{at === undefined ? '' : clockLabel(new Date(at))}</span>
+      <Button variant="ghost" size="xs" title="Edit result" aria-label={`Edit ${winnerName} over ${loserName}`} onClick={onEdit}>
+        <PencilLine />
+      </Button>
+    </div>
+  )
+}
+
+function Mark({ side }: { side: 'left' | 'right' }) {
+  return (
+    <>
+      <span aria-hidden className={cn('size-1.5 shrink-0 rounded-full bg-gray-12', side === 'left' ? 'mr-1.5' : 'ml-1.5')} />
+      <span className="sr-only">Winner</span>
+    </>
   )
 }

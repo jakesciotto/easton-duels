@@ -10,7 +10,7 @@ function fakeFetch(handler: (url: string, init?: RequestInit) => Response) {
   return { fetchFn, calls }
 }
 const cfg = { url: 'https://x.supabase.co/', key: 'k' }
-const row = (i: number) => ({ id: `kid-${i}`, name: `Kid ${i}`, belt: 'grey', age_group: '8-9', gender: 'Male', weight_class: '-60 lbs', academy: 'Boulder', erp: 5 })
+const row = (i: number) => ({ id: `kid-${i}`, name: `Kid ${i}`, belt: 'grey', age_group: '8-9', gender: 'Male', weight_class: '-60 lbs', academy: 'Ridgeline', erp: 5 })
 
 describe('fetchCompetitors', () => {
   it('pages by 1000 using the Range header and sends the key twice', async () => {
@@ -23,7 +23,7 @@ describe('fetchCompetitors', () => {
     const r = await fetchCompetitors(cfg, fetchFn)
     expect(r.competitors).toHaveLength(1003)
     expect(r.hasErp).toBe(true)
-    expect(r.competitors[0]).toEqual({ id: 'kid-0', name: 'Kid 0', belt: 'grey', ageGroup: '8-9', gender: 'Male', weightClass: '-60 lbs', academy: 'Boulder', erp: 5 })
+    expect(r.competitors[0]).toEqual({ id: 'kid-0', name: 'Kid 0', belt: 'grey', ageGroup: '8-9', gender: 'Male', weightClass: '-60 lbs', academy: 'Ridgeline', erp: 5 })
     expect(calls[0]).toContain('/rest/v1/competitors?select=id,name,belt,age_group,gender,weight_class,academy,erp')
     expect(calls[0]).toContain('age_division=eq.kids')
   })

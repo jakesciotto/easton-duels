@@ -146,11 +146,13 @@ describe('ScorerPage', () => {
     expect(within(sheet).getByRole('button', { name: 'Confirm' })).toBeEnabled()
 
     // The clock reaches zero while the sheet from End match is still open and mid-pick.
-    // Push the update and wait out one real poll interval (scorer defaults to 1000ms) --
-    // this test doesn't use fake timers, so userEvent above stays on its normal real clock.
+    // Push the update and wait out one real poll interval -- the scorer's default snapshot
+    // fixture has one idle mat, so the adaptive interval (pollInterval.ts) picks the
+    // 3000ms live-idle rate, not a flat 1000ms. This test doesn't use fake timers, so
+    // userEvent above stays on its normal real clock.
     const expired = sampleMatch({ clock: { elapsedMs: 300_000, startedAt: null, lengthMs: 300_000 } })
     feed.push(sampleSnapshot({ mats: [{ id: 1, number: 1, current: expired, onDeck: [], bound: true }], matches: [expired] }))
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 1100)) })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 3100)) })
 
     expect(beep).toHaveBeenCalled()
     sheet = screen.getByRole('dialog')

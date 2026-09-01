@@ -1,4 +1,4 @@
-import { TEAM_COLOR_LABELS, teamCode, type TeamColor } from '@shared/types'
+import { teamCode, type TeamColor } from '@shared/types'
 import { teamStyle } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
@@ -28,7 +28,6 @@ export function TeamPlate({ color, name, size = 'desk', showName = true, classNa
   className?: string
 }) {
   const code = teamCode(name)
-  const label = TEAM_COLOR_LABELS[color as TeamColor]
   return (
     <span className={cn('inline-flex min-w-0 items-center gap-2', className)}>
       <span
@@ -42,7 +41,7 @@ export function TeamPlate({ color, name, size = 'desk', showName = true, classNa
         {code}
       </span>
       {showName && <span className="truncate font-medium text-gray-12">{name}</span>}
-      <span className="sr-only">{label}</span>
+      {!showName && <span className="sr-only">{name}</span>}
     </span>
   )
 }

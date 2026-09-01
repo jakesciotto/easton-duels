@@ -24,7 +24,7 @@ const match = (id: number, over: Partial<MatchRow> = {}): MatchRow => ({
 // "locked rows stay locked" rendering checks without juggling several fixtures.
 const detail: EventDetail = {
   event: { id: 7, name: 'Fall Duels', date: '2026-10-03', matCount: 2, matCode: '0420', status: 'setup', maxAgeGap: 1, maxWeightGap: 10, sameGender: false, createdAt: 'x' },
-  teams: [{ id: 1, eventId: 7, name: 'Boulder', color: 'red', position: 0 }, { id: 2, eventId: 7, name: 'Denver', color: 'blue', position: 1 }],
+  teams: [{ id: 1, eventId: 7, name: 'Ridgeline', color: 'red', position: 0 }, { id: 2, eventId: 7, name: 'Lakeside', color: 'blue', position: 1 }],
   athletes: [kid(100, 1, 'Mateo', 'Rivera'), kid(101, 1, 'Ava', 'Park'), kid(200, 2, 'Olivia', 'Kim'), kid(201, 2, 'Noah', 'Tran'), kid(202, 2, 'Kai', 'Wong')],
   rulesets: [{ id: 1, eventId: 7, name: 'Default', defaultLengthSec: 300, actions: [], terminals: [] }],
   mats: [{ id: 1, eventId: 7, number: 1, currentMatchId: null }, { id: 2, eventId: 7, number: 2, currentMatchId: null }],
@@ -171,14 +171,14 @@ describe('MatchesTab', () => {
 
   it('marks the option and warns naming the competitor when adding a match by hand', async () => {
     fakeFetch(() => ({ json: {} }))
-    // Liam Cruz is a fresh, unpaired Boulder competitor: contrast against Mateo, who is
+    // Liam Cruz is a fresh, unpaired Ridgeline competitor: contrast against Mateo, who is
     // already double-booked, to prove the marker only lands on the double-booked option.
     const withUnpaired: EventDetail = { ...doubleBooked, athletes: [...doubleBooked.athletes, kid(103, 1, 'Liam', 'Cruz')] }
     mount(withUnpaired)
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'Add match' }))
     const dialog = await screen.findByRole('dialog')
-    const teamASelect = within(dialog).getByLabelText('Boulder competitor')
+    const teamASelect = within(dialog).getByLabelText('Ridgeline competitor')
     expect(within(teamASelect).getByRole('option', { name: 'Mateo Rivera (double-booked)' })).toBeInTheDocument()
     expect(within(teamASelect).getByRole('option', { name: 'Liam Cruz' })).toBeInTheDocument()
     await user.selectOptions(teamASelect, '100')

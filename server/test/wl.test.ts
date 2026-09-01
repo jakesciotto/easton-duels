@@ -18,10 +18,10 @@ const noSleep = async () => {}
 
 describe('WlClient', () => {
   it('fetches a token once and injects region and business', async () => {
-    const { fetchFn, calls } = fakeFetch([token, { json: { a_location: { 5: { k_business: '100001', s_title: ' Test Gym - North ', text_city: 'Boulder' } } } }, { json: { a_location: [] } }])
+    const { fetchFn, calls } = fakeFetch([token, { json: { a_location: { 5: { k_business: '100001', s_title: ' Test Gym - North ', text_city: 'Ridgeline' } } } }, { json: { a_location: [] } }])
     const wl = new WlClient(cfg, { fetchFn, sleep: noSleep })
     const locs = await wl.listLocations()
-    expect(locs).toEqual([{ kBusiness: '100001', title: 'Test Gym - North', city: 'Boulder' }])
+    expect(locs).toEqual([{ kBusiness: '100001', title: 'Test Gym - North', city: 'Ridgeline' }])
     await wl.listLocations()
     expect(calls).toHaveLength(3)
     expect(calls[1].url).toContain('id_region=1')
@@ -36,8 +36,8 @@ describe('WlClient', () => {
       { json: { id_report_status: 3, a_field: ['uid', 'text_rank', 'text_rank_category', 'o_client.text_first', 'o_client.text_last', 'o_rank_promotion_date.dtl_promotion_date'], a_row: [['7', ' Grey Belt ', 'Kids IBJJF Belts', 'Zoe', 'Martin', '2026-01-01'], ['', 'x', 'y', 'No', 'Body', '']] } },
     ])
     const wl = new WlClient(cfg, { fetchFn, sleep: noSleep })
-    const rows = await wl.fetchKidsBeltRecords('100001', 'Boulder')
-    expect(rows).toEqual([{ uid: '7', kBusiness: '100001', location: 'Boulder', firstName: 'Zoe', lastName: 'Martin', rankTitle: 'Grey Belt', categoryTitle: 'Kids IBJJF Belts', promotedAt: '2026-01-01' }])
+    const rows = await wl.fetchKidsBeltRecords('100001', 'Ridgeline')
+    expect(rows).toEqual([{ uid: '7', kBusiness: '100001', location: 'Ridgeline', firstName: 'Zoe', lastName: 'Martin', rankTitle: 'Grey Belt', categoryTitle: 'Kids IBJJF Belts', promotedAt: '2026-01-01' }])
     const body = JSON.parse(String(calls[1].init?.body))
     expect(body.s_sql.startsWith('select ')).toBe(true)
     expect(body.i_offset).toBe(0)
@@ -55,7 +55,7 @@ describe('WlClient', () => {
       { json: { id_report_status: 3, a_field: ['uid', 'text_rank', 'text_rank_category', 'o_client.text_first', 'o_client.text_last', 'o_rank_promotion_date.dtl_promotion_date'], a_row: [] } },
     ])
     const wl = new WlClient({ ...cfg, kidsCategory: "O'Brien Kids Belts" }, { fetchFn, sleep: noSleep })
-    await wl.fetchKidsBeltRecords('100001', 'Boulder')
+    await wl.fetchKidsBeltRecords('100001', 'Ridgeline')
     const body = JSON.parse(String(calls[1].init?.body))
     expect(body.s_sql).toContain("text_rank_category = 'O''Brien Kids Belts'")
   })

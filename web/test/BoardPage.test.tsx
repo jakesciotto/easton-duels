@@ -1,82 +1,213 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { render, screen, act, within, waitFor } from '@testing-library/react'
+import { render, screen, within, waitFor } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router'
+import type { MatView, MatchView, Snapshot } from '@shared/types'
 import { routes } from '@/router'
+import { Board } from '@/routes/board/Board'
 import { fakeFetch, snapshotFeed, sampleMatch, sampleSnapshot } from './fakes'
 
 afterEach(() => vi.unstubAllGlobals())
 
-// BoardPage is behind a lazy route boundary and its first snapshot poll fires as soon as
-// it mounts, so seeding the feed with the target snapshot before render delivers it without
-// a separate emit step; waitFor covers both the lazy chunk resolving and the poll landing.
-async function mount(initial = sampleSnapshot()) {
-  const feed = snapshotFeed(initial)
-  fakeFetch(url => feed.handle(url) ?? { json: {} })
-  render(<RouterProvider router={createMemoryRouter(routes, { initialEntries: ['/board/1'] })} />)
-  await waitFor(() => {
-    expect(screen.queryByRole('status', { name: 'Loading' })).not.toBeInTheDocument()
-    expect(screen.queryByText('Connecting to the board')).not.toBeInTheDocument()
-  })
-  return feed
+const RUNNING = { elapsedMs: 0, startedAt: '2026-10-03T15:59:00.000Z', lengthMs: 300_000 }
+const PAUSED = { elapsedMs: 0, startedAt: null, lengthMs: 300_000 }
+
+function pair(id: number, aName: string, bName: string, over: Partial<MatchView> = {}): MatchView {
+  const base = sampleMatch({ id, ...over })
+  return { ...base, a: { ...base.a, name: aName }, b: { ...base.b, name: bName } }
 }
 
-describe('BoardPage', () => {
-  it('shows team wins and points, a live tile per mat, and the on-deck strip', async () => {
-    const next = sampleMatch({ id: 11, status: 'pending', a: { ...sampleMatch().a, name: 'Ava Park' } })
-    await mount(sampleSnapshot({
-      teams: [{ id: 1, name: 'Boulder', color: 'red', position: 0, wins: 3, points: 21 }, { id: 2, name: 'Denver', color: 'blue', position: 1, wins: 2, points: 17 }],
-      mats: [{ id: 1, number: 1, current: sampleMatch({ a: { ...sampleMatch().a, score: 4 } }), onDeck: [next], bound: true }],
-    }))
-    const hero = screen.getByRole('region', { name: 'Scoreboard' })
-    expect(within(hero).getByText('3')).toBeInTheDocument()
-    expect(within(hero).getByText('21 pts')).toBeInTheDocument()
-    const tile = screen.getByRole('region', { name: 'Mat 1' })
-    expect(within(tile).getByText('Mateo Rivera')).toBeInTheDocument()
-    expect(within(tile).getByText('4')).toBeInTheDocument()
-    expect(within(tile).getByText('5:00')).toBeInTheDocument()
-    expect(screen.getByRole('region', { name: 'On deck' })).toHaveTextContent('Ava Park')
+function mat(id: number, over: Partial<MatView> = {}): MatView {
+  return { id, number: id, current: null, onDeck: [], bound: false, ...over }
+}
+
+function liveBoard(count: number, over: Partial<Snapshot> = {}): Snapshot {
+  const mats = Array.from({ length: count }, (_, i) =>
+    mat(i + 1, { current: pair(100 + i, 'Mateo Rivera', 'Lucas Ferreira', { clock: RUNNING }), bound: true }))
+  return sampleSnapshot({ mats, matches: mats.map(m => m.current!), ...over })
+}
+
+function safe(container: HTMLElement): HTMLElement {
+  const el = container.querySelector('[data-comp]')
+  if (!el) throw new Error('no safe layer')
+  return el as HTMLElement
+}
+
+function row(name: string): HTMLElement {
+  const el = screen.getByRole('region', { name }).querySelector('.b-row')
+  if (!el) throw new Error(`no row in ${name}`)
+  return el as HTMLElement
+}
+
+describe('Board compositions', () => {
+  it('renders the cold start as a real composition, not a blank screen', () => {
+    const { container } = render(<Board snapshot={null} connected />)
+    expect(safe(container)).toHaveAttribute('data-comp', 'cold')
+    expect(screen.getByRole('region', { name: 'Scoreboard' })).toBeInTheDocument()
+    // Both bars, both plates and both names are in their final positions; only the
+    // values are skeletons.
+    expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBe(10)
+    expect(screen.getAllByText('Wins')).toHaveLength(2)
   })
 
-  it('falls back to the latest results when no mat is active', async () => {
-    const done = (id: number) => sampleMatch({ id, status: 'done', a: { ...sampleMatch().a, score: 6 }, result: { winnerAthleteId: 100, winType: 'submission' } })
-    await mount(sampleSnapshot({ mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: false }], matches: [done(1), done(2), done(3), done(4), done(5)] }))
-    expect(screen.getAllByRole('region', { name: /Result/ })).toHaveLength(4)
-    expect(screen.getByText('Results entered: 5')).toBeInTheDocument()
-    expect(screen.getAllByText(/by submission/)).toHaveLength(4)
+  it('is the data entry panel when no mat carries a match', () => {
+    const done = (id: number, endedAt: string) => pair(id, 'Ava Park', 'Sofia Diaz', {
+      status: 'done', endedAt, result: { winnerAthleteId: 100, winType: 'submission' },
+    })
+    const matches = [1, 2, 3, 4, 5].map(i => done(i, `2026-10-03T16:0${i}:00.000Z`))
+    const { container } = render(<Board snapshot={sampleSnapshot({ mats: [mat(1)], matches })} connected />)
+
+    expect(safe(container)).toHaveAttribute('data-comp', 'entry')
+    // The last four results, newest first, and the running count of every one entered.
+    const rows = screen.getAllByRole('region', { name: /^Result/ })
+    expect(rows).toHaveLength(4)
+    expect(screen.getByText(/Results entered:/)).toHaveTextContent('Results entered: 5')
+    // Reloading a board that has been up all afternoon must not flash old results as
+    // if they had just landed, so the first batch is already settled.
+    expect(rows[0].querySelector('.b-row')).toHaveClass('b-row-settled')
   })
 
-  it('fills the screen with the winner when the event is done', async () => {
-    await mount(sampleSnapshot({
-      event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'done', matCount: 1 },
-      teams: [{ id: 1, name: 'Boulder', color: 'red', position: 0, wins: 5, points: 30 }, { id: 2, name: 'Denver', color: 'blue', position: 1, wins: 4, points: 28 }],
-    }))
-    expect(screen.getByRole('heading', { name: 'Boulder wins' })).toBeInTheDocument()
+  it('carries the clock and four upcoming pairs at one mat', () => {
+    const queue = [11, 12, 13, 14, 15].map(id => pair(id, `Kai${id} Nakamura`, `Rosa${id} Oliveira`, { status: 'pending' }))
+    const snapshot = sampleSnapshot({
+      mats: [mat(1, { current: pair(10, 'Mateo Rivera', 'Lucas Ferreira', { clock: RUNNING }), onDeck: queue, bound: true })],
+      matches: [],
+    })
+    const { container } = render(<Board snapshot={snapshot} connected />)
+
+    expect(safe(container)).toHaveAttribute('data-mats', '1')
+    expect(within(row('Mat 1')).getByText(/^\d+:\d{2}$/)).toBeInTheDocument()
+    expect(container.querySelectorAll('.b-next-line')).toHaveLength(4)
+    expect(screen.getByText('Kai14')).toBeInTheDocument()
+    expect(screen.queryByText('Kai15')).not.toBeInTheDocument()
   })
 
-  it('colours the clock green while running and not while paused', async () => {
-    const running = sampleMatch({ id: 20, clock: { elapsedMs: 0, startedAt: '2026-10-03T15:59:00.000Z', lengthMs: 300_000 } })
-    const paused = sampleMatch({ id: 21, clock: { elapsedMs: 0, startedAt: null, lengthMs: 300_000 } })
-    await mount(sampleSnapshot({
+  it('carries the clock and one upcoming pair per mat at two mats', () => {
+    const snapshot = liveBoard(2, {
       mats: [
-        { id: 1, number: 1, current: running, onDeck: [], bound: true },
-        { id: 2, number: 2, current: paused, onDeck: [], bound: true },
+        mat(1, { current: pair(10, 'Mateo Rivera', 'Lucas Ferreira', { clock: RUNNING }), onDeck: [pair(20, 'Ana Bravo', 'Nina Costa', { status: 'pending' })], bound: true }),
+        mat(2, { current: pair(11, 'Jayden Rocha', 'Ben Oliveira', { clock: PAUSED }), onDeck: [pair(21, 'Ivy Santos', 'Zoe Marino', { status: 'pending' })], bound: true }),
       ],
-    }))
-    const mat1 = screen.getByRole('region', { name: 'Mat 1' })
-    const mat2 = screen.getByRole('region', { name: 'Mat 2' })
-    expect(within(mat1).getByText(/^\d+:\d{2}$/)).toHaveClass('text-ok')
-    expect(within(mat2).getByText(/^\d+:\d{2}$/)).not.toHaveClass('text-ok')
+    })
+    const { container } = render(<Board snapshot={snapshot} connected />)
+
+    expect(safe(container)).toHaveAttribute('data-mats', '2')
+    expect(container.querySelectorAll('.b-next-line')).toHaveLength(2)
+    expect(within(row('Mat 1')).getByText(/^\d+:\d{2}$/)).toBeInTheDocument()
+    expect(row('Mat 1')).toHaveClass('b-row-live')
+    expect(row('Mat 2')).not.toHaveClass('b-row-live')
   })
 
-  it('shows a submission pending badge while a terminal is pending on the live match', async () => {
-    const pending = sampleMatch({ id: 30, pendingTerminal: { athleteId: 100, actionKey: 'submission' } })
-    const feed = await mount(sampleSnapshot({ mats: [{ id: 1, number: 1, current: pending, onDeck: [], bound: true }] }))
-    expect(screen.getByText('Submission pending')).toBeInTheDocument()
+  it('becomes a clockless ledger above two mats', () => {
+    for (const count of [3, 4]) {
+      const { container, unmount } = render(<Board snapshot={liveBoard(count)} connected />)
+      expect(safe(container)).toHaveAttribute('data-mats', String(count))
+      expect(screen.getAllByRole('region', { name: /^Mat / })).toHaveLength(count)
+      // The per mat clock is what pays for the name field, so it is deleted here.
+      expect(screen.queryByText(/^\d+:\d{2}$/)).not.toBeInTheDocument()
+      expect(container.querySelectorAll('.b-next-line')).toHaveLength(0)
+      unmount()
+    }
+  })
 
-    const resolved = { ...pending, pendingTerminal: null }
-    feed.push(sampleSnapshot({ mats: [{ id: 1, number: 1, current: resolved, onDeck: [], bound: true }] }))
-    // Wait out one real poll interval (board defaults to 1000ms) for the update to land.
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 1100)) })
-    expect(screen.queryByText('Submission pending')).not.toBeInTheDocument()
+  it('names are first name plus last initial at every mat count', () => {
+    for (const count of [1, 2, 3, 4]) {
+      const { unmount } = render(<Board snapshot={liveBoard(count)} connected />)
+      expect(within(row('Mat 1')).getByText('Mateo')).toBeInTheDocument()
+      expect(within(row('Mat 1')).getByText('R.')).toBeInTheDocument()
+      expect(screen.queryByText('Mateo Rivera')).not.toBeInTheDocument()
+      unmount()
+    }
+  })
+
+  it('flies the live cue only while that mat is running', () => {
+    const snapshot = sampleSnapshot({
+      mats: [
+        mat(1, { current: pair(10, 'Mateo Rivera', 'Lucas Ferreira', { clock: RUNNING }), bound: true }),
+        mat(2, { current: pair(11, 'Ava Park', 'Nina Costa', { clock: PAUSED }), bound: true }),
+        mat(3, { current: null }),
+      ],
+      matches: [],
+    })
+    render(<Board snapshot={snapshot} connected />)
+    expect(row('Mat 1')).toHaveClass('b-row-live')
+    expect(row('Mat 2')).not.toHaveClass('b-row-live')
+    expect(row('Mat 3')).not.toHaveClass('b-row-live')
+  })
+
+  it('drops everything the brief deletes from the board', () => {
+    const snapshot = liveBoard(3)
+    render(<Board snapshot={snapshot} connected />)
+    expect(screen.queryByText(/Grey/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/lb/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Match \d/)).not.toBeInTheDocument()
+    expect(screen.queryByText('vs')).not.toBeInTheDocument()
+    expect(screen.queryByText(/by submission/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'On deck' })).not.toBeInTheDocument()
+  })
+
+  it('closes on a final summary of wins, points and matches', () => {
+    const snapshot = sampleSnapshot({
+      event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'done', matCount: 1 },
+      teams: [
+        { id: 1, name: 'Ridgeline', color: 'red', position: 0, wins: 7, points: 41 },
+        { id: 2, name: 'Lakeside', color: 'blue', position: 1, wins: 5, points: 33 },
+      ],
+      matches: [pair(1, 'Ava Park', 'Sofia Diaz', { status: 'done' })],
+    })
+    const { container } = render(<Board snapshot={snapshot} connected />)
+
+    expect(safe(container)).toHaveAttribute('data-comp', 'done')
+    const summary = screen.getByRole('region', { name: 'Final' })
+    expect(within(summary).getByText('7')).toBeInTheDocument()
+    expect(within(summary).getByText('41')).toBeInTheDocument()
+    expect(within(summary).getAllByText('Matches')).toHaveLength(2)
+    // The leading numeral is the brighter of the two figure tones.
+    const hero = screen.getByRole('region', { name: 'Scoreboard' })
+    expect(within(hero).getByText('7')).toHaveClass('b-lead')
+    expect(within(hero).getByText('5')).toHaveClass('b-trail')
+  })
+
+  it('raises the stale bar when the poll stops landing', () => {
+    const { container, rerender } = render(<Board snapshot={liveBoard(1)} connected />)
+    expect(container.querySelector('.b-stale')).toBeNull()
+    rerender(<Board snapshot={liveBoard(1)} connected={false} />)
+    expect(container.querySelector('.b-stale')).not.toBeNull()
+  })
+})
+
+describe('Board result settling', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('holds a finished result, then goes monotone and stays there', () => {
+    vi.useFakeTimers()
+    const live = pair(10, 'Mateo Rivera', 'Lucas Ferreira', { clock: RUNNING })
+    const finished = { ...live, status: 'done' as const, clock: PAUSED, result: { winnerAthleteId: 100, winType: 'submission' as const } }
+    const before = sampleSnapshot({ mats: [mat(1, { current: live, bound: true })], matches: [live] })
+    const after = sampleSnapshot({ mats: [mat(1, { current: null, bound: true })], matches: [finished] })
+
+    const { rerender } = render(<Board snapshot={before} connected />)
+    rerender(<Board snapshot={after} connected />)
+
+    expect(row('Mat 1')).not.toHaveClass('b-row-settled')
+    expect(within(row('Mat 1')).getByText('Mateo')).toBeInTheDocument()
+
+    vi.advanceTimersByTime(11_000)
+    rerender(<Board snapshot={after} connected />)
+    expect(row('Mat 1')).toHaveClass('b-row-settled')
+
+    vi.advanceTimersByTime(60_000)
+    rerender(<Board snapshot={after} connected />)
+    expect(row('Mat 1')).toHaveClass('b-row-settled')
+    expect(within(row('Mat 1')).getByText('Mateo')).toBeInTheDocument()
+  })
+})
+
+describe('BoardPage route', () => {
+  it('polls the snapshot endpoint and paints the live board', async () => {
+    const feed = snapshotFeed(liveBoard(1))
+    fakeFetch(url => feed.handle(url) ?? { json: {} })
+    render(<RouterProvider router={createMemoryRouter(routes, { initialEntries: ['/board/1'] })} />)
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Mat 1' })).toBeInTheDocument())
+    expect(within(screen.getByRole('region', { name: 'Scoreboard' })).getAllByText('Wins')).toHaveLength(2)
   })
 })

@@ -27,7 +27,7 @@ describe('useSnapshot', () => {
       call += 1
       return call === 1 ? { json: { version: 1, snapshot: snap } } : { json: { version: 1, now: snap.now } }
     })
-    const { result } = renderHook(() => useSnapshot(1))
+    const { result } = renderHook(() => useSnapshot(1, 1000))
     await flush()
     const first = result.current.snapshot
     expect(first?.version).toBe(1)
@@ -44,7 +44,7 @@ describe('useSnapshot', () => {
         ? { json: { version: 1, snapshot: sampleSnapshot({ version: 1 }) } }
         : { json: { version: 2, snapshot: sampleSnapshot({ version: 2 }) } }
     })
-    const { result } = renderHook(() => useSnapshot(1))
+    const { result } = renderHook(() => useSnapshot(1, 1000))
     await flush()
     const first = result.current.snapshot
     expect(first?.version).toBe(1)
@@ -61,7 +61,7 @@ describe('useSnapshot', () => {
       if (call <= 4) throw new Error('network error')
       return { json: { version: 1, now: sampleSnapshot({ version: 1 }).now } }
     })
-    const { result } = renderHook(() => useSnapshot(1))
+    const { result } = renderHook(() => useSnapshot(1, 1000))
     await flush()
     expect(result.current.connected).toBe(true)
     await flush(1000) // failure 1
@@ -115,7 +115,7 @@ describe('useSnapshot', () => {
     })
     vi.stubGlobal('fetch', fn)
 
-    renderHook(() => useSnapshot(1))
+    renderHook(() => useSnapshot(1, 1000))
     await flush()
     expect(callCount).toBe(1)
 
@@ -149,6 +149,107 @@ describe('useSnapshot', () => {
       expect(f.calls.length).toBeGreaterThan(0)
     } finally {
       Object.defineProperty(document, 'hidden', { value: false, configurable: true })
+    }
+  })
+
+  it('exposes lastSuccessAt as null until the first poll lands, then as the receipt time', async () => {
+    fakeFetch(() => ({ json: { version: 1, snapshot: sampleSnapshot({ version: 1 }) } }))
+    const { result } = renderHook(() => useSnapshot(1, 1000))
+    expect(result.current.lastSuccessAt).toBeNull()
+    await flush()
+    expect(result.current.lastSuccessAt).not.toBeNull()
+  })
+
+  it('derives the poll interval from event state when the caller does not pin one', async () => {
+    // The default sample snapshot is one mat with no clock running, so the derivation
+    // (pollInterval.ts) picks the live-idle rate, not a flat 1000ms.
+    const f = fakeFetch(() => ({ json: { version: 1, snapshot: sampleSnapshot({ version: 1 }) } }))
+    renderHook(() => useSnapshot(1))
+    await flush()
+    expect(f.calls.length).toBe(1)
+    await flush(2999)
+    expect(f.calls.length).toBe(1)
+    await flush(1)
+    expect(f.calls.length).toBe(2)
+  })
+
+  it('holds an arriving snapshot while an input is focused, and commits it once the recheck sees the field free', async () => {
+    let call = 0
+    fakeFetch(() => {
+      call += 1
+      return call === 1
+        ? { json: { version: 1, snapshot: sampleSnapshot({ version: 1 }) } }
+        : { json: { version: 2, snapshot: sampleSnapshot({ version: 2 }) } }
+    })
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    try {
+      const { result } = renderHook(() => useSnapshot(1, 1000))
+      await flush()
+      expect(result.current.snapshot?.version).toBe(1)
+
+      input.focus()
+      await flush(1000) // the newer version arrives while the field is focused
+      expect(result.current.snapshot?.version).toBe(1)
+
+      input.blur()
+      await flush(200) // the suspension recheck notices the field is free again
+      expect(result.current.snapshot?.version).toBe(2)
+    } finally {
+      input.remove()
+    }
+  })
+
+  it('holds an arriving snapshot while a tab root is mid drag', async () => {
+    let call = 0
+    fakeFetch(() => {
+      call += 1
+      return call === 1
+        ? { json: { version: 1, snapshot: sampleSnapshot({ version: 1 }) } }
+        : { json: { version: 2, snapshot: sampleSnapshot({ version: 2 }) } }
+    })
+    const root = document.createElement('div')
+    document.body.appendChild(root)
+    try {
+      const { result } = renderHook(() => useSnapshot(1, 1000))
+      await flush()
+      expect(result.current.snapshot?.version).toBe(1)
+
+      root.setAttribute('data-dragging', '1')
+      await flush(1000)
+      expect(result.current.snapshot?.version).toBe(1)
+
+      root.setAttribute('data-dragging', 'false')
+      await flush(200)
+      expect(result.current.snapshot?.version).toBe(2)
+    } finally {
+      root.remove()
+    }
+  })
+
+  it('keeps only the most recent held snapshot when two arrive back to back while engaged', async () => {
+    let call = 0
+    fakeFetch(() => {
+      call += 1
+      if (call === 1) return { json: { version: 1, snapshot: sampleSnapshot({ version: 1 }) } }
+      if (call === 2) return { json: { version: 2, snapshot: sampleSnapshot({ version: 2 }) } }
+      return { json: { version: 3, snapshot: sampleSnapshot({ version: 3 }) } }
+    })
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    try {
+      const { result } = renderHook(() => useSnapshot(1, 1000))
+      await flush()
+      input.focus()
+      await flush(1000)
+      await flush(1000)
+      expect(result.current.snapshot?.version).toBe(1)
+
+      input.blur()
+      await flush(400)
+      expect(result.current.snapshot?.version).toBe(3)
+    } finally {
+      input.remove()
     }
   })
 })

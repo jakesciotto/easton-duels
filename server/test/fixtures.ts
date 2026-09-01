@@ -47,8 +47,8 @@ export async function seedEvent(db: Db, opts: { matCount?: number; live?: boolea
     status: opts.live ? 'live' : 'setup', createdAt: '2026-08-27T00:00:00.000Z',
   }).returning().get()
   const [ta, tb] = await db.insert(teams).values([
-    { eventId: ev.id, name: 'Boulder', color: 'red', position: 0 },
-    { eventId: ev.id, name: 'Denver', color: 'blue', position: 1 },
+    { eventId: ev.id, name: 'Ridgeline', color: 'red', position: 0 },
+    { eventId: ev.id, name: 'Lakeside', color: 'blue', position: 1 },
   ]).returning().all()
   const kids = await db.insert(athletes).values([
     { eventId: ev.id, teamId: ta.id, firstName: 'Mateo', lastName: 'Rivera', age: 8, weightLbs: 62, belt: 'grey', gender: 'M', source: 'manual', erp: 6.1 },

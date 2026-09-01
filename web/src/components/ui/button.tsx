@@ -3,22 +3,26 @@ import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "@/lib/utils"
 
+// Sizes follow 7.7's table (xs/sm/md/lg/mat); the cva keys keep their pre-brief
+// names (default = md, icon = xs's 28-visual/44-hit treatment) because every
+// call site in the app already types those keys.
 const buttonVariants = cva(
-  "group/button inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md px-3.5 text-sm font-medium whitespace-nowrap transition-[color,background-color,box-shadow] duration-150 outline-none select-none focus-visible:shadow-focus disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "group/button relative inline-flex shrink-0 items-center justify-center gap-2 rounded-md t3 font-medium! whitespace-nowrap transition-[color,background-color,border-color,box-shadow] duration-150 ease-standard outline-none select-none focus-visible:shadow-focus active:scale-[0.97] active:duration-120 active:ease-out disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
-        default:
-          "bg-primary text-primary-foreground shadow-primary hover:bg-gray-12",
-        secondary: "bg-secondary text-foreground shadow-ring hover:bg-input",
-        ghost: "text-soft hover:bg-accent hover:text-foreground",
-        destructive: "text-destructive hover:bg-destructive/10",
+        default: "bg-white text-black shadow-primary hover:bg-gray-12 active:bg-gray-11",
+        secondary: "bg-gray-5 text-white shadow-ring hover:bg-gray-6 active:bg-gray-7",
+        ghost: "text-gray-11 hover:bg-gray-3 hover:text-white active:bg-gray-4",
+        destructive: "text-fault hover:bg-gray-3 active:bg-gray-4",
       },
       size: {
         default: "h-9 px-3.5",
-        sm: "h-[30px] px-2.5 text-[13px]",
+        sm: "h-8 px-2.5",
         lg: "h-10 px-4",
-        icon: "h-7 w-7 rounded-md p-0",
+        mat: "h-16 px-5",
+        xs: "size-7 rounded-md p-0 before:absolute before:-inset-2 before:content-['']",
+        icon: "size-7 rounded-md p-0 before:absolute before:-inset-2 before:content-['']",
       },
     },
     defaultVariants: {

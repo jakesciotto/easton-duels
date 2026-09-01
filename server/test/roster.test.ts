@@ -60,7 +60,7 @@ describe('buildCandidates', () => {
     uid: '1', kBusiness: '100001', location: 'North', firstName: 'Zoe', lastName: 'Martin',
     rankTitle: 'Grey Belt', categoryTitle: 'Kids IBJJF Belts', promotedAt: '2026-01-01', ...o,
   })
-  const comp: LeaderboardCompetitor = { id: 'zoe-martin', name: 'Zoe Martin', belt: 'grey', ageGroup: '8-9', gender: 'Female', weightClass: '-60 lbs', academy: 'Boulder', erp: 5.2 }
+  const comp: LeaderboardCompetitor = { id: 'zoe-martin', name: 'Zoe Martin', belt: 'grey', ageGroup: '8-9', gender: 'Female', weightClass: '-60 lbs', academy: 'Ridgeline', erp: 5.2 }
 
   it('joins by slug and fills age, weight, gender, and erp', () => {
     const [c] = buildCandidates([rec({})], [comp])

@@ -12,10 +12,10 @@ afterEach(() => vi.unstubAllGlobals())
 
 const athlete = (id: number, wlUid: string | null, first: string, last: string): EventDetail['athletes'][number] => ({
   id, eventId: 7, teamId: null, firstName: first, lastName: last, age: 8, ageSource: 'manual', weightLbs: 60, weightSource: 'manual',
-  belt: 'grey', gender: 'M', source: wlUid ? 'wl' : 'manual', wlUid, wlLocation: wlUid ? 'Boulder' : null, leaderboardId: null, erp: null,
+  belt: 'grey', gender: 'M', source: wlUid ? 'wl' : 'manual', wlUid, wlLocation: wlUid ? 'Ridgeline' : null, leaderboardId: null, erp: null,
 })
 const cand = (over: Partial<RosterCandidate>): RosterCandidate => ({
-  wlUid: 'u0', firstName: 'Zoe', lastName: 'Martin', belt: 'grey', wlLocation: 'Boulder', leaderboardId: null, erp: null, age: 8, weightLbs: 60, gender: 'F', ...over,
+  wlUid: 'u0', firstName: 'Zoe', lastName: 'Martin', belt: 'grey', wlLocation: 'Ridgeline', leaderboardId: null, erp: null, age: 8, weightLbs: 60, gender: 'F', ...over,
 })
 const pool: RosterCandidate[] = [
   cand({ wlUid: 'u1', firstName: 'Zoe', lastName: 'Martin', erp: 5.2 }),
@@ -27,7 +27,7 @@ const pool: RosterCandidate[] = [
 
 const baseDetail: EventDetail = {
   event: { id: 7, name: 'Fall Duels', date: '2026-10-03', matCount: 1, matCode: '0420', status: 'setup', maxAgeGap: 1, maxWeightGap: 10, sameGender: false, createdAt: 'x' },
-  teams: [{ id: 1, eventId: 7, name: 'Boulder', color: 'red', position: 0 }, { id: 2, eventId: 7, name: 'Denver', color: 'blue', position: 1 }],
+  teams: [{ id: 1, eventId: 7, name: 'Ridgeline', color: 'red', position: 0 }, { id: 2, eventId: 7, name: 'Lakeside', color: 'blue', position: 1 }],
   athletes: [athlete(100, 'u5', 'Mia', 'Diaz')],
   rulesets: [], mats: [], matches: [],
   candidateCount: pool.length,
@@ -77,7 +77,7 @@ describe('AddKidDialog', () => {
     await screen.findByText('Zoe Martin')
     await user.click(screen.getByLabelText('Select Zoe Martin'))
     await user.click(screen.getByRole('combobox', { name: 'Team' }))
-    await user.click(await screen.findByRole('option', { name: 'Denver' }))
+    await user.click(await screen.findByRole('option', { name: 'Lakeside' }))
     await user.click(screen.getByRole('button', { name: 'Add 1 competitor' }))
     await vi.waitFor(() => expect(f.calls.some(c => c.url.endsWith('/athletes') && c.init?.method === 'POST')).toBe(true))
     const i = f.calls.findIndex(c => c.url.endsWith('/athletes') && c.init?.method === 'POST')

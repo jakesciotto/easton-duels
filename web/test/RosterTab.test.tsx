@@ -16,7 +16,7 @@ const kid = (id: number, teamId: number | null, first: string, over: Partial<Eve
 })
 const detail: EventDetail = {
   event: { id: 7, name: 'Fall Duels', date: '2026-10-03', matCount: 1, matCode: '0420', status: 'setup', maxAgeGap: 1, maxWeightGap: 10, sameGender: false, createdAt: 'x' },
-  teams: [{ id: 1, eventId: 7, name: 'Boulder', color: 'red', position: 0 }, { id: 2, eventId: 7, name: 'Denver', color: 'blue', position: 1 }],
+  teams: [{ id: 1, eventId: 7, name: 'Ridgeline', color: 'red', position: 0 }, { id: 2, eventId: 7, name: 'Lakeside', color: 'blue', position: 1 }],
   athletes: [kid(100, 1, 'Mateo'), kid(200, 2, 'Olivia'), kid(300, null, 'Noah', { age: null, ageSource: null }), kid(400, null, 'Zoe', { weightSource: 'leaderboard', erp: 5.2 })],
   rulesets: [], mats: [], matches: [], candidateCount: 0,
 }
@@ -30,7 +30,7 @@ describe('RosterTab', () => {
   it('shows three columns with chips for missing and estimated data', () => {
     fakeFetch(() => ({ json: [] }))
     mount()
-    const a = screen.getByRole('region', { name: 'Boulder' })
+    const a = screen.getByRole('region', { name: 'Ridgeline' })
     const pool = screen.getByRole('region', { name: 'Unassigned' })
     expect(within(a).getByText('Mateo Kid')).toBeInTheDocument()
     expect(within(pool).getByText('Noah Kid')).toBeInTheDocument()
@@ -51,7 +51,7 @@ describe('RosterTab', () => {
   it('lays out the team grid at two columns on medium screens and three on extra-large', () => {
     fakeFetch(() => ({ json: [] }))
     mount()
-    const grid = screen.getByRole('region', { name: 'Boulder' }).parentElement
+    const grid = screen.getByRole('region', { name: 'Ridgeline' }).parentElement
     expect(grid?.className).toContain('lg:grid-cols-2')
     expect(grid?.className).toContain('xl:grid-cols-3')
     expect(grid?.className).not.toContain('lg:grid-cols-3')
@@ -77,7 +77,7 @@ describe('RosterTab', () => {
     const pool = screen.getByRole('region', { name: 'Unassigned' })
     await user.click(within(pool).getByRole('checkbox', { name: 'Select Noah Kid' }))
     await user.click(within(pool).getByRole('checkbox', { name: 'Select Zoe Kid' }))
-    await user.click(within(screen.getByRole('region', { name: 'Denver' })).getByRole('button', { name: 'Move 2 here' }))
+    await user.click(within(screen.getByRole('region', { name: 'Lakeside' })).getByRole('button', { name: 'Move 2 here' }))
     await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/events/7/athletes/assign')).toBe(true))
     const i = f.calls.findIndex(c => c.url === '/api/events/7/athletes/assign')
     expect(f.body(i)).toEqual({ ids: [300, 400], teamId: 2 })
@@ -94,7 +94,7 @@ describe('RosterTab', () => {
     const user = userEvent.setup()
     const pool = screen.getByRole('region', { name: 'Unassigned' })
     await user.click(within(pool).getByRole('checkbox', { name: 'Select Noah Kid' }))
-    await user.click(within(screen.getByRole('region', { name: 'Denver' })).getByRole('button', { name: 'Move 1 here' }))
+    await user.click(within(screen.getByRole('region', { name: 'Lakeside' })).getByRole('button', { name: 'Move 1 here' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('teamId is not on this event')
   })
 

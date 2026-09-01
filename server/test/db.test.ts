@@ -9,8 +9,8 @@ describe('db', () => {
     const db = await freshDb()
     const ev = await db.insert(events).values({ name: 'Fall Duels', date: '2026-10-03', matCount: 2, matCode: '0420', createdAt: '2026-08-27T00:00:00.000Z' }).returning().get()
     await db.insert(teams).values([
-      { eventId: ev.id, name: 'Boulder', color: 'red', position: 0 },
-      { eventId: ev.id, name: 'Denver', color: 'blue', position: 1 },
+      { eventId: ev.id, name: 'Ridgeline', color: 'red', position: 0 },
+      { eventId: ev.id, name: 'Lakeside', color: 'blue', position: 1 },
     ]).run()
     expect(await db.select().from(teams).where(eq(teams.eventId, ev.id)).all()).toHaveLength(2)
     expect(ev.status).toBe('setup')

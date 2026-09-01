@@ -4,7 +4,7 @@ import { createTestApp, call } from './helpers.js'
 import { seedEvent } from './fixtures.js'
 import { mats, matches, rosterCandidates } from '../src/db/schema.js'
 
-const body = { name: 'Fall Duels', date: '2026-10-03', matCount: 2, teams: [{ name: 'Boulder', color: 'red' }, { name: 'Denver', color: 'blue' }] }
+const body = { name: 'Fall Duels', date: '2026-10-03', matCount: 2, teams: [{ name: 'Ridgeline', color: 'red' }, { name: 'Lakeside', color: 'blue' }] }
 
 describe('events', () => {
   it('requires an admin token', async () => {
@@ -19,7 +19,7 @@ describe('events', () => {
     expect(r.status).toBe(201)
     expect(r.body.event.matCode).toMatch(/^\d{4}$/)
     expect(r.body.event.status).toBe('setup')
-    expect(r.body.teams.map((t: any) => [t.name, t.color, t.position])).toEqual([['Boulder', 'red', 0], ['Denver', 'blue', 1]])
+    expect(r.body.teams.map((t: any) => [t.name, t.color, t.position])).toEqual([['Ridgeline', 'red', 0], ['Lakeside', 'blue', 1]])
     expect(r.body.mats.map((m: any) => m.number)).toEqual([1, 2])
     expect(r.body.rulesets).toHaveLength(1)
     expect(r.body.rulesets[0].actions.length).toBeGreaterThan(3)
@@ -78,8 +78,8 @@ describe('events', () => {
   it('renames a team, serves connect info, and deletes a setup event', async () => {
     const { app, db, adminToken } = await createTestApp()
     const s = await seedEvent(db)
-    const t = await call(app, 'PATCH', `/api/events/${s.eventId}/teams/${s.teamA}`, { name: 'Boulder Bears', color: 'teal' }, adminToken)
-    expect(t.body.teams[0]).toMatchObject({ name: 'Boulder Bears', color: 'teal' })
+    const t = await call(app, 'PATCH', `/api/events/${s.eventId}/teams/${s.teamA}`, { name: 'Ridgeline Bears', color: 'teal' }, adminToken)
+    expect(t.body.teams[0]).toMatchObject({ name: 'Ridgeline Bears', color: 'teal' })
     const c = await call(app, 'GET', `/api/events/${s.eventId}/connect`, undefined, adminToken)
     expect(c.body.matCode).toBe('0420')
     expect(c.body.url).toMatch(/^http:\/\/[\d.]+:\d+$/)

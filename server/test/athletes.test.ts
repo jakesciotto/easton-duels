@@ -3,7 +3,7 @@ import { createTestApp, call } from './helpers.js'
 import { seedEvent } from './fixtures.js'
 
 const candidate = {
-  wlUid: 'u100', firstName: 'Zoe', lastName: 'Martin', belt: 'grey', wlLocation: 'Boulder',
+  wlUid: 'u100', firstName: 'Zoe', lastName: 'Martin', belt: 'grey', wlLocation: 'Ridgeline',
   leaderboardId: 'zoe-martin', erp: 5.2, age: 8, weightLbs: 60, gender: 'F',
 }
 
