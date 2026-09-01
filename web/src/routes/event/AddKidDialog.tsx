@@ -4,15 +4,19 @@ import { adminApi, useAdminMutation } from '@/lib/queries'
 import { ApiError } from '@/lib/api'
 import type { EventDetail, ManualKid, RosterCandidate } from '@/lib/types'
 import { beltLabel } from '@/lib/format'
+import { cn } from '@/lib/utils'
+import { dialogBody, dialogFooter, dialogSurface } from '@/components/dialog-frame'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { EmptyState } from '@/components/ui/empty-state'
+import { FieldSet } from '@/components/ui/field-set'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
-import { List, ListRow } from '@/components/ui/list'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { CandidateHead, CandidateRow } from './CandidateRow'
 
 const BELT_ITEMS = [{ value: null as string | null, label: 'No belt' }, ...KIDS_BELTS.map(b => ({ value: b as string | null, label: beltLabel(b) }))]
 const GENDER_ITEMS = [{ value: null as string | null, label: 'Not set' }, { value: 'M', label: 'M' }, { value: 'F', label: 'F' }]
@@ -112,21 +116,28 @@ export function AddKidDialog({ detail, open, onOpenChange, onRefresh }: {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl">
+      <DialogContent className={dialogSurface(576)}>
         <DialogHeader><DialogTitle>Add competitor</DialogTitle></DialogHeader>
-        <Tabs value={tab} onValueChange={v => setTab(v as 'pool' | 'manual')} className="gap-0">
+        <Tabs value={tab} onValueChange={v => setTab(v as 'pool' | 'manual')} className="min-h-0 gap-0">
           <TabsList className="px-5">
             <TabsTrigger value="pool">From pool</TabsTrigger>
             <TabsTrigger value="manual">Manual</TabsTrigger>
           </TabsList>
-          <DialogBody>
-            <TabsContent value="pool" className="grid gap-3">
-              {poolError && <p role="alert" className="text-[13px] text-destructive">{poolError}</p>}
+          <DialogBody className={cn(dialogBody, 'flex-1 gap-4')}>
+            <TabsContent value="pool" className="grid gap-4">
+              {poolError && (
+                <Alert>
+                  <AlertTitle>The pool did not load</AlertTitle>
+                  <AlertDescription>{poolError}</AlertDescription>
+                </Alert>
+              )}
               {pool !== null && pool.length === 0 ? (
-                <div className="grid justify-items-center gap-2 rounded-lg border border-border bg-card p-4 text-center">
-                  <p className="text-sm text-soft">No pool yet. Sync from WellnessLiving to build one.</p>
-                  <Button size="sm" variant="secondary" onClick={onRefresh}>Sync from WellnessLiving</Button>
-                </div>
+                <FieldSet className="rounded-none">
+                  <EmptyState
+                    message="No pool yet. Import one from WellnessLiving."
+                    action={<Button size="sm" variant="ghost" onClick={onRefresh}>Sync from WellnessLiving</Button>}
+                  />
+                </FieldSet>
               ) : pool !== null && (
                 <>
                   <div className="flex flex-wrap items-center gap-3">
@@ -139,52 +150,70 @@ export function AddKidDialog({ detail, open, onOpenChange, onRefresh }: {
                         {teamItems.map(i => <SelectItem key={String(i.value)} value={i.value}>{i.label}</SelectItem>)}
                       </SelectContent>
                     </Select>
-                    <Button size="sm" variant="ghost" className="ml-auto" onClick={onRefresh}>Refresh from WellnessLiving</Button>
                   </div>
-                  <span className="flex items-center gap-2 text-[13px] text-soft">
-                    <Checkbox aria-label="Show unrated competitors" checked={showUnrated} onCheckedChange={setShowUnrated} />
-                    Show unrated
-                  </span>
-                  <List className="max-h-72 overflow-y-auto">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="t2 text-gray-10">
+                      <span className="fig text-gray-11">{visible.length}</span> of <span className="fig text-gray-11">{available.length}</span> shown, rated first
+                    </span>
+                    <span className="ml-auto flex items-center gap-2 t2 text-gray-11">
+                      <Checkbox aria-label="Show unrated competitors" checked={showUnrated} onCheckedChange={setShowUnrated} />
+                      Show unrated
+                    </span>
+                    <Button size="sm" variant="ghost" onClick={onRefresh}>Refresh from WellnessLiving</Button>
+                  </div>
+                  {/* 2.6: inner = max(0, 12 - 16) = 0, so the list is flush inside the padded body. */}
+                  <FieldSet className="max-h-[320px] overflow-y-auto rounded-none">
+                    <CandidateHead valueLabel="ERP" />
                     {visible.length === 0
-                      ? <ListRow className="text-[13px] text-gray-10">No competitors to add</ListRow>
+                      ? <EmptyState
+                          message="No competitors match. Clear the search."
+                          action={<Button size="sm" variant="ghost" onClick={() => setSearch('')}>Clear search</Button>}
+                        />
                       : visible.map(c => (
-                        <ListRow key={c.wlUid} className="flex items-center gap-3">
-                          <Checkbox aria-label={`Select ${c.firstName} ${c.lastName}`} checked={picked.has(c.wlUid)} onCheckedChange={v => toggle(c.wlUid, v)} />
-                          <span className="min-w-0 flex-1 truncate font-medium">{c.firstName} {c.lastName}</span>
-                          <span className="text-[13px] text-soft">{beltLabel(c.belt)}</span>
-                          {c.erp !== null && <Badge>ERP <span className="font-mono tabular-nums">{c.erp.toFixed(1)}</span></Badge>}
-                        </ListRow>
+                        <CandidateRow key={c.wlUid} candidate={c} checked={picked.has(c.wlUid)} onCheckedChange={v => toggle(c.wlUid, v)} />
                       ))}
-                  </List>
+                  </FieldSet>
                 </>
               )}
-              {addCandidates.error && <p role="alert" className="text-[13px] text-destructive">{addCandidates.error.message}</p>}
+              {addCandidates.error && (
+                <Alert>
+                  <AlertTitle>Those competitors were not added</AlertTitle>
+                  <AlertDescription>{addCandidates.error.message}</AlertDescription>
+                </Alert>
+              )}
             </TabsContent>
             <TabsContent value="manual">
               <form id={MANUAL_FORM_ID} onSubmit={submitManual} className="grid gap-4">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="grid gap-1.5">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="grid gap-2">
                     <Label htmlFor="k-first">First name</Label>
                     <Input id="k-first" required value={f.firstName} onChange={e => setF({ ...f, firstName: e.target.value })} />
                   </div>
-                  <div className="grid gap-1.5">
+                  <div className="grid gap-2">
                     <Label htmlFor="k-last">Last name</Label>
                     <Input id="k-last" required value={f.lastName} onChange={e => setF({ ...f, lastName: e.target.value })} />
                   </div>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="grid gap-1.5">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="grid gap-2">
                     <Label htmlFor="k-age">Age</Label>
-                    <Input id="k-age" type="number" min={3} max={17} className="font-mono tabular-nums" value={f.age} onChange={e => setF({ ...f, age: e.target.value })} />
+                    <Input
+                      id="k-age" inputMode="numeric" autoComplete="off" maxLength={2}
+                      className="fig w-[var(--col-num-s)] text-right"
+                      value={f.age} onChange={e => setF({ ...f, age: e.target.value.replace(/\D/g, '') })}
+                    />
                   </div>
-                  <div className="grid gap-1.5">
+                  <div className="grid gap-2">
                     <Label htmlFor="k-weight">Weight (lb)</Label>
-                    <Input id="k-weight" type="number" min={20} max={250} className="font-mono tabular-nums" value={f.weightLbs} onChange={e => setF({ ...f, weightLbs: e.target.value })} />
+                    <Input
+                      id="k-weight" inputMode="numeric" autoComplete="off" maxLength={3}
+                      className="fig w-[var(--col-num-m)] text-right"
+                      value={f.weightLbs} onChange={e => setF({ ...f, weightLbs: e.target.value.replace(/\D/g, '') })}
+                    />
                   </div>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="grid gap-1.5">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="grid gap-2">
                     <Label htmlFor="k-belt">Belt</Label>
                     <Select value={f.belt} onValueChange={belt => setF({ ...f, belt })} items={BELT_ITEMS}>
                       <SelectTrigger id="k-belt"><SelectValue placeholder="No belt" /></SelectTrigger>
@@ -193,7 +222,7 @@ export function AddKidDialog({ detail, open, onOpenChange, onRefresh }: {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="grid gap-1.5">
+                  <div className="grid gap-2">
                     <Label htmlFor="k-gender">Gender</Label>
                     <Select value={f.gender} onValueChange={gender => setF({ ...f, gender })} items={GENDER_ITEMS}>
                       <SelectTrigger id="k-gender"><SelectValue placeholder="Not set" /></SelectTrigger>
@@ -203,7 +232,7 @@ export function AddKidDialog({ detail, open, onOpenChange, onRefresh }: {
                     </Select>
                   </div>
                 </div>
-                <div className="grid gap-1.5">
+                <div className="grid gap-2">
                   <Label htmlFor="k-team">Team</Label>
                   <Select value={f.teamId} onValueChange={teamId => setF({ ...f, teamId })} items={teamItems}>
                     <SelectTrigger id="k-team"><SelectValue placeholder="Unassigned" /></SelectTrigger>
@@ -212,12 +241,17 @@ export function AddKidDialog({ detail, open, onOpenChange, onRefresh }: {
                     </SelectContent>
                   </Select>
                 </div>
-                {addManual.error && <p role="alert" className="text-[13px] text-destructive">{addManual.error.message}</p>}
+                {addManual.error && (
+                  <Alert>
+                    <AlertTitle>That competitor was not added</AlertTitle>
+                    <AlertDescription>{addManual.error.message}</AlertDescription>
+                  </Alert>
+                )}
               </form>
             </TabsContent>
           </DialogBody>
         </Tabs>
-        <DialogFooter>
+        <DialogFooter className={dialogFooter}>
           <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>Cancel</Button>
           {tab === 'pool'
             ? <Button type="button" onClick={submitPool} disabled={picked.size === 0 || addCandidates.isPending}>Add {picked.size} {picked.size === 1 ? 'competitor' : 'competitors'}</Button>

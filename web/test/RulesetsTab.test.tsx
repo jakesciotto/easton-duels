@@ -26,12 +26,21 @@ describe('RulesetsTab', () => {
     const f = fakeFetch(() => ({ status: 201, json: {} }))
     mount()
     expect(screen.getByText('Default')).toBeInTheDocument()
-    expect(screen.getByText((_, el) => el?.getAttribute('data-slot') === 'badge' && el.textContent === 'Takedown +2')).toBeInTheDocument()
+    // 6.7: action points are a column of values (word + right-aligned mono value), not a
+    // Badge -- the label and its signed value are separate reads on one ledger row.
+    expect(screen.getByText('Takedown')).toBeInTheDocument()
+    expect(screen.getByText('+2')).toBeInTheDocument()
+    expect(screen.getByText('Pin')).toBeInTheDocument()
+    expect(screen.getByText('submission')).toBeInTheDocument()
+    // The default clock length renders in the same M:SS mono form the board uses.
+    expect(screen.getByText('5:00')).toBeInTheDocument()
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'New ruleset' }))
     await user.type(screen.getByLabelText('Name'), 'Wrestling')
-    await user.clear(screen.getByLabelText('Length (seconds)'))
-    await user.type(screen.getByLabelText('Length (seconds)'), '180')
+    // The length is typed in the same m:ss form the board and the mat clock print,
+    // so the number the ruleset sets and the number the room reads are one object.
+    await user.clear(screen.getByLabelText('Default length (m:ss)'))
+    await user.type(screen.getByLabelText('Default length (m:ss)'), '3:00')
     await user.click(screen.getByRole('button', { name: 'Add action' }))
     const labels = screen.getAllByLabelText('Action label')
     await user.type(labels[labels.length - 1], 'Near fall')

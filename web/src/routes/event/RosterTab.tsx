@@ -1,178 +1,154 @@
-import { useState, type DragEvent } from 'react'
+import { useRef, useState } from 'react'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import type { AthleteRow, EventDetail } from '@/lib/types'
-import { athleteName, beltLabel } from '@/lib/format'
+import { athleteName } from '@/lib/format'
 import { AddKidDialog } from './AddKidDialog'
 import { PasteRosterDialog } from './PasteRosterDialog'
 import { SyncRosterDialog } from './SyncRosterDialog'
+import { RosterGroup } from './roster-group'
+import { dropZoneValue, useRosterDrag } from './roster-drag'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Input } from '@/components/ui/input'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { List, ListRow } from '@/components/ui/list'
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { TeamCard } from '@/components/TeamCard'
-
-function NumberCell({ label, value, onSave, source }: { label: string; value: number | null; onSave: (v: number | null) => void; source: string | null }) {
-  const [draft, setDraft] = useState(value === null ? '' : String(value))
-  const commit = () => {
-    const next = draft === '' ? null : Number(draft)
-    if (next !== value && (next === null || Number.isFinite(next))) onSave(next)
-  }
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <Input aria-label={label} inputMode="numeric" value={draft}
-        onChange={e => setDraft(e.target.value.replace(/\D/g, ''))} onBlur={commit}
-        onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-        className="h-7 w-12 bg-background px-1 text-right font-mono tabular-nums" />
-      {value !== null && source === 'leaderboard' && <Badge variant="done">estimated</Badge>}
-    </span>
-  )
-}
-
-function KidRow({ kid, selected, onSelect, onPatch, onRemove }: {
-  kid: AthleteRow; selected: boolean; onSelect: (v: boolean) => void
-  onPatch: (body: Partial<AthleteRow>) => void; onRemove: () => void
-}) {
-  const name = athleteName(kid)
-  return (
-    <ListRow draggable onDragStart={e => e.dataTransfer.setData('text/plain', String(kid.id))} className="grid gap-1.5">
-      <div className="flex items-center gap-3">
-        <Checkbox aria-label={`Select ${name}`} checked={selected} onCheckedChange={checked => onSelect(checked)} />
-        <div className="min-w-0 flex-1 truncate font-medium">{name}</div>
-        <Button size="sm" variant="ghost" aria-label={`Remove ${name}`} onClick={onRemove}>Remove</Button>
-      </div>
-      <div className="flex flex-wrap items-center gap-2 pl-6 text-[13px] text-gray-10">
-        <span>{beltLabel(kid.belt)}</span>
-        {kid.gender && <span>{kid.gender}</span>}
-        {kid.erp !== null && <Badge>ERP <span className="font-mono tabular-nums">{kid.erp.toFixed(1)}</span></Badge>}
-        {kid.age === null && <Badge variant="warn">missing age</Badge>}
-        {kid.weightLbs === null && <Badge variant="warn">missing weight</Badge>}
-        <label className="flex items-center gap-1.5">age
-          <NumberCell label={`Age for ${name}`} value={kid.age} source={kid.ageSource} onSave={age => onPatch({ age })} />
-        </label>
-        <label className="flex items-center gap-1.5">lb
-          <NumberCell label={`Weight for ${name}`} value={kid.weightLbs} source={kid.weightSource} onSave={weightLbs => onPatch({ weightLbs })} />
-        </label>
-      </div>
-    </ListRow>
-  )
-}
-
-function Column({ title, roleLabel, color, teamId, kids, selected, onSelect, onPatch, onMove, onRemove }: {
-  title: string; roleLabel?: string; color: string | null; teamId: number | null; kids: AthleteRow[]; selected: Set<number>
-  onSelect: (id: number, v: boolean) => void; onPatch: (id: number, body: Partial<AthleteRow>) => void
-  onMove: (ids: number[], teamId: number | null) => void; onRemove: (kid: AthleteRow) => void
-}) {
-  const [over, setOver] = useState(false)
-  const selectedHere = kids.filter(k => selected.has(k.id)).length
-  const selectedElsewhere = selected.size - selectedHere
-  const moveHere = () => onMove([...selected].filter(id => !kids.some(k => k.id === id)), teamId)
-  const drop = (e: DragEvent) => {
-    e.preventDefault()
-    setOver(false)
-    const id = Number(e.dataTransfer.getData('text/plain'))
-    if (id) onMove([id], teamId)
-  }
-
-  const content = (
-    <>
-      <div className="flex items-center gap-2">
-        <span className="text-[13px] text-gray-10"><span className="font-mono tabular-nums">{kids.length}</span> {kids.length === 1 ? 'competitor' : 'competitors'}</span>
-        {selectedElsewhere > 0 && <Button size="sm" variant="secondary" className="ml-auto" onClick={moveHere}>Move {selectedElsewhere} here</Button>}
-      </div>
-      <List>
-        {kids.length === 0
-          ? <ListRow className="text-[13px] text-gray-10">No competitors here yet</ListRow>
-          : kids.map(k => <KidRow key={k.id} kid={k} selected={selected.has(k.id)} onSelect={v => onSelect(k.id, v)} onPatch={body => onPatch(k.id, body)} onRemove={() => onRemove(k)} />)}
-      </List>
-    </>
-  )
-
-  return (
-    <section aria-label={title} onDragOver={e => { e.preventDefault(); setOver(true) }} onDragLeave={() => setOver(false)} onDrop={drop}>
-      {color ? (
-        <TeamCard color={color} name={title} role={roleLabel} className={over ? 'border-foreground' : undefined}>
-          {content}
-        </TeamCard>
-      ) : (
-        <Card className={over ? 'border-foreground' : undefined}>
-          <CardHeader>
-            {/* Stands in for a TeamDot's 8px dot so all three column heads share one text edge. */}
-            <span aria-hidden className="size-2 shrink-0" />
-            <CardTitle>{title}</CardTitle>
-          </CardHeader>
-          <CardContent>{content}</CardContent>
-        </Card>
-      )}
-    </section>
-  )
-}
 
 export function RosterTab({ detail }: { detail: EventDetail }) {
   const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [faults, setFaults] = useState<Set<number>>(new Set())
   const [addOpen, setAddOpen] = useState(false)
   const [pasteOpen, setPasteOpen] = useState(false)
   const [syncOpen, setSyncOpen] = useState(false)
-  const [removing, setRemoving] = useState<AthleteRow | null>(null)
+  const [removing, setRemoving] = useState<AthleteRow[]>([])
+  const anchor = useRef<number | null>(null)
   const eventId = detail.event.id
   const assign = useAdminMutation(eventId, (v: { ids: number[]; teamId: number | null }) => adminApi(`/api/events/${eventId}/athletes/assign`, { method: 'POST', body: v }))
   const patch = useAdminMutation(eventId, (v: { id: number; body: Partial<AthleteRow> }) => adminApi(`/api/athletes/${v.id}`, { method: 'PATCH', body: v.body }))
   const remove = useAdminMutation(eventId, (id: number) => adminApi(`/api/athletes/${id}`, { method: 'DELETE' }))
 
-  const onSelect = (id: number, v: boolean) => setSelected(s => {
-    const n = new Set(s)
-    if (v) n.add(id)
-    else n.delete(id)
-    return n
-  })
-  const onMove = (ids: number[], teamId: number | null) => {
-    if (ids.length === 0) return
-    assign.mutate({ ids, teamId }, { onSuccess: () => setSelected(new Set()) })
+  const byTeam = (teamId: number | null) => detail.athletes.filter(a => a.teamId === teamId).sort((x, y) => x.lastName.localeCompare(y.lastName) || x.firstName.localeCompare(y.firstName))
+  const [teamA, teamB] = detail.teams
+  const groups = [
+    { key: 'a', title: teamA.name, color: teamA.color, teamId: teamA.id as number | null, kids: byTeam(teamA.id) },
+    { key: 'u', title: 'Unassigned', color: null, teamId: null as number | null, kids: byTeam(null) },
+    { key: 'b', title: teamB.name, color: teamB.color, teamId: teamB.id as number | null, kids: byTeam(teamB.id) },
+  ]
+  // Reading order, which is also the order a shift-click range walks.
+  const order = groups.flatMap(g => g.kids.map(k => k.id))
+
+  const onSelect = (id: number, v: boolean, range: boolean) => {
+    const from = anchor.current
+    anchor.current = id
+    setSelected(s => {
+      const n = new Set(s)
+      const start = from === null ? -1 : order.indexOf(from)
+      const end = order.indexOf(id)
+      if (range && start !== -1 && end !== -1) {
+        for (const rid of order.slice(Math.min(start, end), Math.max(start, end) + 1)) {
+          if (v) n.add(rid)
+          else n.delete(rid)
+        }
+        return n
+      }
+      if (v) n.add(id)
+      else n.delete(id)
+      return n
+    })
   }
+
+  const clearSelection = () => setSelected(new Set())
+  const moveTo = (ids: number[], teamId: number | null) => {
+    const moving = ids.filter(id => detail.athletes.find(a => a.id === id)?.teamId !== teamId)
+    if (moving.length === 0) {
+      clearSelection()
+      return
+    }
+    assign.mutate({ ids: moving, teamId }, { onSuccess: clearSelection })
+  }
+
+  const onPatch = (id: number, body: Partial<AthleteRow>) => patch.mutate({ id, body }, {
+    // A refused write is the row's own state, not a banner the organizer has to
+    // match back to a name, so the state rule carries it until the row saves.
+    onError: () => setFaults(f => new Set(f).add(id)),
+    onSuccess: () => setFaults(f => {
+      if (!f.has(id)) return f
+      const n = new Set(f)
+      n.delete(id)
+      return n
+    }),
+  })
+
+  const drag = useRosterDrag((id, teamId) => moveTo([id], teamId))
 
   // Cancel, the backdrop, Escape, and a successful remove all close through here,
   // so a failed remove's message never outlives the dialog it was shown in.
   const closeRemove = () => {
-    setRemoving(null)
+    setRemoving([])
     remove.reset()
   }
-  const runRemove = () => {
-    if (!removing) return
-    const id = removing.id
-    remove.mutate(id, {
-      onSuccess: () => {
-        setSelected(s => {
-          const n = new Set(s)
-          n.delete(id)
-          return n
-        })
-        closeRemove()
-      },
-    })
+  const runRemove = async () => {
+    const done: number[] = []
+    for (const kid of removing) {
+      try {
+        await remove.mutateAsync(kid.id)
+        done.push(kid.id)
+      } catch {
+        break
+      }
+    }
+    if (done.length > 0) {
+      setSelected(s => {
+        const n = new Set(s)
+        for (const id of done) n.delete(id)
+        return n
+      })
+    }
+    if (done.length === removing.length) closeRemove()
+    else setRemoving(removing.filter(k => !done.includes(k.id)))
   }
-  const byTeam = (teamId: number | null) => detail.athletes.filter(a => a.teamId === teamId).sort((x, y) => x.lastName.localeCompare(y.lastName) || x.firstName.localeCompare(y.firstName))
-  const [teamA, teamB] = detail.teams
+
+  const selectedRows = detail.athletes.filter(a => selected.has(a.id))
+  const needsData = detail.athletes.filter(a => a.age === null || a.weightLbs === null).length
+  const failure = assign.error ?? patch.error
 
   return (
-    <div className="grid gap-6">
-      <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" onClick={() => setAddOpen(true)}>Add competitor</Button>
-        <Button size="sm" variant="secondary" onClick={() => setPasteOpen(true)}>Paste roster</Button>
-        {detail.candidateCount === 0 && <Button size="sm" variant="secondary" onClick={() => setSyncOpen(true)}>Sync from WellnessLiving</Button>}
-        {(assign.error || patch.error) && <p role="alert" className="self-center text-[13px] text-destructive">{(assign.error ?? patch.error)?.message}</p>}
-      </div>
+    <div className="grid gap-6" data-dragging={drag.dragging}>
+      {selected.size > 0 ? (
+        <div role="group" aria-label="Selection" className="flex min-h-10 flex-wrap items-center gap-3">
+          <span className="t3 font-medium!"><span className="fig">{selected.size}</span> selected</span>
+          <Button size="sm" variant="secondary" onClick={() => moveTo([...selected], teamA.id)}>Move to {teamA.name}</Button>
+          <Button size="sm" variant="secondary" onClick={() => moveTo([...selected], teamB.id)}>Move to {teamB.name}</Button>
+          <Button size="sm" variant="secondary" onClick={() => moveTo([...selected], null)}>Move to Unassigned</Button>
+          <Button size="sm" variant="ghost" onClick={() => setRemoving(selectedRows)}>Remove</Button>
+          <Button size="sm" variant="ghost" onClick={clearSelection}>Clear</Button>
+        </div>
+      ) : (
+        <div className="flex min-h-10 flex-wrap items-center gap-2">
+          <span className="t2 text-gray-10">
+            {detail.teams.length} teams · {detail.athletes.length} competitors
+            {needsData > 0 && ` · ${needsData} need age or weight`}
+          </span>
+          <span className="ml-auto flex flex-wrap gap-2">
+            {detail.candidateCount === 0 && <Button size="sm" variant="ghost" onClick={() => setSyncOpen(true)}>Sync from WellnessLiving</Button>}
+            <Button size="sm" variant="secondary" onClick={() => setPasteOpen(true)}>Paste roster</Button>
+            <Button size="sm" onClick={() => setAddOpen(true)}>Add competitor</Button>
+          </span>
+        </div>
+      )}
+      {/* Outside the toolbar swap: a refused assign leaves the selection standing,
+          and the message has to outlive the bar it was triggered from. */}
+      {failure && <p role="alert" className="t2 text-fault">{failure.message}</p>}
       <AddKidDialog detail={detail} open={addOpen} onOpenChange={setAddOpen} onRefresh={() => setSyncOpen(true)} />
       <PasteRosterDialog detail={detail} open={pasteOpen} onOpenChange={setPasteOpen} />
       <SyncRosterDialog detail={detail} open={syncOpen} onOpenChange={setSyncOpen} />
-      <Dialog open={removing !== null} onOpenChange={o => { if (!o) closeRemove() }}>
-        {removing && (
+      <Dialog open={removing.length > 0} onOpenChange={o => { if (!o) closeRemove() }}>
+        {removing.length > 0 && (
           <DialogContent>
-            <DialogHeader><DialogTitle>Remove {athleteName(removing)}?</DialogTitle></DialogHeader>
+            <DialogHeader>
+              <DialogTitle>
+                {removing.length === 1 ? `Remove ${athleteName(removing[0])}?` : `Remove ${removing.length} competitors?`}
+              </DialogTitle>
+            </DialogHeader>
             <DialogBody>
-              <p className="text-sm text-soft">This takes the competitor off this event's roster. Competitors already placed in a match cannot be removed.</p>
-              {remove.error && <p role="alert" className="text-[13px] text-destructive">{remove.error.message}</p>}
+              <p className="t3 text-gray-11">This takes the competitor off this event's roster. Competitors already placed in a match cannot be removed.</p>
+              {remove.error && <p role="alert" className="t2 text-fault">{remove.error.message}</p>}
             </DialogBody>
             <DialogFooter>
               <Button type="button" variant="secondary" onClick={closeRemove}>Cancel</Button>
@@ -181,10 +157,25 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
           </DialogContent>
         )}
       </Dialog>
-      <div className="grid items-start gap-4 lg:grid-cols-2 xl:grid-cols-3">
-        <Column title={teamA.name} roleLabel="Team A" color={teamA.color} teamId={teamA.id} kids={byTeam(teamA.id)} selected={selected} onSelect={onSelect} onPatch={(id, body) => patch.mutate({ id, body })} onMove={onMove} onRemove={setRemoving} />
-        <Column title="Unassigned" color={null} teamId={null} kids={byTeam(null)} selected={selected} onSelect={onSelect} onPatch={(id, body) => patch.mutate({ id, body })} onMove={onMove} onRemove={setRemoving} />
-        <Column title={teamB.name} roleLabel="Team B" color={teamB.color} teamId={teamB.id} kids={byTeam(teamB.id)} selected={selected} onSelect={onSelect} onPatch={(id, body) => patch.mutate({ id, body })} onMove={onMove} onRemove={setRemoving} />
+      <div className="grid items-start gap-6 xl:grid-cols-3">
+        {groups.map((g, i) => (
+          <RosterGroup
+            key={g.key}
+            title={g.title}
+            color={g.color}
+            teamId={g.teamId}
+            kids={g.kids}
+            selected={selected}
+            faults={faults}
+            firstGroup={i === 0}
+            dragging={drag.dragging}
+            over={drag.over === dropZoneValue(g.teamId)}
+            onSelect={onSelect}
+            onPatch={onPatch}
+            onRemove={kid => setRemoving([kid])}
+            onDragStart={drag.start}
+          />
+        ))}
       </div>
     </div>
   )

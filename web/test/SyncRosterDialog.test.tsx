@@ -3,7 +3,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 import { render, screen, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { SyncRosterDialog } from '@/routes/event/SyncRosterDialog'
+import { SyncRosterDialog, SYNC_DEADLINE_MS, inFlightCopy, pullProgress } from '@/routes/event/SyncRosterDialog'
 import { setAdminToken } from '@/lib/auth'
 import type { EventDetail } from '@/lib/types'
 import { fakeFetch } from './fakes'
@@ -38,6 +38,21 @@ function mountHost() {
   render(<QueryClientProvider client={qc}><Host /></QueryClientProvider>)
 }
 
+describe('sync progress', () => {
+  it('reports the share of the 280 second budget spent, bounded at both ends', () => {
+    expect(SYNC_DEADLINE_MS).toBe(280_000)
+    expect(pullProgress(0)).toBe(0)
+    expect(pullProgress(SYNC_DEADLINE_MS / 2)).toBe(50)
+    expect(pullProgress(SYNC_DEADLINE_MS * 3)).toBe(100)
+  })
+
+  it('names what is in flight without listing every location', () => {
+    expect(inFlightCopy(['North'])).toBe('North')
+    expect(inFlightCopy(['North', 'South'])).toBe('North and South')
+    expect(inFlightCopy(['North', 'South', 'East', 'West'])).toBe('North, South and 2 more')
+  })
+})
+
 describe('SyncRosterDialog', () => {
   it('shows the not-configured message from a 503', async () => {
     fakeFetch(() => ({ status: 503, json: { error: { code: 'wl_not_configured', message: 'WellnessLiving credentials are not set' } } }))
@@ -61,7 +76,9 @@ describe('SyncRosterDialog', () => {
     expect(f.body(f.calls.findIndex(c => c.url.endsWith('/roster/sync')))).toEqual({ kBusinesses: ['100001'] })
     await user.type(screen.getByLabelText('Search'), 'zoe')
     expect(screen.queryByText('Kai Wong')).not.toBeInTheDocument()
-    expect(screen.getByText((_, el) => el?.textContent === '60 lb')).toBeInTheDocument()
+    // 7.14: the rating stops being a Badge and becomes a value in its own right
+    // aligned track, so the ordering is visibly the ordering.
+    expect(screen.getByText('5.2')).toBeInTheDocument()
     await user.click(screen.getByLabelText('Select Zoe Martin'))
     await user.click(screen.getByRole('button', { name: 'Add 1 competitor' }))
     await vi.waitFor(() => expect(f.calls.some(c => c.url.endsWith('/athletes') && c.init?.method === 'POST')).toBe(true))
@@ -114,6 +131,38 @@ describe('SyncRosterDialog', () => {
       await new Promise(resolve => setTimeout(resolve, 0))
     })
 
+    expect(screen.queryByText('Zoe Martin')).not.toBeInTheDocument()
+  })
+
+  it('shows a determinate bar and a Stop from the first second, and Stop abandons the pull', async () => {
+    let resolveSync: (v: { candidates: typeof cand[]; warnings: string[] }) => void = () => {}
+    const syncPromise = new Promise<{ candidates: typeof cand[]; warnings: string[] }>(resolve => { resolveSync = resolve })
+    fakeFetch(url => {
+      if (url.endsWith('/wl-locations')) return { json: [{ kBusiness: '100001', title: 'North', city: 'Northtown' }] }
+      if (url.endsWith('/roster/sync')) return syncPromise.then(v => ({ json: v }))
+      return { json: {} }
+    })
+    mount()
+    const user = userEvent.setup()
+    await screen.findByLabelText('North')
+    await user.click(screen.getByRole('button', { name: 'Pull roster' }))
+
+    // 6.12: 280 seconds is 28 times the attention limit, so a percent-done readout and
+    // a signposted interrupt are mandatory and neither may wait for the first response.
+    const bar = screen.getByRole('progressbar', { name: 'Roster sync' })
+    expect(bar).toHaveAttribute('aria-valuenow', '0')
+    expect(screen.getByText(/Pulling North/)).toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Stop' }))
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('Stopped waiting')
+
+    // A pull that lands after Stop must never repopulate the list behind the operator.
+    await act(async () => {
+      resolveSync({ candidates: [cand], warnings: [] })
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
     expect(screen.queryByText('Zoe Martin')).not.toBeInTheDocument()
   })
 })

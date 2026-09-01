@@ -21,12 +21,17 @@ const summary = { id: 7, name: 'Fall Duels', date: '2026-10-03', matCount: 2, ma
   teams: [{ id: 1, eventId: 7, name: 'Ridgeline', color: 'red', position: 0 }, { id: 2, eventId: 7, name: 'Lakeside', color: 'blue', position: 1 }] }
 
 describe('AdminPage', () => {
-  it('lists events with their teams and opens one', async () => {
+  it('lists events with their teams and opens one from the event name link', async () => {
     fakeFetch(url => url === '/api/events' ? { json: [summary] } : { json: { event: summary, teams: summary.teams, athletes: [], rulesets: [], mats: [], matches: [] } })
     const router = mount()
     expect(await screen.findByText('Fall Duels')).toBeInTheDocument()
-    expect(screen.getByText(/Ridgeline/)).toBeInTheDocument()
-    await userEvent.setup().click(screen.getByRole('link', { name: /open/i }))
+    expect(screen.getByText('Ridgeline')).toBeInTheDocument()
+    expect(screen.getByText('Lakeside')).toBeInTheDocument()
+    // 6.2: the event name is the row's own link target, so "Open" no longer exists --
+    // only "Board" remains as a separate action.
+    expect(screen.queryByRole('link', { name: /open/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Board' })).toBeInTheDocument()
+    await userEvent.setup().click(screen.getByRole('link', { name: 'Fall Duels' }))
     expect(router.state.location.pathname).toBe('/events/7')
   })
 

@@ -1,15 +1,51 @@
 import { useEffect, useState, type FormEvent } from 'react'
+import { formatClock } from '@shared/clock'
 import { adminApi, useAdminMutation } from '@/lib/queries'
-import type { AthleteRow, EventDetail } from '@/lib/types'
+import type { AthleteRow, EventDetail, TeamRow } from '@/lib/types'
 import { athleteName } from '@/lib/format'
 import { isDoubleBooked } from '@/lib/doubleBooking'
+import { cn } from '@/lib/utils'
+import { dialogBody, dialogFooter, dialogStack, dialogSurface } from '@/components/dialog-frame'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Toggle } from '@/components/ui/toggle'
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { clockToSec, maskClock } from './clock-input'
 
-const sel = 'h-9 w-full rounded-md border border-input bg-card px-2.5 text-sm text-foreground outline-none transition-[color,background-color,box-shadow] duration-150 focus-visible:border-transparent focus-visible:shadow-focus disabled:opacity-50'
+const LEAST_LOADED = ''
+
+// Team A is left and first on every surface, so the two competitor slots are placed
+// rather than stacked: the dialog reads in the same direction as the Entry tab and the
+// board hero. DOM order still matches tab order.
+function KidSlot({ id, team, kids, matches, value, onChange, align, className }: {
+  id: string
+  team: TeamRow
+  kids: AthleteRow[]
+  matches: EventDetail['matches']
+  value: string
+  onChange: (v: string) => void
+  align: 'left' | 'right'
+  className?: string
+}) {
+  const items = kids.map(k => ({
+    value: String(k.id),
+    label: athleteName(k) + (isDoubleBooked(k.id, matches) ? ' (double-booked)' : ''),
+  }))
+  return (
+    <div className={cn('grid gap-2', className)}>
+      <Label htmlFor={id} className={cn(align === 'right' && 'justify-end')}>{team.name} competitor</Label>
+      <Select value={value} onValueChange={v => onChange(String(v ?? ''))} items={items}>
+        <SelectTrigger id={id}><SelectValue placeholder="Pick a competitor" /></SelectTrigger>
+        <SelectContent>
+          {items.map(i => <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>)}
+        </SelectContent>
+      </Select>
+    </div>
+  )
+}
 
 export function AddMatchDialog({ detail, open, onOpenChange }: { detail: EventDetail; open: boolean; onOpenChange: (o: boolean) => void }) {
   const [teamA, teamB] = detail.teams
@@ -17,7 +53,7 @@ export function AddMatchDialog({ detail, open, onOpenChange }: { detail: EventDe
   const [bId, setBId] = useState('')
   const [rulesetId, setRulesetId] = useState('')
   const [length, setLength] = useState('')
-  const [matId, setMatId] = useState('')
+  const [matId, setMatId] = useState(LEAST_LOADED)
   const create = useAdminMutation(detail.event.id, (body: unknown) => adminApi(`/api/events/${detail.event.id}/matches`, { method: 'POST', body }))
 
   // Opening the dialog is the only thing that resets the form, so the deps stay at [open]:
@@ -27,79 +63,90 @@ export function AddMatchDialog({ detail, open, onOpenChange }: { detail: EventDe
     setAId('')
     setBId('')
     setRulesetId(String(detail.rulesets[0]?.id ?? ''))
-    setLength(String(detail.rulesets[0]?.defaultLengthSec ?? 300))
-    setMatId('')
+    setLength(formatClock((detail.rulesets[0]?.defaultLengthSec ?? 300) * 1000))
+    setMatId(LEAST_LOADED)
     create.reset()
   }, [open])
 
   const kids = (teamId: number) => detail.athletes.filter(a => a.teamId === teamId).sort((x, y) => x.lastName.localeCompare(y.lastName))
-  const optionLabel = (k: AthleteRow) => athleteName(k) + (isDoubleBooked(k.id, detail.matches) ? ' (double-booked)' : '')
+  const rulesetItems = detail.rulesets.map(r => ({ value: String(r.id), label: r.name }))
   const doubleBookedPicks = [aId, bId]
     .map(v => detail.athletes.find(a => String(a.id) === v))
     .filter((k): k is AthleteRow => k !== undefined && isDoubleBooked(k.id, detail.matches))
+  const lengthSec = clockToSec(length)
+  const ready = aId !== '' && bId !== '' && rulesetId !== '' && lengthSec !== null
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
+    if (!ready) return
     create.mutate(
-      { athleteAId: Number(aId), athleteBId: Number(bId), rulesetId: Number(rulesetId), lengthSec: Number(length), matId: matId ? Number(matId) : undefined },
+      { athleteAId: Number(aId), athleteBId: Number(bId), rulesetId: Number(rulesetId), lengthSec, matId: matId === LEAST_LOADED ? undefined : Number(matId) },
       { onSuccess: () => onOpenChange(false) },
     )
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl">
-        <form onSubmit={submit} className="grid min-h-0">
+      <DialogContent className={dialogSurface(512)}>
+        <form onSubmit={submit} className={dialogStack}>
           <DialogHeader><DialogTitle>Add match</DialogTitle></DialogHeader>
-          <DialogBody className="sm:grid-cols-2">
-            <div className="grid gap-1.5">
-              <Label htmlFor="am-a">{teamA.name} competitor</Label>
-              <select id="am-a" required className={sel} value={aId} onChange={e => setAId(e.target.value)}>
-                <option value="">Pick</option>
-                {kids(teamA.id).map(k => <option key={k.id} value={k.id}>{optionLabel(k)}</option>)}
-              </select>
-            </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="am-b">{teamB.name} competitor</Label>
-              <select id="am-b" required className={sel} value={bId} onChange={e => setBId(e.target.value)}>
-                <option value="">Pick</option>
-                {kids(teamB.id).map(k => <option key={k.id} value={k.id}>{optionLabel(k)}</option>)}
-              </select>
-            </div>
-            <div className="grid gap-1.5">
+          <DialogBody className={cn(dialogBody, 'gap-4 sm:grid-cols-2')}>
+            <KidSlot id="am-a" team={teamA} kids={kids(teamA.id)} matches={detail.matches} value={aId} onChange={setAId} align="left" className="sm:col-start-1 sm:row-start-1" />
+            <KidSlot id="am-b" team={teamB} kids={kids(teamB.id)} matches={detail.matches} value={bId} onChange={setBId} align="right" className="sm:col-start-2 sm:row-start-1" />
+
+            <div className="grid gap-2">
               <Label htmlFor="am-rs">Ruleset</Label>
-              <select
-                id="am-rs" className={sel} value={rulesetId}
-                onChange={e => {
-                  setRulesetId(e.target.value)
-                  const r = detail.rulesets.find(x => String(x.id) === e.target.value)
-                  if (r) setLength(String(r.defaultLengthSec))
+              <Select
+                value={rulesetId} items={rulesetItems}
+                onValueChange={v => {
+                  const next = String(v ?? '')
+                  setRulesetId(next)
+                  const r = detail.rulesets.find(x => String(x.id) === next)
+                  if (r) setLength(formatClock(r.defaultLengthSec * 1000))
                 }}
               >
-                {detail.rulesets.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-              </select>
+                <SelectTrigger id="am-rs"><SelectValue placeholder="Pick a ruleset" /></SelectTrigger>
+                <SelectContent>
+                  {rulesetItems.map(i => <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="am-len">Length (seconds)</Label>
-              <Input id="am-len" type="number" min={30} max={1800} required className="font-mono tabular" value={length} onChange={e => setLength(e.target.value)} />
+            <div className="grid gap-2">
+              <Label htmlFor="am-len">Length (m:ss)</Label>
+              <Input
+                id="am-len" required inputMode="numeric" autoComplete="off"
+                aria-invalid={lengthSec === null || undefined}
+                value={length} onChange={e => setLength(maskClock(e.target.value))}
+                className="fig fig-4 w-[var(--col-num-l)] text-right"
+              />
             </div>
-            <div className="grid gap-1.5 sm:col-span-2">
-              <Label htmlFor="am-mat">Mat</Label>
-              <select id="am-mat" className={sel} value={matId} onChange={e => setMatId(e.target.value)}>
-                <option value="">Least loaded</option>
-                {detail.mats.map(m => <option key={m.id} value={m.id}>Mat {m.number}</option>)}
-              </select>
-            </div>
-            {doubleBookedPicks.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 sm:col-span-2">
-                {doubleBookedPicks.map(k => <Badge key={k.id} variant="warn">{athleteName(k)} is already in a pending match</Badge>)}
+
+            <div className="grid gap-2 sm:col-span-2" role="group" aria-label="Mat">
+              <span className="t2 text-gray-10">Mat</span>
+              <div className="flex flex-wrap gap-2">
+                <Toggle size="sm" pressed={matId === LEAST_LOADED} onPressedChange={() => setMatId(LEAST_LOADED)}>Least loaded</Toggle>
+                {detail.mats.map(m => (
+                  <Toggle key={m.id} size="sm" pressed={matId === String(m.id)} onPressedChange={() => setMatId(String(m.id))}>Mat {m.number}</Toggle>
+                ))}
               </div>
+            </div>
+
+            {doubleBookedPicks.length > 0 && (
+              <Alert variant="attend" className="sm:col-span-2">
+                <AlertTitle variant="attend">Already booked</AlertTitle>
+                {doubleBookedPicks.map(k => <AlertDescription key={k.id}>{athleteName(k)} is already in a pending match</AlertDescription>)}
+              </Alert>
             )}
-            {create.error && <p role="alert" className="text-[13px] text-destructive sm:col-span-2">{create.error.message}</p>}
+            {create.error && (
+              <Alert className="sm:col-span-2">
+                <AlertTitle>That match was not added</AlertTitle>
+                <AlertDescription>{create.error.message}</AlertDescription>
+              </Alert>
+            )}
           </DialogBody>
-          <DialogFooter>
+          <DialogFooter className={dialogFooter}>
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="submit" disabled={create.isPending}>Add match</Button>
+            <Button type="submit" disabled={!ready || create.isPending}>Add match</Button>
           </DialogFooter>
         </form>
       </DialogContent>

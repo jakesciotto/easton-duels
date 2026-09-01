@@ -13,7 +13,7 @@ export function TeamCard({ color, name, role, className, children }: {
     <Card className={className}>
       <CardHeader>
         <TeamDot color={color} name={name} />
-        {role && <span className="ml-auto shrink-0 text-xs text-gray-10">{role}</span>}
+        {role && <span className="ml-auto shrink-0 t1 text-gray-10">{role}</span>}
       </CardHeader>
       {children && <CardContent>{children}</CardContent>}
     </Card>

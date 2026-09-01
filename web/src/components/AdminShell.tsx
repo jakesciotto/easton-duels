@@ -50,16 +50,21 @@ function FreshnessSlot({ freshness }: { freshness: ShellFreshness }) {
   )
 }
 
-export function AdminShell({ title, status, actions, meta, freshness, children }: {
+export function AdminShell({ title, status, actions, meta, freshness, footer, children }: {
   title: string
   status?: ReactNode
   actions?: ReactNode
   meta?: ReactNode
   freshness?: ShellFreshness
+  // 6.4: "one line: Questions at the desk: [organizer first name], [phone]." An owner-set
+  // field on the event drives this; no such field exists on the event row yet (server
+  // schema, out of this file's scope), so the band renders only when a caller has one to
+  // pass, never a fabricated line.
+  footer?: ReactNode
   children: ReactNode
 }) {
   return (
-    <div className="min-h-dvh">
+    <div className="flex min-h-dvh flex-col">
       <header className="sticky top-0 z-10 border-b border-gray-7 bg-background py-3">
         <div className="mx-auto flex max-w-6xl items-center gap-4 px-6">
           <Link to="/admin" className="flex items-center gap-2.5 rounded-md outline-none focus-visible:shadow-focus">
@@ -76,13 +81,18 @@ export function AdminShell({ title, status, actions, meta, freshness, children }
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-6xl t3">
+      <main className="mx-auto w-full max-w-6xl flex-1 t3">
         <div className="grid gap-2 px-6 pt-6 pb-4">
           <h1 className="truncate t6 text-gray-12">{title}</h1>
           {meta}
         </div>
         {children}
       </main>
+      {footer && (
+        <footer className="sticky bottom-0 z-10 border-t border-gray-7 bg-gray-1 px-6 py-2 t2 text-gray-10">
+          <div className="mx-auto max-w-6xl">{footer}</div>
+        </footer>
+      )}
     </div>
   )
 }

@@ -4,115 +4,329 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-
 import { CSS } from '@dnd-kit/utilities'
 import { GripVerticalIcon } from 'lucide-react'
 import { adminApi, useAdminMutation } from '@/lib/queries'
-import type { EventDetail, MatchRow } from '@/lib/types'
-import { athleteName } from '@/lib/format'
+import { useSnapshot } from '@/lib/useSnapshot'
+import type { EventDetail, MatchRow, TeamRow } from '@/lib/types'
+import { athleteName, winTypeLabel } from '@/lib/format'
 import { moveId } from '@/lib/reorder'
 import { doubleBookedMatchIds } from '@/lib/doubleBooking'
 import { cn } from '@/lib/utils'
 import { KidPickerDialog } from './KidPickerDialog'
 import { AddMatchDialog } from './AddMatchDialog'
+import {
+  endedLabel, liveReason, matchLines, readyNote, regenerateBlockedReason, regenerateWarning, skipNote,
+  type MatchLine,
+} from './matches-view'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { TeamDot } from '@/components/TeamDot'
-import { TeamCard } from '@/components/TeamCard'
+import { Chip } from '@/components/ui/chip'
+import { EmptyState } from '@/components/ui/empty-state'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Clock } from '@/components/Clock'
+import { TeamPlate } from '@/components/TeamPlate'
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 interface Pick { matchId: number; side: 'a' | 'b'; teamId: number }
 
-const selCell = 'h-8 rounded-md border border-input bg-card px-2 text-sm text-foreground outline-none transition-[color,background-color,box-shadow] duration-150 focus-visible:border-transparent focus-visible:shadow-focus disabled:opacity-50'
+// 4.4 names 2000ms for this tab. The suspension that keeps an arriving snapshot off the
+// screen while the operator is dragging, typing or picking lives in useSnapshot.
+const POLL_MS = 2000
 
-function Row({ m, detail, index, pendingIndex, pendingCount, doubleBooked, onPick, onPatch, onDelete, onMovePending }: {
-  m: MatchRow; detail: EventDetail; index: number; pendingIndex: number; pendingCount: number; doubleBooked: boolean
-  onPick: (p: Pick) => void; onPatch: (id: number, body: Partial<MatchRow>) => void; onDelete: (id: number) => void
-  onMovePending: (pendingIndex: number, dir: -1 | 1) => void
+const PENDING_COLUMNS = 9
+
+// The hovered competitor lights every row they appear in. Scanning for one child's next
+// bout is the most common thing this screen is used for, and the table is too tall to
+// read at once.
+type Hover = (athleteId: number | null) => void
+
+// An unfilled side reads "Unpaired, Crimson", never blank (6.8).
+type NameOf = (athleteId: number, team: TeamRow) => string
+
+interface Option { value: string; label: string }
+
+function CompetitorLine({ team, name, onHover, onPick }: {
+  team: TeamRow
+  name: string
+  onHover: (on: boolean) => void
+  onPick: () => void
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: m.id, disabled: m.status !== 'pending' })
-  const [teamA, teamB] = detail.teams
-  const byId = new Map(detail.athletes.map(a => [a.id, a]))
-  const name = (id: number) => { const k = byId.get(id); return k ? athleteName(k) : 'Unknown' }
-  const locked = m.status !== 'pending'
+  return (
+    <button
+      type="button"
+      aria-label={`${name}, ${team.name}`}
+      title={name}
+      onClick={onPick}
+      onMouseEnter={() => onHover(true)}
+      onMouseLeave={() => onHover(false)}
+      onFocus={() => onHover(true)}
+      onBlur={() => onHover(false)}
+      className="-mx-2 flex h-8 min-w-0 items-center gap-2 rounded-md px-2 text-left outline-none transition-colors duration-150 ease-standard hover:bg-gray-3 focus-visible:shadow-focus active:bg-gray-4"
+    >
+      <TeamPlate color={team.color} name={team.name} size="inline" showName={false} />
+      <span className="truncate t3">{name}</span>
+    </button>
+  )
+}
+
+// The live match is not one of forty identical rows. It is lifted into its own strip at
+// t5, and it is where "refuse rather than ask" is visible: the controls that would touch
+// a running match are disabled with the reason printed beside them.
+function LiveStrip({ line, teamA, teamB, nameA, nameB, serverNow, lastSuccessAt, highlight, onHover }: {
+  line: MatchLine
+  teamA: TeamRow
+  teamB: TeamRow
+  nameA: string
+  nameB: string
+  serverNow: string | null
+  lastSuccessAt: number | null
+  highlight: boolean
+  onHover: Hover
+}) {
+  const reason = liveReason(line)
+  return (
+    <div
+      data-match-state="live"
+      className={cn(
+        'grid gap-2 rounded-lg border-l-[3px] border-live p-4 transition-colors duration-150 ease-standard',
+        highlight ? 'bg-gray-4' : 'bg-gray-2',
+      )}
+    >
+      <div className="flex items-baseline gap-4">
+        <span className="t1 text-live uppercase">Live</span>
+        <span className="t1 text-gray-10 uppercase">{line.matNumber === null ? 'No mat' : `Mat ${line.matNumber}`}</span>
+        <span className="t1 text-gray-10 uppercase">Match <span className="fig">{line.position}</span></span>
+        <span className="ml-auto font-mono">
+          <Clock
+            clock={line.clock}
+            serverNow={serverNow}
+            lastSuccessAt={lastSuccessAt}
+            pollIntervalMs={POLL_MS}
+            className="t5 font-medium!"
+          />
+        </span>
+      </div>
+      <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 t5">
+        <span className="flex min-w-0 items-center gap-2" onMouseEnter={() => onHover(line.row.athleteAId)} onMouseLeave={() => onHover(null)}>
+          <TeamPlate color={teamA.color} name={teamA.name} size="inline" showName={false} />
+          <span className="truncate">{nameA}</span>
+        </span>
+        <span className="t1 text-gray-9 uppercase">vs</span>
+        <span className="flex min-w-0 items-center gap-2" onMouseEnter={() => onHover(line.row.athleteBId)} onMouseLeave={() => onHover(null)}>
+          <TeamPlate color={teamB.color} name={teamB.name} size="inline" showName={false} />
+          <span className="truncate">{nameB}</span>
+        </span>
+      </div>
+      <div className="flex items-center gap-4">
+        <span className="t2 text-gray-10">{reason}</span>
+        <Button size="sm" variant="destructive" aria-label="Delete match" title={reason} disabled>Delete</Button>
+      </div>
+    </div>
+  )
+}
+
+function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, doubleBooked, highlight, onHover, onPick, onPatch, onDelete, onMove }: {
+  line: MatchLine
+  teams: TeamRow[]
+  name: NameOf
+  matItems: Option[]
+  rulesetItems: Option[]
+  index: number
+  count: number
+  doubleBooked: boolean
+  highlight: boolean
+  onHover: Hover
+  onPick: (p: Pick) => void
+  onPatch: (id: number, body: Partial<MatchRow>) => void
+  onDelete: (id: number) => void
+  onMove: (index: number, dir: -1 | 1) => void
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: line.row.id })
+  const m = line.row
+  const [teamA, teamB] = teams
+  const attend = doubleBooked || line.state === 'skipped'
+  const ready = line.state === 'ready' ? readyNote(line) : null
 
   return (
-    <tr ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={cn('border-b border-border', locked && 'text-gray-10')}>
-      <td className="px-3 py-2.5">
+    <TableRow
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      data-match-state={line.state}
+      selected={highlight}
+      className="h-16"
+    >
+      <TableCell className="w-[var(--col-act)] pr-0">
         <Button
-          type="button" variant="ghost" size="icon" aria-label="Drag to reorder" disabled={locked}
-          className="cursor-grab disabled:cursor-not-allowed"
-          {...attributes} {...listeners}
+          type="button" variant="ghost" size="icon" aria-label="Drag to reorder"
+          className="cursor-grab" {...attributes} {...listeners}
         >
           <GripVerticalIcon />
         </Button>
-      </td>
-      <td className="px-3 py-2.5 font-mono tabular">{index + 1}</td>
-      <td className="px-3 py-2.5">
-        {locked ? (
-          <Badge variant={m.status === 'live' ? 'live' : 'done'}>{m.status}</Badge>
-        ) : (
-          <select aria-label="Mat" className={selCell} value={m.matId ?? ''} onChange={e => onPatch(m.id, { matId: e.target.value ? Number(e.target.value) : null })}>
-            <option value="">none</option>
-            {detail.mats.map(mat => <option key={mat.id} value={mat.id}>Mat {mat.number}</option>)}
-          </select>
-        )}
-      </td>
-      <td className="px-3 py-2.5">
-        <button
-          type="button" disabled={locked} onClick={() => onPick({ matchId: m.id, side: 'a', teamId: teamA.id })}
-          className="-mx-2 rounded-md px-2 py-1 text-left outline-none transition-colors duration-150 hover:bg-accent focus-visible:shadow-focus disabled:pointer-events-none"
+      </TableCell>
+      {/* 2.7's state track, at the row's leading edge: the one place a state colour is
+          allowed to be a rule. */}
+      <TableCell className="relative w-[var(--col-state)] p-0">
+        {attend && <span aria-hidden className="absolute inset-y-0 left-0 w-[var(--col-state)] bg-attend" />}
+      </TableCell>
+      <TableCell numeric className="w-[var(--col-num-s)] text-gray-10">{line.position}</TableCell>
+      <TableCell className="w-[112px]">
+        <Select
+          value={String(m.matId ?? '')}
+          onValueChange={v => { const next = String(v ?? ''); onPatch(m.id, { matId: next ? Number(next) : null }) }}
+          items={matItems}
         >
-          <TeamDot color={teamA.color} name={name(m.athleteAId)} />
-        </button>
-      </td>
-      <td className="px-3 py-2.5">
-        <button
-          type="button" disabled={locked} onClick={() => onPick({ matchId: m.id, side: 'b', teamId: teamB.id })}
-          className="-mx-2 rounded-md px-2 py-1 text-left outline-none transition-colors duration-150 hover:bg-accent focus-visible:shadow-focus disabled:pointer-events-none"
-        >
-          <TeamDot color={teamB.color} name={name(m.athleteBId)} />
-        </button>
-      </td>
-      <td className="px-3 py-2.5">
-        <div className="flex flex-wrap gap-1.5">
-          {m.why && <Badge>{m.why}</Badge>}
-          {doubleBooked && <Badge variant="warn">double-booked</Badge>}
+          <SelectTrigger size="sm" aria-label="Mat"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {matItems.map(i => <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </TableCell>
+      <TableCell className="min-w-0">
+        <div className="grid min-w-0">
+          <CompetitorLine
+            team={teamA} name={name(m.athleteAId, teamA)}
+            onHover={on => onHover(on ? m.athleteAId : null)}
+            onPick={() => onPick({ matchId: m.id, side: 'a', teamId: teamA.id })}
+          />
+          <CompetitorLine
+            team={teamB} name={name(m.athleteBId, teamB)}
+            onHover={on => onHover(on ? m.athleteBId : null)}
+            onPick={() => onPick({ matchId: m.id, side: 'b', teamId: teamB.id })}
+          />
         </div>
-      </td>
-      <td className="px-3 py-2.5">
+      </TableCell>
+      <TableCell className="min-w-0">
+        <div className="grid min-w-0 gap-1">
+          <span className="flex h-6 min-w-0 items-center">
+            {m.why
+              ? <Chip title={m.why}>{m.why}</Chip>
+              : <span className="t2 text-gray-10">Added by hand</span>}
+          </span>
+          <span className="flex h-4 min-w-0 items-center gap-3 overflow-hidden whitespace-nowrap">
+            {line.state === 'skipped' && <span className="t2 text-attend">{skipNote(line)}</span>}
+            {doubleBooked && <span className="t2 text-attend">Double booked</span>}
+            {ready && <span className="t2 text-gray-10">{ready}</span>}
+          </span>
+        </div>
+      </TableCell>
+      {/*
+        An editable cell rather than a boxed input: the length is a figure on the Ledger
+        Grid's own track, and a boxed control cannot hold 4ch plus its own border inside it.
+        Never type="number" (7.8): the spinner steals the track and the scroll wheel.
+      */}
+      <TableCell numeric className="w-[var(--col-num-l)] p-0">
         <input
-          aria-label="Length" type="number" min={30} max={1800} disabled={locked} defaultValue={m.lengthSec}
-          className="h-8 w-20 rounded-md border border-input bg-card px-2 font-mono tabular text-sm outline-none focus-visible:border-transparent focus-visible:shadow-focus disabled:opacity-50"
-          onBlur={e => { const v = Number(e.target.value); if (v !== m.lengthSec && v >= 30 && v <= 1800) onPatch(m.id, { lengthSec: v }) }}
+          aria-label="Length"
+          inputMode="numeric"
+          autoComplete="off"
+          defaultValue={m.lengthSec}
+          onBlur={e => {
+            const v = Number(e.target.value)
+            if (Number.isInteger(v) && v >= 30 && v <= 1800) {
+              if (v !== m.lengthSec) onPatch(m.id, { lengthSec: v })
+              return
+            }
+            // A refused value must not sit on screen looking saved.
+            e.target.value = String(m.lengthSec)
+          }}
+          className="fig fig-4 h-8 w-full rounded-md bg-transparent px-3 text-right outline-none transition-colors duration-150 ease-standard hover:bg-gray-3 focus-visible:bg-gray-3 focus-visible:shadow-focus"
         />
-      </td>
-      <td className="px-3 py-2.5">
-        <select aria-label="Ruleset" disabled={locked} className={selCell} value={m.rulesetId} onChange={e => onPatch(m.id, { rulesetId: Number(e.target.value) })}>
-          {detail.rulesets.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-        </select>
-      </td>
-      <td className="px-3 py-2.5">
-        {!locked && (
-          <div className="flex gap-2">
-            <Button size="sm" variant="ghost" aria-label="Move up" disabled={pendingIndex === 0} onClick={() => onMovePending(pendingIndex, -1)}>Up</Button>
-            <Button size="sm" variant="ghost" aria-label="Move down" disabled={pendingIndex === pendingCount - 1} onClick={() => onMovePending(pendingIndex, 1)}>Down</Button>
-            <Button size="sm" variant="ghost" aria-label="Delete match" onClick={() => onDelete(m.id)}>Delete</Button>
-          </div>
-        )}
-      </td>
-    </tr>
+      </TableCell>
+      <TableCell className="w-[168px]">
+        <Select
+          value={String(m.rulesetId)}
+          onValueChange={v => { const next = String(v ?? ''); if (next) onPatch(m.id, { rulesetId: Number(next) }) }}
+          items={rulesetItems}
+        >
+          <SelectTrigger size="sm" aria-label="Ruleset"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {rulesetItems.map(i => <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </TableCell>
+      <TableCell className="w-px whitespace-nowrap">
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="ghost" aria-label="Move up" disabled={index === 0} onClick={() => onMove(index, -1)}>Up</Button>
+          <Button size="sm" variant="ghost" aria-label="Move down" disabled={index === count - 1} onClick={() => onMove(index, 1)}>Down</Button>
+          {/* 7.7: a destructive control never sits flush against the row's most repeated one. */}
+          <Button size="sm" variant="destructive" className="ml-4" aria-label="Delete match" onClick={() => onDelete(m.id)}>Delete</Button>
+        </div>
+      </TableCell>
+    </TableRow>
+  )
+}
+
+function SettledRow({ line, teams, name, highlight, onHover }: {
+  line: MatchLine
+  teams: TeamRow[]
+  name: NameOf
+  highlight: boolean
+  onHover: Hover
+}) {
+  const m = line.row
+  const [teamA, teamB] = teams
+  const aWon = m.winnerAthleteId === m.athleteAId
+  const winner = { id: aWon ? m.athleteAId : m.athleteBId, team: aWon ? teamA : teamB }
+  const loser = { id: aWon ? m.athleteBId : m.athleteAId, team: aWon ? teamB : teamA }
+
+  return (
+    <TableRow data-match-state="done" selected={highlight}>
+      <TableCell numeric className="w-[var(--col-num-s)] text-gray-10">{line.position}</TableCell>
+      <TableCell className="w-[80px] t2 text-gray-10">{line.matNumber === null ? '' : `Mat ${line.matNumber}`}</TableCell>
+      <TableCell className="min-w-0">
+        <span className="flex min-w-0 items-center gap-2">
+          {/* 7.4: the winner is white at 500 and the loser --gray-10 at 400, never --fault. */}
+          <span
+            className="flex min-w-0 items-center gap-2"
+            onMouseEnter={() => onHover(winner.id)}
+            onMouseLeave={() => onHover(null)}
+          >
+            <TeamPlate color={winner.team.color} name={winner.team.name} size="inline" showName={false} />
+            <span className="truncate t3 font-medium text-white">{name(winner.id, winner.team)}</span>
+          </span>
+          <span className="shrink-0 t2 text-gray-9">beat</span>
+          <span
+            className="flex min-w-0 items-center gap-2"
+            onMouseEnter={() => onHover(loser.id)}
+            onMouseLeave={() => onHover(null)}
+          >
+            <TeamPlate color={loser.team.color} name={loser.team.name} size="inline" showName={false} />
+            <span className="truncate t3 text-gray-10">{name(loser.id, loser.team)}</span>
+          </span>
+        </span>
+      </TableCell>
+      <TableCell className="w-[160px] t2 text-gray-10">{m.winType ? winTypeLabel(m.winType) : ''}</TableCell>
+      <TableCell numeric className="w-[80px] text-gray-10">{endedLabel(line.endedAt)}</TableCell>
+    </TableRow>
   )
 }
 
 export function MatchesTab({ detail }: { detail: EventDetail }) {
   const eventId = detail.event.id
+  const { snapshot, lastSuccessAt } = useSnapshot(eventId, POLL_MS)
   const [pick, setPick] = useState<Pick | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [summary, setSummary] = useState<string | null>(null)
+  const [dragging, setDragging] = useState(false)
+  const [hovered, setHovered] = useState<number | null>(null)
+  const [showSettled, setShowSettled] = useState(false)
+  // Which pending matches this browser has moved by hand, so Regenerate can state what it
+  // is about to discard. The server stores an order, not who chose it.
+  const [handOrdered, setHandOrdered] = useState<number[]>([])
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
-  const ordered = useMemo(() => [...detail.matches].sort((x, y) => x.orderIndex - y.orderIndex || x.id - y.id), [detail.matches])
-  // Only pending rows are sortable: locked (live/done) rows keep their exact overall
+
+  const lines = useMemo(() => matchLines(detail, snapshot), [detail, snapshot])
+  const live = useMemo(() => lines.filter(l => l.lane === 'live'), [lines])
+  const pending = useMemo(() => lines.filter(l => l.lane === 'pending'), [lines])
+  const settled = useMemo(() => lines.filter(l => l.lane === 'settled'), [lines])
+  // Only pending rows are sortable: a live or settled match keeps its exact overall
   // position, so Up/Down and drag only ever swap a pending row with another pending row.
-  const pendingIds = useMemo(() => ordered.filter(m => m.status === 'pending').map(m => m.id), [ordered])
-  const doubleBooked = useMemo(() => doubleBookedMatchIds(detail.matches), [detail.matches])
+  const pendingIds = useMemo(() => pending.map(l => l.row.id), [pending])
+  // The status a row is shown under is the merged one, so the warning agrees with the lane.
+  const doubleBooked = useMemo(
+    () => doubleBookedMatchIds(lines.map(l => ({ ...l.row, status: l.status }))),
+    [lines],
+  )
 
   const generate = useAdminMutation(eventId, () => adminApi<{ created: number; unpairedA: number[]; unpairedB: number[] }>(`/api/events/${eventId}/matches/generate`, { method: 'POST' }))
   const patch = useAdminMutation(eventId, (v: { id: number; body: Partial<MatchRow> }) => adminApi(`/api/matches/${v.id}`, { method: 'PATCH', body: v.body }))
@@ -131,6 +345,10 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
 
   const pendingCount = pendingIds.length
   const hasPending = pendingCount > 0
+  const handCount = handOrdered.filter(id => pendingIds.includes(id)).length
+  // Refuse rather than ask: Regenerate deletes the whole pending queue, including the
+  // rows a running mat is about to call, so it is disabled with the reason printed.
+  const blocked = regenerateBlockedReason(live)
 
   // Every path that closes the confirm dialog (Cancel, backdrop/Escape via
   // onOpenChange, and a successful regenerate) routes through here, so a failed
@@ -144,34 +362,40 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
     generate.mutate(undefined, {
       onSuccess: r => {
         setSummary(`${r.created} matches created. ${r.unpairedA.length + r.unpairedB.length} competitors unpaired.`)
+        setHandOrdered([])
         closeConfirm()
       },
     })
   }
   const onGenerateClick = () => {
+    if (blocked) return
     if (hasPending) { setConfirmOpen(true); return }
     runGenerate()
   }
 
   // Moves a pending row within the pending-only subsequence, then rebuilds the full
-  // id order for the server with every locked row's id back in its original slot.
+  // id order for the server with every other row's id back in its original slot.
   const reorderPending = (pendingFrom: number, pendingTo: number): number[] => {
     const movedPending = moveId(pendingIds, pendingFrom, pendingTo)
     let cursor = 0
-    return ordered.map(m => (m.status === 'pending' ? movedPending[cursor++] : m.id))
+    return lines.map(l => (l.lane === 'pending' ? movedPending[cursor++] : l.row.id))
   }
+  const markHandOrdered = (id: number) => setHandOrdered(s => (s.includes(id) ? s : [...s, id]))
   const onMovePending = (pendingIndex: number, dir: -1 | 1) => {
     const to = pendingIndex + dir
     if (to < 0 || to >= pendingIds.length) return
     resetExcept('reorder')
+    markHandOrdered(pendingIds[pendingIndex])
     reorder.mutate(reorderPending(pendingIndex, to))
   }
   const onDragEnd = (e: DragEndEvent) => {
+    setDragging(false)
     if (!e.over || e.active.id === e.over.id) return
     const from = pendingIds.indexOf(Number(e.active.id))
     const to = pendingIds.indexOf(Number(e.over.id))
     if (from === -1 || to === -1) return
     resetExcept('reorder')
+    markHandOrdered(Number(e.active.id))
     reorder.mutate(reorderPending(from, to))
   }
   const onPicked = (athleteId: number) => {
@@ -189,80 +413,184 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
     del.mutate(id)
   }
 
+  const [teamA, teamB] = detail.teams
+  const byId = useMemo(() => new Map(detail.athletes.map(a => [a.id, a])), [detail.athletes])
+  const nameOf: NameOf = (id, team) => {
+    const k = byId.get(id)
+    return k ? athleteName(k) : `Unpaired, ${team.name}`
+  }
+  const matItems = useMemo(() => [
+    { value: '', label: 'No mat' },
+    ...detail.mats.map(mat => ({ value: String(mat.id), label: `Mat ${mat.number}` })),
+  ], [detail.mats])
+  const rulesetItems = useMemo(() => detail.rulesets.map(r => ({ value: String(r.id), label: r.name })), [detail.rulesets])
   const inMatch = new Set(detail.matches.flatMap(m => [m.athleteAId, m.athleteBId]))
   const unpaired = detail.teams.map(t => ({ team: t, kids: detail.athletes.filter(a => a.teamId === t.id && !inMatch.has(a.id)) }))
+  const holds = (line: MatchLine) => hovered !== null && (line.row.athleteAId === hovered || line.row.athleteBId === hovered)
+
   // While the confirm dialog is open, a failed generate is shown inside the
   // dialog only; the outer banner picks it back up once the dialog is closed
   // (closeConfirm resets it, so a successful or cancelled close leaves nothing).
-  const error = (confirmOpen ? null : generate.error) ?? patch.error ?? del.error ?? reorder.error
+  const generateError = confirmOpen ? null : generate.error
+  const failure = generateError ? { title: 'The matchups did not generate', error: generateError }
+    : patch.error ? { title: 'The change did not save', error: patch.error }
+      : del.error ? { title: 'The match was not deleted', error: del.error }
+        : reorder.error ? { title: 'The new order did not save', error: reorder.error }
+          : null
 
   return (
-    <div className="grid gap-6">
-      <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" onClick={onGenerateClick} disabled={generate.isPending}>{hasPending ? 'Regenerate' : 'Generate'}</Button>
+    // 4.4: the drag contract operatorEngaged() reads. An arriving snapshot is held, not
+    // committed, while this is set.
+    <div className="grid gap-6" data-dragging={dragging ? 'true' : undefined}>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button size="sm" onClick={onGenerateClick} disabled={generate.isPending || blocked !== null}>
+          {hasPending ? 'Regenerate' : 'Generate'}
+        </Button>
         <Button size="sm" variant="secondary" onClick={() => setAddOpen(true)}>Add match</Button>
-        {summary && <span aria-live="polite" className="text-[13px] text-gray-10">{summary}</span>}
-        {error && <p role="alert" className="text-[13px] text-destructive">{error.message}</p>}
+        {blocked && <span className="t2 text-gray-10">{blocked}</span>}
+        {/* 7.12: one polite region per screen, in the DOM and empty from the first render. */}
+        <span aria-live="polite" className="t2 text-gray-10">{summary ?? ''}</span>
       </div>
+
+      {failure && (
+        <Alert>
+          <AlertTitle>{failure.title}</AlertTitle>
+          <AlertDescription>{failure.error.message}</AlertDescription>
+        </Alert>
+      )}
+
+      {live.length > 0 && (
+        <section aria-label="Live now" className="grid gap-3">
+          {live.map(l => (
+            <LiveStrip
+              key={l.row.id} line={l} teamA={teamA} teamB={teamB}
+              nameA={nameOf(l.row.athleteAId, teamA)} nameB={nameOf(l.row.athleteBId, teamB)}
+              serverNow={snapshot?.now ?? null} lastSuccessAt={lastSuccessAt}
+              highlight={holds(l)} onHover={setHovered}
+            />
+          ))}
+        </section>
+      )}
+
       <Dialog open={confirmOpen} onOpenChange={o => { if (o) setConfirmOpen(true); else closeConfirm() }}>
         <DialogContent>
           <DialogHeader><DialogTitle>Replace {pendingCount} pending {pendingCount === 1 ? 'match' : 'matches'}?</DialogTitle></DialogHeader>
           <DialogBody>
-            <p className="text-sm text-soft">Manually added or edited pending matches are replaced too. Live and done matches are not affected.</p>
-            {generate.error && <p role="alert" className="text-[13px] text-destructive">{generate.error.message}</p>}
+            <p className="t3 text-gray-11">{regenerateWarning(pendingCount, handCount)}</p>
+            <p className="t3 text-gray-11">Manually added or edited pending matches are replaced too. Live and done matches are not affected.</p>
+            {generate.error && (
+              <Alert>
+                <AlertTitle>The matchups did not generate</AlertTitle>
+                <AlertDescription>{generate.error.message}</AlertDescription>
+              </Alert>
+            )}
           </DialogBody>
           <DialogFooter>
-            <Button type="button" variant="secondary" onClick={closeConfirm}>Cancel</Button>
-            <Button type="button" variant="destructive" disabled={generate.isPending} onClick={runGenerate}>Regenerate</Button>
+            <Button type="button" size="lg" variant="secondary" onClick={closeConfirm}>Cancel</Button>
+            <Button type="button" size="lg" variant="destructive" disabled={generate.isPending} onClick={runGenerate}>Regenerate</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
       <KidPickerDialog detail={detail} teamId={pick?.teamId ?? null} matchId={pick?.matchId ?? null} open={pick !== null} onOpenChange={o => { if (!o) setPick(null) }} onPick={onPicked} />
       <AddMatchDialog detail={detail} open={addOpen} onOpenChange={setAddOpen} />
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-        <SortableContext items={pendingIds} strategy={verticalListSortingStrategy}>
-          <div className="overflow-x-auto rounded-lg border border-border bg-card">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border text-left">
-                  <th className="px-3 py-2"></th>
-                  <th className="label px-3 py-2">#</th>
-                  <th className="label px-3 py-2">Mat</th>
-                  <th className="label px-3 py-2">{detail.teams[0].name}</th>
-                  <th className="label px-3 py-2">{detail.teams[1].name}</th>
-                  <th className="label px-3 py-2">Why</th>
-                  <th className="label px-3 py-2">Length</th>
-                  <th className="label px-3 py-2">Ruleset</th>
-                  <th className="px-3 py-2"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {ordered.length === 0 ? (
-                  <tr><td colSpan={9} className="px-3 py-2.5 text-[13px] text-gray-10">No matches yet</td></tr>
-                ) : ordered.map((m, i) => (
-                  <Row
-                    key={m.id} m={m} detail={detail} index={i}
-                    pendingIndex={pendingIds.indexOf(m.id)} pendingCount={pendingIds.length} doubleBooked={doubleBooked.has(m.id)}
-                    onPick={setPick} onPatch={onPatchAction} onDelete={onDeleteAction} onMovePending={onMovePending}
+
+      <section aria-label="Pending matches" className="grid gap-3">
+        <div className="flex flex-wrap items-baseline gap-3">
+          <h3 className="t4">Pending</h3>
+          <span className="t2 text-gray-10"><span className="fig">{pendingCount}</span> to run</span>
+          <span className="ml-auto flex items-center gap-3">
+            <TeamPlate color={teamA.color} name={teamA.name} />
+            <span className="t1 text-gray-9 uppercase">vs</span>
+            <TeamPlate color={teamB.color} name={teamB.name} />
+          </span>
+        </div>
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={() => setDragging(true)} onDragCancel={() => setDragging(false)} onDragEnd={onDragEnd}>
+          <SortableContext items={pendingIds} strategy={verticalListSortingStrategy}>
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="w-[var(--col-act)] pr-0"><span className="sr-only">Reorder</span></TableHead>
+                  <TableHead className="w-[var(--col-state)] p-0"><span className="sr-only">State</span></TableHead>
+                  <TableHead numeric className="w-[var(--col-num-s)]"><span className="font-sans">#</span></TableHead>
+                  <TableHead className="w-[112px]">Mat</TableHead>
+                  <TableHead>Competitors</TableHead>
+                  <TableHead>Why</TableHead>
+                  <TableHead numeric className="w-[var(--col-num-l)]"><span className="font-sans">Sec</span></TableHead>
+                  <TableHead className="w-[168px]">Ruleset</TableHead>
+                  <TableHead className="w-px"><span className="sr-only">Actions</span></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {pending.length === 0 ? (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell colSpan={PENDING_COLUMNS} className="p-0">
+                      <EmptyState
+                        message="No matches yet."
+                        action={<Button size="sm" variant="ghost" disabled={blocked !== null || generate.isPending} onClick={onGenerateClick}>Generate matchups</Button>}
+                      />
+                    </TableCell>
+                  </TableRow>
+                ) : pending.map((l, i) => (
+                  <PendingRow
+                    key={l.row.id} line={l} teams={detail.teams} name={nameOf}
+                    matItems={matItems} rulesetItems={rulesetItems} index={i} count={pending.length}
+                    doubleBooked={doubleBooked.has(l.row.id)} highlight={holds(l)} onHover={setHovered}
+                    onPick={setPick} onPatch={onPatchAction} onDelete={onDeleteAction} onMove={onMovePending}
                   />
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
+          </SortableContext>
+        </DndContext>
+      </section>
+
+      {settled.length > 0 && (
+        <section aria-label="Settled matches" className="grid gap-3">
+          <div className="flex flex-wrap items-baseline gap-3">
+            <h3 className="t4">Completed (<span className="fig">{settled.length}</span>)</h3>
+            <Button size="sm" variant="ghost" aria-expanded={showSettled} onClick={() => setShowSettled(s => !s)}>
+              {showSettled ? 'Hide' : 'Show'}
+            </Button>
           </div>
-        </SortableContext>
-      </DndContext>
-      <section aria-label="Unpaired" className="grid items-start gap-4 md:grid-cols-2">
-        {unpaired.map(({ team, kids }) => (
-          <TeamCard
-            key={team.id} color={team.color} name={team.name}
-            role={<><span className="font-mono tabular-nums">{kids.length}</span> unpaired</>}
-          >
-            <div className="flex flex-wrap gap-1">
-              {kids.length === 0
-                ? <span className="text-[13px] text-gray-10">Everyone is paired</span>
-                : kids.map(k => <Badge key={k.id}>{athleteName(k)}</Badge>)}
+          {/* History gets its own field on the recessed band, so it never shares a lane with work. */}
+          {showSettled && (
+            <div className="overflow-hidden rounded-lg bg-gray-1">
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead numeric className="w-[var(--col-num-s)]"><span className="font-sans">#</span></TableHead>
+                    <TableHead className="w-[80px]">Mat</TableHead>
+                    <TableHead>Result</TableHead>
+                    <TableHead className="w-[160px]">Win by</TableHead>
+                    <TableHead numeric className="w-[80px]"><span className="font-sans">At</span></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {settled.map(l => (
+                    <SettledRow key={l.row.id} line={l} teams={detail.teams} name={nameOf} highlight={holds(l)} onHover={setHovered} />
+                  ))}
+                </TableBody>
+              </Table>
             </div>
-          </TeamCard>
+          )}
+        </section>
+      )}
+
+      <section aria-label="Unpaired" className="grid items-start gap-6 md:grid-cols-2">
+        {unpaired.map(({ team, kids }) => (
+          <div key={team.id} className="grid gap-3">
+            <div className="flex items-baseline gap-3">
+              <TeamPlate color={team.color} name={team.name} />
+              <span className="ml-auto t2 text-gray-10"><span className="fig">{kids.length}</span> unpaired</span>
+            </div>
+            {kids.length === 0
+              ? <span className="t2 text-gray-10">Everyone is paired.</span>
+              : (
+                <ul className="grid gap-1 sm:grid-cols-2">
+                  {kids.map(k => <li key={k.id} className="truncate t3 text-gray-11">{athleteName(k)}</li>)}
+                </ul>
+              )}
+          </div>
         ))}
       </section>
     </div>

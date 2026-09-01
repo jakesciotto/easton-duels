@@ -49,3 +49,17 @@ describe('AdminShell freshness readout', () => {
     expect(el.parentElement).toHaveClass('text-fault')
   })
 })
+
+// Finding 4: the footer band is an owner-set line with no data source yet, so the shell
+// must never fabricate one -- same honest-absence contract as freshness above.
+describe('AdminShell footer band', () => {
+  it('renders no footer band when none is passed', () => {
+    mount(<AdminShell title="Events">content</AdminShell>)
+    expect(screen.queryByRole('contentinfo')).not.toBeInTheDocument()
+  })
+
+  it('renders the passed footer content in a footer band', () => {
+    mount(<AdminShell title="Events" footer="Questions at the desk: Sam, 555-0100">content</AdminShell>)
+    expect(screen.getByRole('contentinfo')).toHaveTextContent('Questions at the desk: Sam, 555-0100')
+  })
+})
