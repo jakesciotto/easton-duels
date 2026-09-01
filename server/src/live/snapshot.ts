@@ -1,7 +1,7 @@
 import { asc, eq } from 'drizzle-orm'
 import type { DbLike } from '../db/client.js'
 import { events, teams, athletes, rulesets, mats, matches, type MatchRow, type AthleteRow } from '../db/schema.js'
-import type { Snapshot, MatchView, MatchSide, MatView, TeamView, TeamColor } from '../shared/types.js'
+import { ON_DECK_DEPTH, type Snapshot, type MatchView, type MatchSide, type MatView, type TeamView, type TeamColor } from '../shared/types.js'
 import { MatchStateError, endedAtByMatch } from '../match/events.js'
 
 export interface SnapshotOptions {
@@ -73,7 +73,7 @@ export async function buildSnapshot(db: DbLike, eventId: number, opts: SnapshotO
   }))
   const matViews: MatView[] = matRows.map(mat => {
     const current = mat.currentMatchId !== null ? views.find(v => v.id === mat.currentMatchId) ?? null : null
-    const onDeck = views.filter(v => v.matId === mat.id && v.status === 'pending' && v.id !== current?.id).slice(0, 2)
+    const onDeck = views.filter(v => v.matId === mat.id && v.status === 'pending' && v.id !== current?.id).slice(0, ON_DECK_DEPTH)
     return { id: mat.id, number: mat.number, current, onDeck, bound: mat.bound }
   })
   return {

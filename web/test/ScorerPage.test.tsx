@@ -202,6 +202,57 @@ describe('ScorerPage', () => {
     expect(center).not.toHaveClass('bg-warn/10')
   })
 
+  // STILL OPEN 8: the mat tablet is the one screen that must never sleep during a
+  // live match, and it took no wake lock of its own -- the one MatPickPage
+  // acquired at the code field is released the instant that route unmounts on
+  // the navigate() into this one.
+  it('acquires the screen wake lock while a mat is being scored', async () => {
+    const release = vi.fn(async () => {})
+    const request = vi.fn().mockResolvedValue({ addEventListener: vi.fn(), release })
+    vi.stubGlobal('navigator', { wakeLock: { request } })
+    const feed = snapshotFeed(sampleSnapshot())
+    fakeFetch(url => feed.handle(url) ?? { json: {} })
+    await mount()
+    await screen.findByRole('region', { name: 'Mateo Rivera' })
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(1))
+  })
+
+  // Safari refuses navigator.wakeLock.request() outside a user gesture, so the
+  // mount-time attempt above can fail on the exact hardware this matters for.
+  // The handoff from MatPickPage must not leave the mat stuck asleep for the
+  // rest of the match: the operator's first tap on the scoring screen asks again.
+  it('re-asks for the wake lock on the first tap if the mount-time request was refused', async () => {
+    const release = vi.fn(async () => {})
+    const request = vi.fn()
+      .mockRejectedValueOnce(new Error('not allowed'))
+      .mockResolvedValueOnce({ addEventListener: vi.fn(), release })
+    vi.stubGlobal('navigator', { wakeLock: { request } })
+    const feed = snapshotFeed(sampleSnapshot())
+    fakeFetch(url => feed.handle(url) ?? { json: {} })
+    await mount()
+    const left = await screen.findByRole('region', { name: 'Mateo Rivera' })
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(1))
+
+    const user = userEvent.setup()
+    await user.click(within(left).getByRole('button', { name: /Takedown/ }))
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2))
+  })
+
+  // A tablet that refuses the lock every time is the failure that ends the
+  // afternoon quietly, so the scorer has to say it rather than swallow it.
+  it('says the screen may sleep when the tablet refuses the lock outright', async () => {
+    const request = vi.fn().mockRejectedValue(new Error('not allowed'))
+    vi.stubGlobal('navigator', { wakeLock: { request } })
+    const feed = snapshotFeed(sampleSnapshot())
+    fakeFetch(url => feed.handle(url) ?? { json: {} })
+    await mount()
+    const note = await screen.findByText(/Screen may sleep/)
+    expect(note).toBeInTheDocument()
+    // It must sit above the score sides, never over a control the scorer taps.
+    const left = screen.getByRole('region', { name: 'Mateo Rivera' })
+    expect(note.compareDocumentPosition(left) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   it('heartbeats at mount, again after 20 seconds, and stops after unmount', async () => {
     vi.useFakeTimers({ now: T0 })
     const f = fakeFetch(() => ({ json: {} }))

@@ -3,6 +3,7 @@ import { Navigate, useParams } from 'react-router'
 import { getMatBinding, type MatBinding } from '@/lib/auth'
 import { useSnapshot } from '@/lib/useSnapshot'
 import { useClock } from '@/lib/useClock'
+import { useWakeLock } from '@/lib/useWakeLock'
 import { beep, unlockAudio } from '@/lib/sounds'
 import { Connecting } from '@/components/Connecting'
 import { ScoreSide } from './scorer/ScoreSide'
@@ -27,6 +28,27 @@ function Scorer({ binding }: { binding: MatBinding }) {
     window.addEventListener('pointerdown', unlock, { once: true })
     return () => window.removeEventListener('pointerdown', unlock)
   }, [])
+
+  // STILL OPEN 8: this is the screen that must never sleep while a mat is being
+  // scored, and it held no lock of its own -- the one MatPickPage acquired is
+  // released the instant that route unmounts on the navigate() into this one.
+  // Ask on mount, which is all Chromium needs (recent activation from the bind
+  // form usually still covers it), and again on the mat's own first tap or key
+  // press, which is all Safari needs since it refuses the request outside a
+  // gesture. The hook's own in-flight guard (R6) makes it safe for this effect
+  // to ask again even if a request from the handoff is already in flight.
+  const wakeLock = useWakeLock()
+  useEffect(() => {
+    if (wakeLock.active) return
+    const ask = () => void wakeLock.request()
+    ask()
+    window.addEventListener('pointerdown', ask)
+    window.addEventListener('keydown', ask)
+    return () => {
+      window.removeEventListener('pointerdown', ask)
+      window.removeEventListener('keydown', ask)
+    }
+  }, [wakeLock.active, wakeLock.request])
 
   // Time up: beep and flash once per expiry, once the server confirms the clock paused
   // (m.clock.elapsedMs only reflects that after a fresh snapshot, so this waits for the real thing
@@ -59,6 +81,14 @@ function Scorer({ binding }: { binding: MatBinding }) {
   return (
     <main className="relative flex h-dvh select-none flex-col overflow-hidden bg-background">
       <Connecting connected={connected} />
+      {/* A refused lock is the failure that ends the afternoon quietly, so it is
+          said in words. It sits above the score sides rather than over them,
+          because nothing may cover a control the scorer taps without looking. */}
+      {wakeLock.failed && !wakeLock.active && (
+        <div role="status" className="shrink-0 bg-gray-1 px-4 py-1.5 text-center t2 text-attend">
+          Screen may sleep. Keep this tablet awake in its settings.
+        </div>
+      )}
       {!s.current || !s.mat ? (
         <div className="grid flex-1 place-items-center text-2xl text-muted-foreground">No match on this mat. Waiting for the organizer.</div>
       ) : (

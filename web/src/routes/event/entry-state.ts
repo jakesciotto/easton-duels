@@ -1,4 +1,5 @@
 import { ApiError } from '@/lib/api'
+import { athleteName } from '@/lib/format'
 import type { AthleteRow, MatchRow } from '@/lib/types'
 import type { WinType } from '@shared/types'
 
@@ -121,6 +122,25 @@ export function teamWins(matches: MatchRow[], athletes: AthleteRow[]): Map<numbe
 }
 
 export interface SaveErrorCopy { title: string; body: string }
+
+// The banner a restored, never-sent NEW entry wears. A restored correction never
+// gets this copy: see restoredBannerCopy below.
+export const RESTORED_NEW_ENTRY: SaveErrorCopy = { title: 'This entry never sent', body: 'It was kept on this device. Check it, then press Save.' }
+
+// R5: a correction can be stranded (a failed Save, then the desk moves on without
+// pressing Cancel edit) and later restored on a fresh mount. It must never wear
+// the same banner as an unsent new entry: the operator cannot tell "this was
+// never sent" from "this was never sent, over a match someone else may have since
+// corrected properly" without the match named, and would be inviting a stale
+// resend over a good result.
+export function restoredBannerCopy(draft: EntryDraft, matches: MatchRow[], athletes: AthleteRow[]): SaveErrorCopy {
+  if (draft.editingId === null) return RESTORED_NEW_ENTRY
+  const byId = new Map(athletes.map(a => [a.id, a]))
+  const nameOf = (id: number) => { const a = byId.get(id); return a ? athleteName(a) : 'Unknown' }
+  const m = matches.find(x => x.id === draft.editingId)
+  const label = m ? `${nameOf(m.athleteAId)} vs ${nameOf(m.athleteBId)}` : `match ${draft.editingId}`
+  return { title: `This correction to ${label} never sent`, body: 'It was kept on this device. Check it, then press Save.' }
+}
 
 // 7.12: every failure states what happened and what to do next, mapped from the
 // server's own codes. The unreachable-server case is the one gym wifi produces.

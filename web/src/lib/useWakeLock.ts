@@ -17,11 +17,23 @@ export function useWakeLock(): WakeLockState {
   const supported = typeof navigator !== 'undefined' && 'wakeLock' in navigator
   const lockRef = useRef<WakeLockSentinel | null>(null)
   const wantedRef = useRef(false)
+  // R6: one guard shared by every caller of this hook instance, not one invented
+  // per caller. Two callers requesting on the same tick (the visibility handler
+  // below and a caller's own effect reacting to the release it just caused) used
+  // to both pass the async gap before either set lockRef, acquiring two sentinels
+  // of which only one was ever tracked and released. Set synchronously before the
+  // first await, so the second call in the same tick sees it and returns.
+  const requestingRef = useRef(false)
   const [state, setState] = useState<{ active: boolean; failed: boolean }>({ active: false, failed: false })
 
   const request = useCallback(async () => {
-    if (!supported) return
+    // Holding a lock counts as in flight. The in-flight flag alone only excludes
+    // callers on the same tick, so a caller whose effect re-runs one commit after
+    // the request resolves would acquire a second sentinel that nothing releases.
+    // The release listener nulls lockRef, so a genuine re-acquire still passes.
+    if (!supported || requestingRef.current || lockRef.current !== null) return
     wantedRef.current = true
+    requestingRef.current = true
     try {
       const lock = await navigator.wakeLock.request('screen')
       lockRef.current = lock
@@ -32,6 +44,8 @@ export function useWakeLock(): WakeLockState {
       })
     } catch {
       setState({ active: false, failed: true })
+    } finally {
+      requestingRef.current = false
     }
   }, [supported])
 

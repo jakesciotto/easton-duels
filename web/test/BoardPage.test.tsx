@@ -1,9 +1,12 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
+import { existsSync, readFileSync } from 'node:fs'
+import { resolve as resolvePath } from 'node:path'
 import { render, screen, within, waitFor } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import type { MatView, MatchView, Snapshot } from '@shared/types'
 import { routes } from '@/router'
 import { Board } from '@/routes/board/Board'
+import { FLOOR_NOTE_MATS, boardBudget } from '@/routes/board/budget'
 import { fakeFetch, snapshotFeed, sampleMatch, sampleSnapshot } from './fakes'
 
 afterEach(() => {
@@ -125,9 +128,60 @@ describe('Board compositions', () => {
     // mat event used to lose mats five and six off the bottom of the band silently.
     const { container } = render(<Board snapshot={liveBoard(6)} connected />)
     expect(safe(container)).toHaveAttribute('data-mats', '6')
-    expect(safe(container).style.getPropertyValue('--mats')).toBe('6')
     expect(screen.getAllByRole('region', { name: /^Mat / })).toHaveLength(6)
     expect(screen.getByRole('region', { name: 'Mat 6' })).toBeInTheDocument()
+    // Six panels and five gaps come to the whole band, and the row's type steps down to
+    // the panel it was given rather than being cut off inside it.
+    const six = boardBudget({ comp: 'mats', mats: 6, far: 1, note: false })
+    expect(Number(safe(container).style.getPropertyValue('--b-panel-n'))).toBeCloseTo(six.panel, 6)
+    expect(Number(safe(container).style.getPropertyValue('--b-row-n'))).toBeCloseTo(six.row, 6)
+    expect(6 * six.panel + 5 * six.matGap).toBeCloseTo(six.band, 6)
+  })
+
+  it('drops the mats it cannot say at the floor step and names where they went', () => {
+    // 3.4: nothing on the board is smaller than b3, and a fact that cannot be said at
+    // b3 is deleted from the board and lives on the Live tab. Seven panels cannot hold
+    // b3 on a 16:9 stage, so the count drops rather than the type. Shrinking instead
+    // would put every name below the acuity threshold the whole board is derived from.
+    const seven = render(<Board snapshot={liveBoard(7)} connected />)
+    expect(screen.getByText(FLOOR_NOTE_MATS)).toBeInTheDocument()
+    const shown = screen.getAllByRole('region', { name: /^Mat / })
+    expect(shown.length).toBeLessThan(7)
+    // The note itself takes a line, so the count that fits is the one computed with it.
+    const withNote = boardBudget({ comp: 'mats', mats: 7, far: 1, note: true })
+    expect(shown).toHaveLength(withNote.matsShown)
+    expect(withNote.row).toBeGreaterThanOrEqual(9)
+    // Mat 1 is always the top row, so the mats that survive are the first ones.
+    expect(shown[0]).toHaveAccessibleName('Mat 1')
+    seven.unmount()
+
+    render(<Board snapshot={liveBoard(4)} connected />)
+    expect(screen.queryByText(FLOOR_NOTE_MATS)).not.toBeInTheDocument()
+    expect(screen.getAllByRole('region', { name: /^Mat / })).toHaveLength(4)
+  })
+
+  it('gives the note its own line of the composition instead of covering one', () => {
+    // The note used to be absolutely positioned over the foot of the safe frame, which
+    // on a four mat board covers most of mat 4's name line.
+    const { container } = render(<Board snapshot={liveBoard(4)} connected screenMaySleep />)
+    const noted = boardBudget({ comp: 'mats', mats: 4, far: 1, note: true })
+    const quiet = boardBudget({ comp: 'mats', mats: 4, far: 1, note: false })
+    expect(noted.band).toBeLessThan(quiet.band)
+    expect(Number(safe(container).style.getPropertyValue('--b-band-n'))).toBeCloseTo(noted.band, 6)
+    expect(noted.hero + noted.heroGap + noted.band + noted.noteGap + noted.note).toBeCloseTo(90, 6)
+  })
+
+  it('trades queue depth for type when the room is calibrated deeper', () => {
+    // A deeper room buys bigger type and pays for it in depth, per 3.4. Four next lines
+    // under a single mat at far 1, two at far 1.2, and never a clipped fifth.
+    window.history.replaceState({}, '', '/board/1?far=1.2')
+    const queue = [11, 12, 13, 14, 15].map(id => pair(id, `Kai${id} Nakamura`, `Rosa${id} Oliveira`, { status: 'pending' }))
+    const snapshot = sampleSnapshot({
+      mats: [mat(1, { current: pair(10, 'Mateo Rivera', 'Lucas Ferreira', { clock: RUNNING }), onDeck: queue, bound: true })],
+      matches: [],
+    })
+    const { container } = render(<Board snapshot={snapshot} connected />)
+    expect(container.querySelectorAll('.b-next-line')).toHaveLength(2)
   })
 
   it('stays on the mat ledger when bound mats are between bouts', () => {
@@ -300,6 +354,23 @@ describe('Board calibration', () => {
     // 3.4: the knob persists, so the next plain visit to /board/1 keeps the setting.
     expect(window.localStorage.getItem('duels.board.far')).toBe('1.2')
   })
+
+  it('clamps a hand typed setting to the three the frame can hold', () => {
+    // The safe frame is a fixed 90cqh while every step inside it scales, so the range
+    // the compositions are proven against IS the range 3.4 documents. A ?far= past it
+    // would buy a board that has to shrink something to fit.
+    const far = (query: string) => {
+      window.history.replaceState({}, '', `/board/1${query}`)
+      const view = render(<Board snapshot={liveBoard(1)} connected />)
+      const value = (view.container.querySelector('.b-stage') as HTMLElement).style.getPropertyValue('--far')
+      view.unmount()
+      window.localStorage.clear()
+      return value
+    }
+    expect(far('?far=3')).toBe('1.2')
+    expect(far('?far=0.2')).toBe('0.85')
+    expect(far('?far=1.05')).toBe('1.05')
+  })
 })
 
 describe('Board figure change', () => {
@@ -352,6 +423,16 @@ describe('Board result settling', () => {
 })
 
 describe('BoardPage route', () => {
+  // Read from disk for the same reason board-css.test.ts does: the claim is about what
+  // the file contains, and the cwd the suite starts in is the only fixed point.
+  function boardPageSource(): string {
+    for (const candidate of ['src/routes/BoardPage.tsx', 'web/src/routes/BoardPage.tsx']) {
+      const full = resolvePath(process.cwd(), candidate)
+      if (existsSync(full)) return readFileSync(full, 'utf8').replace(/\/\/[^\n]*/g, '')
+    }
+    throw new Error(`BoardPage.tsx not found from ${process.cwd()}`)
+  }
+
   function stubWakeLock(request: () => Promise<unknown>) {
     Object.defineProperty(window.navigator, 'wakeLock', { configurable: true, value: { request } })
     return () => Reflect.deleteProperty(window.navigator, 'wakeLock')
@@ -377,6 +458,29 @@ describe('BoardPage route', () => {
     } finally {
       restore()
     }
+  })
+
+  it('leans on the hook\'s own in-flight guard rather than keeping a second one', async () => {
+    // The page asks on mount and again on every gesture, because Safari refuses the
+    // request outside a user activation. Deduping those belongs in useWakeLock, which
+    // also covers the visibilitychange re-acquire this page cannot see; a second guard
+    // beside it was a second thing to keep true, and only one of them saw both callers.
+    const request = vi.fn(() => new Promise(() => {}))
+    const restore = stubWakeLock(request)
+    try {
+      const feed = snapshotFeed(liveBoard(1))
+      fakeFetch(url => feed.handle(url) ?? { json: {} })
+      render(<RouterProvider router={createMemoryRouter(routes, { initialEntries: ['/board/1'] })} />)
+      await waitFor(() => expect(request).toHaveBeenCalled())
+      window.dispatchEvent(new Event('pointerdown'))
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }))
+      expect(request).toHaveBeenCalledTimes(1)
+    } finally {
+      restore()
+    }
+    // The behaviour above holds with either guard, so the duplicate is checked for
+    // directly: the page asks, and nothing on the page decides whether to.
+    expect(boardPageSource()).not.toMatch(/pending|inFlight|requesting/i)
   })
 
   it('says the screen may sleep when the panel refuses the lock', async () => {

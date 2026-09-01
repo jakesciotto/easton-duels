@@ -9,12 +9,12 @@ import { ResultsBand } from './ResultsBand'
 import { SetupBand } from './SetupBand'
 import { DoneBand, winningTeam } from './DoneBand'
 import { boardPlan, sortDoneMatches } from './plan'
+import { budgetWithNotes } from './budget'
 import { useFar } from './useFar'
 import { useHeldResults } from './useHeldResults'
 import { useSettleTimer } from './useSettleTimer'
 import './board.css'
 
-const ENTRY_ROWS = 4
 // The note prints whole seconds, so it needs no finer tick than the unit it reports.
 const AGE_TICK_MS = 1000
 
@@ -46,19 +46,23 @@ export function Board({ snapshot, connected, lastSuccessAt = null, screenMaySlee
   const stale = isStale(lastSuccessAt, now, pollIntervalMs)
   const ageSec = ageSeconds(lastSuccessAt, now)
 
-  const done = snapshot ? sortDoneMatches(snapshot.matches.filter(m => m.status === 'done')) : []
-  const entryRows = plan.comp === 'entry' ? done.slice(0, ENTRY_ROWS) : []
-  const settled = useSettleTimer(settleIds(snapshot, held, entryRows), snapshot !== null)
-
-  const winner = snapshot && plan.comp === 'done' ? winningTeam(snapshot.teams) : null
-
   // 4.3: an attention state is never carried by colour alone, and a 1.2cqh bar at the
-  // edge of the stage is not a message. Both of these say what is wrong, in words, at
+  // edge of the stage is not a message. Each of these says what is wrong, in words, at
   // b3, inside the safe area where the room reads.
-  const notes = [
+  const reported = [
     stale && ageSec !== null ? `Not updating ${formatAge(ageSec)}` : null,
     screenMaySleep ? 'Screen may sleep' : null,
   ].filter((note): note is string => note !== null)
+
+  // The note takes a b3 line out of the composition rather than painting over one, so
+  // the budget has to be resolved together with the notes it carries.
+  const { budget, notes } = budgetWithNotes({ comp: plan.comp, mats: plan.mats, far }, reported)
+
+  const done = snapshot ? sortDoneMatches(snapshot.matches.filter(m => m.status === 'done')) : []
+  const entryRows = plan.comp === 'entry' ? done.slice(0, budget.rows) : []
+  const settled = useSettleTimer(settleIds(snapshot, held, entryRows), snapshot !== null)
+
+  const winner = snapshot && plan.comp === 'done' ? winningTeam(snapshot.teams) : null
 
   return (
     <main className="b-frame">
@@ -67,19 +71,28 @@ export function Board({ snapshot, connected, lastSuccessAt = null, screenMaySlee
           className="b-safe"
           data-comp={plan.comp}
           data-mats={plan.mats}
-          style={{ '--mats': String(plan.mats) } as CSSProperties}
+          style={{
+            '--b-hero-n': String(budget.hero),
+            '--b-hero-gap-n': String(budget.heroGap),
+            '--b-band-n': String(budget.band),
+            '--b-panel-n': String(budget.panel),
+            '--b-mat-gap-n': String(budget.matGap),
+            '--b-row-n': String(budget.row),
+            '--b-sum-k': String(budget.sumScale),
+          } as CSSProperties}
         >
           {snapshot === null || plan.comp === 'cold'
             ? <HeroSkeleton />
             : <Hero teams={snapshot.teams} winnerId={plan.comp === 'done' ? winner?.id ?? null : null} />}
 
-          {snapshot !== null && plan.comp === 'setup' && <SetupBand mats={snapshot.mats} />}
+          {snapshot !== null && plan.comp === 'setup' && <SetupBand mats={snapshot.mats} firstUp={budget.queue} />}
           {snapshot !== null && plan.comp === 'mats' && (
             <MatBand
-              mats={snapshot.mats}
+              mats={snapshot.mats.slice(0, budget.matsShown)}
               held={held}
               settled={settled}
               serverNow={snapshot.now}
+              nextCount={budget.queue}
               lastSuccessAt={lastSuccessAt}
               pollIntervalMs={pollIntervalMs}
             />

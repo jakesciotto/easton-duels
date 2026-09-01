@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import type { UserEvent } from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { EntryTab } from '@/routes/event/EntryTab'
+import { saveDraft } from '@/routes/event/entry-state'
 import { setAdminToken } from '@/lib/auth'
 import type { EventDetail, MatchRow } from '@/lib/types'
 import { fakeFetch } from './fakes'
@@ -401,6 +402,87 @@ describe('EntryTab', () => {
     expect(draft()).toMatchObject({ entryId: unsent, aId: '101', bId: '201', pointsA: '6' })
     expect(correctionDraft(1)).toBeNull()
     expect(screen.getByLabelText('Ridgeline points')).toHaveValue('6')
+  })
+
+  // R5: opening a different correction, instead of pressing Cancel edit, used to
+  // leave the outgoing one's failed slot in storage forever. It would later
+  // restore under the same banner as an unsent new entry, inviting a stale
+  // resend over a match that may since have been corrected properly.
+  it('clears a stranded correction the moment the desk opens a different one', async () => {
+    const detailR5: EventDetail = {
+      ...detail,
+      matches: [
+        match(4, { status: 'done', pointsA: 4, pointsB: 2, winnerAthleteId: 100, winType: 'points' }),
+        match(5, { athleteAId: 101, athleteBId: 201, status: 'done', pointsA: 0, pointsB: 5, winnerAthleteId: 201, winType: 'submission' }),
+      ],
+    }
+    const f = fakeFetch(url => url === '/api/matches/4/entry'
+      ? { status: 500, json: { error: { code: 'internal', message: 'boom' } } }
+      : { json: { match: { id: 5 }, version: 2 } })
+    mount(detailR5)
+    const user = userEvent.setup()
+
+    // Open the correction on match 4, edit it, and let Save fail: this writes
+    // match 4's own slot.
+    await user.click(screen.getByRole('button', { name: 'Edit Mateo Rivera over Olivia Kim' }))
+    await user.clear(screen.getByLabelText('Ridgeline points'))
+    await user.type(screen.getByLabelText('Ridgeline points'), '9')
+    await user.click(screen.getByRole('button', { name: 'Save correction' }))
+    await screen.findByText('The server had a problem')
+    expect(correctionDraft(4)).not.toBeNull()
+
+    // Instead of Cancel edit, the desk opens the other correction directly. The
+    // outgoing slot must clear right here, before match 5's own save even runs.
+    await user.click(screen.getByRole('button', { name: 'Edit Noah Tran over Ava Park' }))
+    expect(correctionDraft(4)).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: 'Save correction' }))
+    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/matches/5/entry')).toBe(true))
+    expect(correctionDraft(5)).toBeNull()
+    expect(correctionDraft(4)).toBeNull()
+  })
+
+  it('clears a stranded correction when the desk leaves it for a fresh entry', async () => {
+    const detailUse: EventDetail = {
+      ...detail,
+      matches: [
+        match(4, { status: 'done', pointsA: 4, pointsB: 2, winnerAthleteId: 100, winType: 'points' }),
+        match(6, { athleteAId: 101, athleteBId: 201, status: 'pending' }),
+      ],
+    }
+    fakeFetch(url => url === '/api/matches/4/entry'
+      ? { status: 500, json: { error: { code: 'internal', message: 'boom' } } }
+      : { json: { match: { id: 6 }, version: 2 } })
+    mount(detailUse)
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: 'Edit Mateo Rivera over Olivia Kim' }))
+    await user.clear(screen.getByLabelText('Ridgeline points'))
+    await user.type(screen.getByLabelText('Ridgeline points'), '9')
+    await user.click(screen.getByRole('button', { name: 'Save correction' }))
+    await screen.findByText('The server had a problem')
+    expect(correctionDraft(4)).not.toBeNull()
+
+    // Use is the other door out of a correction. It must close the outgoing slot
+    // exactly as opening a different correction does.
+    await user.click(screen.getByRole('button', { name: 'Use' }))
+    expect(correctionDraft(4)).toBeNull()
+    expect(screen.queryByText('The server had a problem')).not.toBeInTheDocument()
+  })
+
+  // R5: a correction can still be stranded outright (the desk closes the tab
+  // mid-edit after a failed save, never touching another match at all). When
+  // that restores, its banner must name the match so it can never be mistaken
+  // for an unsent new entry and re-sent blind.
+  it('names the match in a restored correction banner, distinct from an unsent new entry', () => {
+    fakeFetch(() => ({ json: {} }))
+    saveDraft(7, {
+      entryId: 'e-stranded-0001', aId: '100', bId: '200', pointsA: '9', pointsB: '2',
+      winner: 'a', winType: 'points', editingId: 1,
+    })
+    mount()
+    expect(screen.getByText('This correction to Mateo Rivera vs Olivia Kim never sent')).toBeInTheDocument()
+    expect(screen.queryByText('This entry never sent')).not.toBeInTheDocument()
   })
 
   it('clears only the new entry slot when a new entry saves', async () => {

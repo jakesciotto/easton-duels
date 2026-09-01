@@ -1,12 +1,17 @@
 import { describe, it, expect } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve as resolvePath } from 'node:path'
+import { B1, B2, B3, HERO_GAP, PLATE, boardBudget } from '@/routes/board/budget'
 
 /**
  * The board's colour and size decisions live in board.css, where a type checker cannot
  * see them and a component test cannot either: jsdom applies no stylesheet. Every
  * arithmetic claim the brief makes about the far dialect is checked here against the
  * declarations themselves, at the 1920 x 1080 design stage the brief works in.
+ *
+ * The vertical budget is budget.ts's and is tested in board-budget.test.ts. What is
+ * checked here is that the stylesheet consumes those numbers and that the horizontal
+ * frame, which is entirely CSS's, holds at every --far setting 3.4 documents.
  */
 // Read from disk rather than imported: vitest stubs every CSS module, `?raw` included,
 // and under jsdom `import.meta.url` is an http URL, so the path is resolved from the cwd
@@ -24,9 +29,9 @@ const css = readFileSync(boardCssPath(), 'utf8').replace(/\/\*[\s\S]*?\*\//g, ''
 const CQH = 10.8 // 1 percent of a 1080px stage
 const CQW = 19.2 // 1 percent of a 1920px stage
 const SAFE_W = 1728 // 90cqw
-const SAFE_H = 972 // 90cqh
 // Geist Mono advances 0.6em, which is what makes 2ch of b2 the 168px score slot in 6.15.
 const CH_EM = 0.6
+const FARS = [0.85, 1, 1.2]
 
 type Vars = Record<string, string>
 
@@ -63,7 +68,7 @@ function customProperties(selector: string): Vars {
 
 function resolve(expr: string, vars: Vars): string {
   let out = expr
-  for (let pass = 0; pass < 8 && out.includes('var('); pass += 1) {
+  for (let pass = 0; pass < 12 && out.includes('var('); pass += 1) {
     out = out.replace(/var\(\s*(--[\w-]+)\s*(?:,[^)]*)?\)/g, (_, name: string) => {
       const value = vars[name]
       if (value === undefined) throw new Error(`board.css leaves ${name} undefined`)
@@ -75,13 +80,26 @@ function resolve(expr: string, vars: Vars): string {
 
 /** Evaluates a resolved length in px. `ch` needs the font size of the element it sits on. */
 function px(expr: string, vars: Vars, fontSize = 0): number {
-  const tokens = resolve(expr, vars).replace(/calc/g, '').match(/\d*\.?\d+(?:cqh|cqw|ch|px)?|[()+\-*/]/g)
+  const tokens = resolve(expr, vars).replace(/calc/g, '')
+    .match(/min|max|clamp|\d*\.?\d+(?:cqh|cqw|ch|px)?|[(),+\-*/]/g)
   if (!tokens) throw new Error(`cannot evaluate "${expr}"`)
   let i = 0
 
   const factor = (): number => {
     const token = tokens[i]
     i += 1
+    if (token === 'min' || token === 'max' || token === 'clamp') {
+      i += 1 // the opening paren
+      const args = [expression()]
+      while (tokens[i] === ',') {
+        i += 1
+        args.push(expression())
+      }
+      i += 1 // the closing paren
+      if (token === 'min') return Math.min(...args)
+      if (token === 'max') return Math.max(...args)
+      return Math.min(Math.max(args[0], args[1]), args[2])
+    }
     if (token === '(') {
       const value = expression()
       i += 1
@@ -116,13 +134,29 @@ function px(expr: string, vars: Vars, fontSize = 0): number {
   return expression()
 }
 
-const stage = customProperties('.b-stage')
+/** The stage's type steps, the safe layer's budget defaults, and the row's own tracks. */
+function boardVars(far: number): Vars {
+  return {
+    ...customProperties('.b-stage'),
+    ...customProperties('.b-safe'),
+    ...customProperties('.b-row'),
+    '--far': String(far),
+  }
+}
 
-function rowWidth(selector: string, vars: Vars = stage): number {
-  const fontSize = px('var(--b2)', vars)
-  const tracks = decl(selector, 'grid-template-columns').split(' ')
-  const columns = tracks.reduce((sum, track) => sum + px(track, vars, fontSize), 0)
-  return columns + px(decl('.b-row', 'padding-left'), vars)
+/**
+ * The fixed tracks of a row and the number of `minmax(0, 1fr)` name tracks beside them.
+ * A flexible track has no width of its own: it is whatever the row has left.
+ */
+function rowTracks(selector: string, far: number): { fixed: number; flexible: number } {
+  const vars = boardVars(far)
+  const fontSize = px(decl('.b-row', 'font-size'), vars)
+  const tracks = decl(selector, 'grid-template-columns').replace(/minmax\(0, 1fr\)/g, 'FLEX').split(' ')
+  const flexible = tracks.filter(track => track === 'FLEX').length
+  const fixed = tracks
+    .filter(track => track !== 'FLEX')
+    .reduce((sum, track) => sum + px(track, vars, fontSize), 0)
+  return { fixed: fixed + px(decl('.b-row', 'padding-left'), vars), flexible }
 }
 
 describe('the far knob', () => {
@@ -132,78 +166,111 @@ describe('the far knob', () => {
     expect(rule('.b-safe')).not.toMatch(/transform/)
     expect(decl('.b-safe', 'inset')).toBe('5%')
 
-    for (const step of ['--b1', '--b2', '--b3', '--b-plate', '--b-indent', '--b-code']) {
-      expect(stage[step]).toContain('var(--far)')
+    for (const step of ['--b1', '--b2', '--b3', '--b-plate', '--b-indent', '--b-code',
+      '--b-gap-row', '--b-gap-tight', '--b-gap-pair']) {
+      expect(customProperties('.b-stage')[step], step).toContain('var(--far)')
     }
-    const deep: Vars = { ...stage, '--far': '1.2' }
-    expect(px('var(--b1)', deep)).toBeCloseTo(22 * CQH * 1.2, 6)
-    expect(px('var(--b3)', deep)).toBeCloseTo(9 * CQH * 1.2, 6)
-    // Composition budgets are stated in the safe frame and do not move with the knob.
-    expect(px(decl('.b-band', 'height'), deep)).toBeCloseTo(56 * CQH, 6)
-    expect(px(decl('.b-hero', 'height'), deep)).toBeCloseTo(31 * CQH, 6)
+    const deep = boardVars(1.2)
+    expect(px('var(--b1)', deep)).toBeCloseTo(B1 * CQH * 1.2, 6)
+    expect(px('var(--b2)', deep)).toBeCloseTo(B2 * CQH * 1.2, 6)
+    expect(px('var(--b3)', deep)).toBeCloseTo(B3 * CQH * 1.2, 6)
+  })
+
+  it('scales the hero band and the leading inside it together', () => {
+    // The defect: a fixed 31cqh hero around contents that scaled meant turning the deep
+    // room knob UP squeezed the plate row, which is the one flexible item, and clipped
+    // the team name. The plate row no longer flexes and the band comes from the budget.
+    expect(decl('.b-hero', 'height')).toBe('calc(var(--b-hero-n) * 1cqh)')
+    expect(decl('.b-band', 'height')).toBe('calc(var(--b-band-n) * 1cqh)')
+    expect(decl('.b-band', 'margin-top')).toBe('calc(var(--b-hero-gap-n) * 1cqh)')
+    expect(decl('.b-plate-row', 'flex')).toBe('none')
+    for (const [selector, prop] of [
+      ['.b-bar', 'height'], ['.b-plate-row', 'margin-top'], ['.b-score-row', 'margin-top'],
+    ] as const) {
+      expect(decl(selector, prop), `${selector} ${prop}`).toContain('var(--far)')
+    }
+  })
+
+  it('states the same type steps and plates the budget module works from', () => {
+    // Two files carry these numbers, so a change to one has to break the other.
+    const at1 = boardVars(1)
+    expect(px('var(--b1)', at1)).toBeCloseTo(B1 * CQH, 6)
+    expect(px('var(--b2)', at1)).toBeCloseTo(B2 * CQH, 6)
+    expect(px('var(--b3)', at1)).toBeCloseTo(B3 * CQH, 6)
+    expect(px('var(--b-plate)', at1)).toBeCloseTo(PLATE.mats * CQH, 6)
+    expect(px(declIn(rule("[data-comp='entry'] .b-hero"), '--b-plate'), at1)).toBeCloseTo(PLATE.entry * CQH, 6)
+    expect(px(declIn(rule("[data-comp='done'] .b-hero"), '--b-plate'), at1)).toBeCloseTo(PLATE.done * CQH, 6)
+    // The stylesheet's own defaults are the live composition at far 1, one mat, no note.
+    const live = boardBudget({ comp: 'mats', mats: 1, far: 1, note: false })
+    const safe = customProperties('.b-safe')
+    expect(Number(safe['--b-hero-n'])).toBeCloseTo(live.hero, 6)
+    expect(Number(safe['--b-band-n'])).toBeCloseTo(live.band, 6)
+    expect(Number(safe['--b-hero-gap-n'])).toBe(HERO_GAP.mats)
   })
 })
 
 describe('the mat ledger row', () => {
-  it('fits inside the safe width, both with and without the clock track', () => {
-    // 1ch resolves against the row's own b2 and reserved 84.24px for a numeral that
-    // renders at b3 and occupies 58.32px, which overflowed the row by 21.07px.
-    expect(px('var(--col-board-mat)', stage)).toBeCloseTo(58.32, 2)
-    expect(rowWidth('.b-row')).toBeCloseTo(1723.15, 1)
-    expect(rowWidth('.b-row-clock')).toBeCloseTo(1702.99, 1)
-    expect(rowWidth('.b-row')).toBeLessThanOrEqual(SAFE_W)
-    expect(rowWidth('.b-row-clock')).toBeLessThanOrEqual(SAFE_W)
-  })
-})
-
-describe('the mat band', () => {
-  function matGap(n: number): string {
-    const specific = ruleFor(`[data-comp='mats'][data-mats='${n}'] .b-band`)
-    const body = specific ?? rule("[data-comp='mats'] .b-band")
-    return declIn(body, '--b-mat-gap')
-  }
-
-  it('holds every mat count the API accepts inside the 56cqh band', () => {
-    const height = decl("[data-comp='mats'] .b-panel", 'height')
-    const capHeight = 0.72 * px('var(--b3)', stage)
-    for (const n of [1, 2, 3, 4, 5, 6, 7, 8]) {
-      const vars: Vars = { ...stage, '--mats': String(n), '--b-mat-gap': matGap(n) }
-      const panel = px(height, vars)
-      const gap = px(matGap(n), vars)
-      expect(n * panel + (n - 1) * gap).toBeCloseTo(56 * CQH, 6)
-      // A row that renders at all has to hold the cap height of its own step.
-      expect(panel).toBeGreaterThanOrEqual(capHeight)
+  it('fits inside the safe width at every far, with and without the clock track', () => {
+    // The defect: --bn was a fixed 31.2cqw name token beside tracks that scale with the
+    // knob, so at far 1.2 the four mat ledger came to 1807.39px against 1728px of safe
+    // width and clipped competitor names with no ellipsis. The name tracks are now the
+    // flexible ones, which is 6.15's "names truncate, they never shrink".
+    expect(css).not.toMatch(/--bn\b/)
+    for (const far of FARS) {
+      for (const selector of ['.b-row', '.b-row-clock']) {
+        const { fixed, flexible } = rowTracks(selector, far)
+        const where = `${selector} at far ${far}`
+        expect(flexible, where).toBe(2)
+        expect(fixed, where).toBeLessThanOrEqual(SAFE_W)
+        expect((SAFE_W - fixed) / 2, where).toBeGreaterThan(0)
+      }
     }
   })
 
-  it('spends the rest of a one or two mat panel on the queue', () => {
-    const one: Vars = { ...stage, '--mats': '1', '--b-mat-gap': matGap(1) }
-    const two: Vars = { ...stage, '--mats': '2', '--b-mat-gap': matGap(2) }
-    const panel = decl("[data-comp='mats'] .b-panel", 'height')
-    const line = px(decl('.b-next-line', 'height'), stage)
-    expect(px(decl("[data-comp='mats'][data-mats='1'] .b-panel > .b-row", 'height'), one) + 4 * line)
-      .toBeCloseTo(px(panel, one), 6)
-    expect(px(decl("[data-comp='mats'][data-mats='2'] .b-panel > .b-row", 'height'), two) + line)
-      .toBeCloseTo(px(panel, two), 6)
+  it('holds 6.15 arithmetic exactly at the design stage', () => {
+    // 1ch of the row's own step reserved a score sized slot for a numeral that renders
+    // at the name step, which overflowed the row by 21.07px.
+    expect(px('var(--col-board-mat)', boardVars(1), 0)).toBeCloseTo(58.32, 2)
+    const ledger = rowTracks('.b-row', 1)
+    const clock = rowTracks('.b-row-clock', 1)
+    expect(ledger.fixed).toBeCloseTo(525.1, 1)
+    expect(clock.fixed).toBeCloseTo(862.06, 1)
+    // 601px of name per side is the field 6.15 measured its five test names against.
+    expect((SAFE_W - ledger.fixed) / 2).toBeCloseTo(601.45, 1)
+    expect((SAFE_W - clock.fixed) / 2).toBeCloseTo(432.97, 1)
+    // Every fixed track is type, so the whole row scales as one thing.
+    expect(rowTracks('.b-row', 1.2).fixed).toBeCloseTo(ledger.fixed * 1.2, 6)
+    expect(rowTracks('.b-row-clock', 0.85).fixed).toBeCloseTo(clock.fixed * 0.85, 6)
+  })
+
+  it('steps a row down to the room it has rather than clipping it', () => {
+    // At six mats the panel is 96.3px and a fixed b2 score line box is 140.4px, so 22px
+    // came off each end of every digit.
+    const sixMats: Vars = { ...boardVars(1), '--b-row-n': String(boardBudget({ comp: 'mats', mats: 6, far: 1, note: false }).row) }
+    expect(px('var(--b-score-step)', sixMats)).toBeCloseTo(B3 * CQH, 6)
+    expect(px('var(--b-name-step)', sixMats)).toBeCloseTo(B3 * CQH, 6)
+    expect(px('var(--b-score-step)', boardVars(1))).toBeCloseTo(B2 * CQH, 6)
+    for (const selector of ['.b-row', '.b-score', '.b-clock']) {
+      expect(decl(selector, 'font-size'), selector).toBe('var(--b-score-step)')
+    }
+    for (const selector of ['.b-name', '.b-mat']) {
+      expect(decl(selector, 'font-size'), selector).toBe('var(--b-name-step)')
+    }
   })
 })
 
-describe('the data entry composition', () => {
-  it('sums to the safe frame and keeps the score inside its own row', () => {
-    const band = rule("[data-comp='entry'] .b-band")
-    const footer = rule('.b-footer')
-    const total = px(declIn(rule("[data-comp='entry'] .b-hero"), 'height'), stage)
-      + px(declIn(band, 'margin-top'), stage)
-      + px(declIn(band, 'height'), stage)
-      + px(declIn(footer, 'margin-top'), stage)
-      + px(declIn(footer, 'height'), stage)
-    expect(total).toBeCloseTo(SAFE_H, 6)
-
-    const row = px(decl("[data-comp='entry'] .b-row", 'height'), stage)
-    expect(4 * row).toBeCloseTo(px(declIn(band, 'height'), stage), 6)
-    // b2 at 0.78 sets a 10.14cqh box in a 10cqh row, which is the 0.14 the row was over.
-    const lineHeight = Number(decl("[data-comp='entry'] .b-score", 'line-height'))
-    expect(px('var(--b2)', stage) * lineHeight).toBeLessThanOrEqual(row)
+describe('the note', () => {
+  it('takes a line of the composition instead of painting over one', () => {
+    // As an overlay it covered the bottom 97.2px of the safe area, which on a four mat
+    // board is most of mat 4's own name line, at the moment somebody is reading it.
+    const body = rule('.b-note')
+    expect(body).not.toMatch(/position\s*:/)
+    expect(body).not.toMatch(/background\s*:/)
+    expect(declIn(body, 'flex')).toBe('none')
+    expect(px(declIn(body, 'height'), boardVars(1))).toBeCloseTo(B3 * CQH, 6)
+    expect(px(declIn(body, 'margin-top'), boardVars(1))).toBeCloseTo(CQH, 6)
+    // The stale bar is the colour channel and it stays in the letterbox margin.
+    expect(decl('.b-stale', 'position')).toBe('absolute')
   })
 })
 

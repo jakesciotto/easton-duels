@@ -55,17 +55,21 @@ function MatPanel({ mat, held, settled, serverNow, nextCount, withClock, lastSuc
  * mats and readable names do not coexist in a grid on a 16:9 stage. The per mat clock
  * is what pays for the name field, which is why it is deleted at three and four mats
  * and kept at one and two.
+ *
+ * How deep the queue under a panel goes is budget.ts's, not this component's: the band
+ * is not a fixed 56cqh once --far moves, so four next lines under a single mat fit at
+ * far 1 and two of them fit at far 1.2.
  */
-export function MatBand({ mats, held, settled, serverNow, lastSuccessAt = null, pollIntervalMs = POLL_CLOCK_RUNNING_MS }: {
+export function MatBand({ mats, held, settled, serverNow, nextCount = 0, lastSuccessAt = null, pollIntervalMs = POLL_CLOCK_RUNNING_MS }: {
   mats: MatView[]
   held: ReadonlyMap<number, MatchView>
   settled: ReadonlySet<number>
   serverNow: string | null
+  nextCount?: number
   lastSuccessAt?: number | null
   pollIntervalMs?: number
 }) {
   const withClock = mats.length <= 2
-  const nextCount = mats.length === 1 ? 4 : mats.length === 2 ? 1 : 0
   return (
     <div className="b-band">
       {mats.map(mat => {

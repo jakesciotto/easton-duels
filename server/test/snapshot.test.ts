@@ -5,6 +5,7 @@ import { buildSnapshot } from '../src/live/snapshot.js'
 import { appendMatchEvent, endMatch, bumpVersion } from '../src/match/events.js'
 import { advanceMat, reopenMatch } from '../src/match/mats.js'
 import { mats } from '../src/db/schema.js'
+import { ON_DECK_DEPTH } from '../src/shared/types.js'
 
 const opts = { nowMs: Date.parse('2026-08-27T18:00:00.000Z') }
 const T = (s: number) => new Date(Date.parse('2026-08-27T18:00:00.000Z') + s * 1000).toISOString()
@@ -48,6 +49,13 @@ describe('buildSnapshot', () => {
     const snap = await buildSnapshot(db, s.eventId, opts)
     expect(snap.mats[0].current?.id).toBe(s.matchIds[0])
     expect(snap.mats[0].onDeck.map(m => m.id)).toEqual([s.matchIds[1]])
+  })
+
+  it('carries the queue depth the board budgets for, so a reserved line is never starved', async () => {
+    const db = await freshDb()
+    const s = await seedEvent(db, { matCount: 1, matches: 8 })
+    const snap = await buildSnapshot(db, s.eventId, opts)
+    expect(snap.mats[0].onDeck.map(m => m.id)).toEqual(s.matchIds.slice(0, ON_DECK_DEPTH))
   })
 
   it('exposes a pending terminal', async () => {

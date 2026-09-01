@@ -56,6 +56,12 @@ export interface Snapshot {
   matches: MatchView[]
 }
 
+// The board's one-mat live composition budgets four queued lines plus the pair on
+// deck, and the setup composition shows three per mat. The serializer carries the
+// deepest consumer's need, because a shallower cap silently starves a line the
+// board has already reserved room for.
+export const ON_DECK_DEPTH = 5
+
 // Eight hues at one lightness and one chroma, oklch(0.70 0.14 h), spread 45 degrees
 // apart. The previous values were the Tailwind v3 500 ramp, whose lightness spread
 // meant a team could be visibly quieter than its opponent on the same wall. Holding

@@ -14,14 +14,13 @@ export default function BoardPage() {
   // recovers it and somebody has to walk to the television. Ask on mount, which is all
   // Chromium needs, and again on any gesture, because Safari refuses the request outside
   // a user activation. Once the lock is held this effect stops asking.
+  //
+  // There is no in-flight guard here on purpose. useWakeLock holds one, and it covers
+  // the visibilitychange re-acquire this page cannot see, so a second guard beside it
+  // would only be a second thing to keep true.
   useEffect(() => {
     if (active) return
-    let pending = false
-    const ask = () => {
-      if (pending) return
-      pending = true
-      void request().finally(() => { pending = false })
-    }
+    const ask = () => { void request() }
     ask()
     window.addEventListener('pointerdown', ask)
     window.addEventListener('keydown', ask)

@@ -8,8 +8,8 @@ import { athleteName, winTypeLabel } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { defaultOutcome } from './entry-defaults'
 import {
-  CUE_MS, LEDGER_LIMIT, SAVED_LABEL_MS, SAVE_TIMEOUT_MS,
-  clearDraft, clockLabel, isRepeatPair, ledgerTime, loadDraft, pairKey, restoreDraft, saveDraft, saveErrorCopy, teamWins,
+  CUE_MS, LEDGER_LIMIT, RESTORED_NEW_ENTRY, SAVED_LABEL_MS, SAVE_TIMEOUT_MS,
+  clearDraft, clockLabel, isRepeatPair, ledgerTime, loadDraft, pairKey, restoreDraft, restoredBannerCopy, saveDraft, saveErrorCopy, teamWins,
   type EntryDraft, type SaveErrorCopy,
 } from './entry-state'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -44,10 +44,6 @@ const WIN_TYPES: { value: WinType; label: string; hint: string }[] = [
 const WIN_TYPE_WORD: Record<WinType, string> = { points: 'Points', submission: 'Submission', decision: 'Decision' }
 const WIN_TYPE_KEY: Record<string, WinType> = { p: 'points', s: 'submission', d: 'decision' }
 
-// A restored draft says so, or the desk finds a filled form on a reload with no
-// account of where it came from.
-const UNSENT: SaveErrorCopy = { title: 'This entry never sent', body: 'It was kept on this device. Check it, then press Save.' }
-
 // One set of tracks for the head and every row: name, points, the win type as a
 // word, points, name, time, one action. Every numeric track is a Ledger Grid token
 // (2.7) so a score sits in the same register here as on Roster, Matches and Live.
@@ -67,7 +63,10 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     const draft = restoreDraft(eventId)
     return draft ? { ...draft, touched: draft.winner !== null } : fresh()
   })
-  const [failure, setFailure] = useState<SaveErrorCopy | null>(() => (restoreDraft(eventId) ? UNSENT : null))
+  const [failure, setFailure] = useState<SaveErrorCopy | null>(() => {
+    const restored = restoreDraft(eventId)
+    return restored ? restoredBannerCopy(restored, detail.matches, detail.athletes) : null
+  })
   const [pairPrompt, setPairPrompt] = useState<string | null>(null)
   const [savedLabel, setSavedLabel] = useState(false)
   const [announce, setAnnounce] = useState('')
@@ -149,7 +148,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
       return
     }
     setF({ ...kept, touched: kept.winner !== null })
-    setFailure(UNSENT)
+    setFailure(RESTORED_NEW_ENTRY)
   }
 
   const onSaved = (res: EntryResponse | undefined, key: string, sentence: string, payload: Form) => {
@@ -245,6 +244,11 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   // entry, not this one. The entry itself stays in its own slot and comes back with
   // its banner the moment the correction is saved or cancelled.
   const load = (m: MatchRow) => {
+    // R5: switching straight from one correction to another, without pressing
+    // Cancel edit, must not strand the outgoing one. Clear its slot the same
+    // way cancelEdit does, or a failed save on it survives in storage forever
+    // and later restores wearing a banner that looks like an unsent new entry.
+    if (f.editingId !== null && f.editingId !== m.id) clearDraft(eventId, f.editingId)
     setF({
       aId: String(m.athleteAId), bId: String(m.athleteBId),
       pointsA: String(m.pointsA), pointsB: String(m.pointsB),
@@ -256,8 +260,13 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     setAnnounce('')
     focusPoints()
   }
+  // The other door out of a correction, and it strands the same way load did:
+  // leaving a correction for a fresh entry must close the correction's slot, or a
+  // failed save on it survives and later restores as an entry nobody typed.
   const use = (m: MatchRow) => {
+    if (f.editingId !== null) clearDraft(eventId, f.editingId)
     setPairPrompt(null)
+    setFailure(null)
     setF({ ...fresh(), aId: String(m.athleteAId), bId: String(m.athleteBId) })
     focusPoints()
   }

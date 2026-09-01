@@ -1,9 +1,14 @@
 import { useEffect, useState } from 'react'
 
 const KEY = 'duels.board.far'
+// 3.4 names three settings and no others. The clamp is the same range on purpose: the
+// safe frame is a fixed 90cqh while every step inside it scales, so past 1.2 a
+// composition can no longer hold its own type and a ?far= typed by hand would buy a
+// board that has to shrink something to fit. Read, not just written, so a value
+// persisted by an earlier build comes back inside the range.
 const STEPS = [0.85, 1, 1.2]
-const MIN = 0.7
-const MAX = 1.4
+const MIN = STEPS[0]
+const MAX = STEPS[STEPS.length - 1]
 
 function clamp(value: number): number {
   return Math.min(MAX, Math.max(MIN, value))

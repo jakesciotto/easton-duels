@@ -32,48 +32,101 @@
   container-type: size;
   background: var(--black);
 
-  /* 3.4's one calibration knob, and it multiplies the TYPE STEPS, never the layout.
+  /* 3.4's one calibration knob, and it multiplies the TYPE STEPS, never the safe frame.
      Scaling the safe layer scales the composition with it: at far 1.2 on a 1920 stage
      the safe layer laid out at 1728 x 972 and then painted at 2073.6 x 1166.4 inside a
      stage that clips, which cut 76.8px off each side and took the team colour bar and
-     the leading characters of the plate code with it. Composition budgets stay in cqh
-     and the safe frame stays at 90cqh, which is what 3.4 requires. */
+     the leading characters of the plate code with it. The safe frame stays at 90cqh;
+     what moves with the knob is how that 90cqh is DIVIDED, which is budget.ts's job. */
   --far: 1;
   --b1: calc(22cqh * var(--far));
   --b2: calc(13cqh * var(--far));
   --b3: calc(9cqh * var(--far));
   /* A b3 row sets `line-height: 1`, so --b3 doubles as the height of a one line b3 row,
-     and --b-wins-box is b1 at the 0.78 a digits only slot may set. Both grow with the
-     step they wrap, so a step never outgrows its own box: what a larger --far costs is
-     rows at the bottom of a band, never glyphs. */
+     and --b-wins-box is b1 at the 0.78 a digits only slot may set. */
   --b-wins-box: calc(17.16cqh * var(--far));
-  --bn: 31.2cqw;
-  --bn-clock: 21.9cqw;
-  /* The mat numeral renders at b3, so its track is 1ch of b3 (Geist Mono advances
-     0.6em) and not the 1ch of b2 that the row's own font size resolves. The row sums
-     are on .b-row. */
-  --col-board-mat: calc(var(--b3) * 0.6);
   --b-plate: calc(10cqh * var(--far));
   --b-code: calc(5.6cqh * var(--far));
   --b-round: 0.6cqh;
   --b-indent: calc(2.4cqh * var(--far));
+
+  /* The row's gaps are stated against the type, not against the stage. A gap in cqw
+     beside a track in cqh scales one and not the other, and at far 1.2 that put the
+     four mat ledger 79px past the 1728px safe width with no ellipsis to warn anybody.
+     24px, 16px and 48px at a 1920 stage and far 1, which is 6.15's spacing exactly. */
+  --b-gap-row: calc(2.22cqh * var(--far));
+  --b-gap-tight: calc(1.48cqh * var(--far));
+  --b-gap-pair: calc(4.44cqh * var(--far));
 }
 
 /* EBU R95 Graphics Safe and SMPTE ST 2046-1 Safe Title. On an absolutely positioned
    child a percentage inset resolves top and bottom against height, so the safe frame
-   is exactly 90cqh and the composition budgets below all sum to 90. Nothing transforms
-   this layer: see --far above. */
+   is exactly 90cqh and every composition below sums to 90. Nothing transforms this
+   layer: see --far above.
+
+   ---------------- the vertical budget ----------------
+
+   The --b-*-n numbers are cqh, and boardBudget() in budget.ts sets them per snapshot.
+   They are numbers rather than lengths so the arithmetic can be stated, tested and
+   divided in one place; the values here are the defaults that make the stylesheet
+   correct on its own at far 1, one mat, no note.
+
+   Hero contents, per half, every one of them type and every one scaling with --far:
+
+     bar 1.2 + gap 1.0 + plate P + gap 1.2 + wins box 17.16  =  (20.56 + P) * far
+
+   with P = 10 on the live compositions, 12 on data entry, 13 on done. So:
+
+     comp    hero budget   hero content   gap   band                    sum
+     mats    31F           30.56F          3    90 - 31F - 3 - note      90
+     entry   38F           32.56F          2    87 - 47F - note          90
+     done    see below     33.56F          2    90 - hero - 2 - note     90
+
+     mats, no note:  far 0.85  hero 26.35  band 60.65
+                     far 1.00  hero 31.00  band 56.00
+                     far 1.20  hero 37.20  band 49.80
+
+   The hero always covers its own content (0.44F, 5.44F and up to 6.44F of slack), so
+   the plate row is `flex: none` and the score row is the item that spends the slack.
+   done is the one composition whose closing summary is taller than its hero, so its
+   hero takes the smaller of 40F and whatever the summary's 2 + 38.44F does not need,
+   and never less than its own 33.56F: at far 1.2 that is hero 40.27 and band 47.73.
+
+   The note is a b3 line plus 1cqh of leading and it DISPLACES rather than covers. As an
+   overlay it painted over the bottom 97.2px of the safe area, which on a four mat board
+   is most of mat 4's name line, at the exact moment somebody is trying to read the
+   frozen values. */
 .b-safe {
   position: absolute;
   inset: 5%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+
+  --b-hero-n: 31;
+  --b-hero-gap-n: 3;
+  --b-band-n: 56;
+  --b-panel-n: 56;
+  --b-mat-gap-n: 2;
+  --b-row-n: 20;
+  --b-sum-k: 1;
+
+  /* A row never renders type its own box cannot hold. The score steps down from b2 and
+     the name from b3 as the room shrinks, so a six mat ledger lays out instead of
+     having 22px cut off the top of every digit. Below the floor the board says so in
+     words: see budget.ts's floorNote. */
+  --b-score-step: min(var(--b2), calc(var(--b-row-n) * 1cqh));
+  --b-name-step: min(var(--b3), calc(var(--b-row-n) * 1cqh));
+}
+/* Data entry's figures set line-height 0.76, so a b2 score fits a shorter row there. */
+.b-safe[data-comp='entry'] {
+  --b-score-step: min(var(--b2), calc(var(--b-row-n) * 1cqh / 0.76));
 }
 
-/* The board is stale. Full stage width in the bottom letterbox margin, so it costs no
-   track and can never displace a score or a clock. It is the colour channel only: the
-   words are in .b-note, because 4.3 forbids carrying a state on colour alone. */
+/* The board is stale. Full stage width in the bottom letterbox margin, outside the safe
+   frame, so it costs no track and can never displace a score or a clock. It is the
+   colour channel only: the words are in .b-note, because 4.3 forbids carrying a state
+   on colour alone. */
 .b-stale {
   position: absolute;
   left: 0;
@@ -84,24 +137,19 @@
 }
 
 /* 7.6 requires the board to say, in words at b3, that it is not updating, and 7.15's
-   wake lock failure has to reach the same room. Every composition spends all 90cqh, so
-   the line is absolutely positioned over the foot of the safe frame: it costs no track,
-   it never moves a score or a clock, and it only paints when the board is already
-   either not to be trusted or on its way to sleep. */
+   wake lock failure has to reach the same room. It is a flex item with its own budget,
+   never an overlay. */
 .b-note {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  flex: none;
   display: flex;
   align-items: center;
   gap: 3cqw;
   height: var(--b3);
+  margin-top: 1cqh;
   padding-left: var(--b-indent);
   font-size: var(--b3);
   line-height: 1;
   color: var(--attend);
-  background: var(--black);
 }
 
 /* ---------------- hero ---------------- */
@@ -109,8 +157,8 @@
 .b-hero {
   flex: none;
   display: grid;
-  grid-template-columns: 1fr 4cqw 1fr;
-  height: 31cqh;
+  grid-template-columns: minmax(0, 1fr) 4cqw minmax(0, 1fr);
+  height: calc(var(--b-hero-n) * 1cqh);
 }
 .b-half {
   display: flex;
@@ -122,9 +170,12 @@
   grid-column: 3;
   text-align: right;
 }
+/* The bar and the two hero gaps are leading between type, so they scale with the type
+   they separate. Left fixed they made the hero's content 26.49cqh inside a 26.35cqh
+   band at far 0.85, which is the same overflow from the other end of the knob. */
 .b-bar {
   flex: none;
-  height: 1.2cqh;
+  height: calc(1.2cqh * var(--far));
   width: 100%;
   background: var(--team);
 }
@@ -134,13 +185,12 @@
   background: transparent;
 }
 .b-plate-row {
-  /* Shrinks before the numeral does. The hero band is a fixed budget and --far grows
-     the plate and the numeral inside it, so somebody has to absorb the difference, and
-     the wins numeral is the one object the room reads from the door. */
-  flex: 0 1 auto;
-  min-height: 0;
+  /* Never the item that absorbs a shortfall. The hero budget covers the plate and the
+     numeral at every --far, so a squeezed plate row would mean the arithmetic above is
+     wrong, and clipping the team name is not how that should be reported. */
+  flex: none;
   height: var(--b-plate);
-  margin-top: 1cqh;
+  margin-top: calc(1cqh * var(--far));
   display: flex;
   align-items: center;
   gap: 1.6cqw;
@@ -175,7 +225,7 @@
   flex: 1;
   min-height: var(--b-wins-box);
   min-width: 0;
-  margin-top: 1.2cqh;
+  margin-top: calc(1.2cqh * var(--far));
   display: flex;
   align-items: center;
   gap: 1.2cqw;
@@ -221,11 +271,9 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  /* An event configured with more mats than a composition budgets for clips at the
-     band rather than pushing the footer out of the safe area. */
   overflow: hidden;
-  margin-top: 3cqh;
-  height: 56cqh;
+  margin-top: calc(var(--b-hero-gap-n) * 1cqh);
+  height: calc(var(--b-band-n) * 1cqh);
 }
 .b-panel {
   flex: none;
@@ -240,33 +288,47 @@
    centre. The figure tracks are in ch and the row sets the mono face, or ch would
    measure the sans zero.
 
-   The sums at a 1920 stage, safe width 1728px, --far 1:
+   The two name tracks are `minmax(0, 1fr)` and every other track is derived from the
+   type, which is what makes the row safe at ANY --far: the names absorb whatever the
+   type does not use, and 6.15 already requires exactly that ("names truncate, they
+   never shrink"). The previous fixed 31.2cqw name token scaled with the stage while
+   the tracks beside it scaled with the knob, and at far 1.2 the four mat ledger came
+   to 1807.39px against a 1728px safe width.
 
-   ledger   25.92 indent + 58.32 mat + 24 + 599.04 name + 15.94 + 168.48 score
-            + 48 + 168.48 score + 15.94 + 599.04 name                 = 1723.15
-   clock    25.92 indent + 58.32 mat + 24 + 420.48 name + 15.94 + 168.48 score
-            + 24 + 336.96 clock + 24 + 168.48 score + 15.94 + 420.48  = 1702.99
+   The fixed tracks, at a 1920 stage and --far F, in px:
 
-   The mat track is the one that has to be stated rather than written as 1ch: 1ch here
-   resolves against the row's own b2 and would reserve 84.24px for a numeral that
-   renders at b3 and occupies 58.32px, which overflowed the safe width by 21.07px and
-   clipped the tail of name B with no ellipsis to warn anybody. */
+   ledger  25.92 indent + 58.32 mat + 23.98 + 15.98 + 168.48 score + 47.95
+           + 168.48 score + 15.98                            = 525.10F
+   clock   the same plus 23.98 + 336.96 clock + 23.98        = 862.06F
+
+   which leaves each name track (1728 - fixed) / 2: 640.8px at far 0.85, 601.5px at
+   far 1 and 548.9px at far 1.2 on the ledger, and 497.6 / 433.0 / 346.8 with the clock.
+
+   The mat track is stated rather than written as 1ch because 1ch resolves against the
+   row's own score step and would reserve a score sized slot for a numeral that renders
+   at the name step. */
 .b-row {
+  --col-board-mat: calc(var(--b-name-step) * 0.6);
+  --col-board-score: 2ch;
+  --col-board-clock: 4ch;
   position: relative;
   flex: none;
   display: grid;
   align-items: center;
   grid-template-columns:
-    var(--col-board-mat) 1.25cqw var(--bn) 0.83cqw 2ch 2.5cqw 2ch 0.83cqw var(--bn);
-  font-size: var(--b2);
+    var(--col-board-mat) var(--b-gap-row) minmax(0, 1fr) var(--b-gap-tight)
+    var(--col-board-score) var(--b-gap-pair) var(--col-board-score) var(--b-gap-tight)
+    minmax(0, 1fr);
+  font-size: var(--b-score-step);
   padding-left: var(--b-indent);
   border-radius: var(--b-round);
   overflow: hidden;
 }
 .b-row-clock {
   grid-template-columns:
-    var(--col-board-mat) 1.25cqw var(--bn-clock) 0.83cqw 2ch 1.25cqw 4ch 1.25cqw 2ch
-    0.83cqw var(--bn-clock);
+    var(--col-board-mat) var(--b-gap-row) minmax(0, 1fr) var(--b-gap-tight)
+    var(--col-board-score) var(--b-gap-row) var(--col-board-clock) var(--b-gap-row)
+    var(--col-board-score) var(--b-gap-tight) minmax(0, 1fr);
 }
 
 /* The only place --live appears on the board. */
@@ -285,7 +347,7 @@
 
 .b-mat {
   grid-column: 1;
-  font-size: var(--b3);
+  font-size: var(--b-name-step);
   line-height: 1;
   font-weight: 500;
   text-align: center;
@@ -300,7 +362,7 @@
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-  font-size: var(--b3);
+  font-size: var(--b-name-step);
   line-height: 1;
   font-weight: 500;
   color: var(--gray-12);
@@ -321,7 +383,7 @@
 }
 
 .b-score {
-  font-size: var(--b2);
+  font-size: var(--b-score-step);
   line-height: 1;
   font-weight: 500;
   text-align: right;
@@ -332,7 +394,7 @@
    tabular figures in every state, so nothing reflows on a transition, and the stale
    step is a colour plus the words in .b-note rather than a colour alone. */
 .b-clock {
-  font-size: var(--b2);
+  font-size: var(--b-score-step);
   line-height: 1;
   font-weight: 500;
   text-align: center;
@@ -373,7 +435,7 @@
 }
 .b-next-line {
   display: grid;
-  grid-template-columns: 1fr 2.5cqw 1fr;
+  grid-template-columns: minmax(0, 1fr) var(--b-gap-pair) minmax(0, 1fr);
   align-items: center;
   height: var(--b3);
   padding-left: var(--b-indent);
@@ -399,15 +461,15 @@
 .b-summary {
   flex: none;
   display: grid;
-  grid-template-columns: 1fr 4cqw 1fr;
-  height: 48cqh;
-  margin-top: 2cqh;
+  grid-template-columns: minmax(0, 1fr) 4cqw minmax(0, 1fr);
+  height: calc(var(--b-band-n) * 1cqh);
+  margin-top: calc(var(--b-hero-gap-n) * 1cqh);
 }
 .b-sum-half {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 2cqh;
+  gap: 1cqh;
   min-width: 0;
 }
 .b-sum-half-b {
@@ -433,10 +495,13 @@
 .b-sum-half-b .b-sum-fig {
   text-align: left;
 }
-.b-sum-big { font-size: var(--b1); }
-.b-sum-small { font-size: var(--b2); }
+/* The three lines and their labels step down together where the band is shorter than
+   the type asks for, which is what keeps the closing panel inside 90cqh when a note
+   takes a line off a deep room board. --b-sum-k is 1 at every setting that fits. */
+.b-sum-big { font-size: calc(var(--b1) * var(--b-sum-k)); }
+.b-sum-small { font-size: calc(var(--b2) * var(--b-sum-k)); }
 .b-sum-label {
-  font-size: var(--b3);
+  font-size: calc(var(--b3) * var(--b-sum-k));
   line-height: 1;
   font-weight: 400;
   color: var(--gray-10);
@@ -448,9 +513,9 @@
 /* 6.15: the bars, the plates and the team names hold their final positions and ONLY
    the two wins numerals are Skeletons. There is no snapshot yet, so those positions
    are empty boxes: --team is unset, which paints nothing, and the plate keeps the
-   width three uppercase characters will take at b-code so the name lands where it
-   finally lands. */
-.b-cold-code { width: calc(8.5cqw * var(--far)); }
+   width three uppercase characters will take at b-code (1.8em of Geist Mono plus the
+   plate's own 2.8cqw of padding) so the name lands where it finally lands. */
+.b-cold-code { width: calc(var(--b-code) * 1.8 + 2.8cqw); }
 .b-cold-pts { display: inline-block; width: 3ch; font-size: var(--b3); }
 .b-skel-wins {
   height: var(--b-wins-box);
@@ -462,19 +527,16 @@
 
 /* ---------------- compositions ---------------- */
 
-/* Each budget is stated in the safe frame and sums to exactly 90cqh. */
-[data-comp='entry'] .b-hero { height: 38cqh; --b-plate: calc(12cqh * var(--far)); }
-[data-comp='entry'] .b-band { margin-top: 2cqh; height: 40cqh; }
-[data-comp='entry'] .b-row { height: calc(10cqh * var(--far)); }
-/* Digits carry no descender, so a b2 figure may set its own box under 1.0. At 0.78 that
-   box is 10.14cqh and overflows the 10cqh row by 0.14; 0.76 sets 9.88cqh, which holds
-   the 9.36cqh cap height of b2 with 0.52cqh to spare and fits the row. */
+[data-comp='entry'] .b-hero { --b-plate: calc(12cqh * var(--far)); }
+[data-comp='done'] .b-hero { --b-plate: calc(13cqh * var(--far)); }
+[data-comp='entry'] .b-row { height: calc(var(--b-row-n) * 1cqh); }
+/* Digits carry no descender, so a b2 figure may set its own box under 1.0, and the
+   score step above is already the largest step that fits the row at 0.76. */
 [data-comp='entry'] .b-score { line-height: 0.76; }
 
-[data-comp='done'] .b-hero { height: 40cqh; --b-plate: calc(13cqh * var(--far)); }
-
-/* setup, 6.15: N columns, each a b3 head over that mat's first three pairings. This is
-   the one composition where queue depth fits, and the one moment the room wants it. */
+/* setup, 6.15: N columns, each a b3 head over that mat's first pairings. This is the
+   one composition where queue depth fits, and the one moment the room wants it. The
+   number of pairings is budget.ts's, because the band is not a fixed 56cqh. */
 [data-comp='setup'] .b-band {
   flex-direction: row;
   gap: 2cqw;
@@ -498,26 +560,29 @@
   overflow: hidden;
 }
 
-/* The band is 56cqh whatever the mat count, so the panel height is derived from the
-   count rather than enumerated: the API accepts up to eight mats, and four hard coded
-   rules meant mats five and up never reached the television at all. n panels plus
-   n - 1 gaps come to exactly 56cqh at every count. */
+/* n panels plus n - 1 gaps come to exactly the band at every count the API accepts,
+   and the row inside a panel is whatever the panel has left after its queue. Both
+   numbers are budget.ts's; four hard coded rules meant mats five and up never reached
+   the television at all, and deriving the height alone meant they reached it clipped.
+
+   The panel at a 1920 x 1080 stage and --far 1, in cqh, at one through eight mats:
+
+     56    27    18    13.25    10.88    9.0    7.66    6.65
+
+   The score is --b-score-step, which is min(b2, the panel), so it holds b2 through four
+   mats, steps down at five, and reaches the b3 floor exactly at six. Seven and eight
+   cannot hold the floor at all: those lay out at the panel's own step, nothing is cut,
+   and the board says "Too many mats for this screen" in the note rather than printing a
+   row with the top of every digit missing. */
 [data-comp='mats'] .b-band {
-  --b-mat-gap: 0.5cqh;
-  gap: var(--b-mat-gap);
+  gap: calc(var(--b-mat-gap-n) * 1cqh);
 }
-[data-comp='mats'][data-mats='1'] .b-band,
-[data-comp='mats'][data-mats='2'] .b-band { --b-mat-gap: 2cqh; }
-[data-comp='mats'][data-mats='3'] .b-band,
-[data-comp='mats'][data-mats='4'] .b-band { --b-mat-gap: 1cqh; }
 [data-comp='mats'] .b-panel {
-  height: calc((56cqh - (var(--mats) - 1) * var(--b-mat-gap)) / var(--mats));
+  height: calc(var(--b-panel-n) * 1cqh);
 }
-/* One and two mats spend the rest of the panel on the queue, so their rows are stated;
-   above two the row is the whole panel. */
-[data-comp='mats'] .b-panel > .b-row { height: 100%; }
-[data-comp='mats'][data-mats='1'] .b-panel > .b-row { height: 20cqh; }
-[data-comp='mats'][data-mats='2'] .b-panel > .b-row { height: 18cqh; }
+[data-comp='mats'] .b-panel > .b-row {
+  height: calc(var(--b-row-n) * 1cqh);
+}
 
 /* ---------------- motion ---------------- */
 
@@ -525,10 +590,10 @@
    a takedown moves a score from 4 to 6 and a roll renders a frame reading 5, a score
    unreachable under the ruleset, at 238px in front of a room.
 
-   A transition and not a keyframe animation, because 4.3's reduced motion block keeps
-   opacity transitions and collapses every animation to a single frame. The board is the
-   surface that rule exists to protect: a gym television with Reduce Motion set is one
-   nobody in the room can query, and the change cue is the only signal it has. */
+   A transition and not a keyframe, because 4.3's reduced motion block keeps opacity
+   transitions and collapses every other cue to a single frame. The board is the surface
+   that rule exists to protect: a gym television with Reduce Motion set is one nobody in
+   the room can query, and the change cue is the only signal it has. */
 .b-fig { display: inline-grid; }
 .b-fig > span {
   grid-area: 1 / 1;
