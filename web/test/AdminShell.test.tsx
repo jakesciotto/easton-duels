@@ -28,11 +28,14 @@ describe('AdminShell freshness readout', () => {
     expect(screen.queryByText(/^Live/)).not.toBeInTheDocument()
   })
 
-  it('is the neutral tone under 5 seconds old', () => {
+  // A healthy app says it is live and prints no number: the age is always under one poll
+  // interval, so a figure there counts up and resets on every poll and reports nothing.
+  it('says Live with no age while the polls are landing', () => {
     vi.useFakeTimers({ now: T0 })
     mount(<AdminShell title="Event" freshness={{ lastSuccessAt: T0 - 2_000, pollIntervalMs: 2000 }}>content</AdminShell>)
-    const el = screen.getByText('2s')
-    expect(el.parentElement).toHaveClass('text-gray-11')
+    const banner = screen.getByRole('banner')
+    expect(banner).toHaveTextContent('Live')
+    expect(banner).not.toHaveTextContent(/\ds/)
   })
 
   it('degrades to attend past 5 seconds', () => {
@@ -72,7 +75,7 @@ describe('AdminShell freshness readout while the stream is paused', () => {
     const { rerender } = mount(<AdminShell title="Event" freshness={{ lastSuccessAt: T0 - 2_000, pollIntervalMs: 1000, paused: true, waiting: 2 }}>content</AdminShell>)
     rerender(<MemoryRouter><AdminShell title="Event" freshness={{ lastSuccessAt: T0 - 2_000, pollIntervalMs: 1000, paused: false, waiting: 0 }}>content</AdminShell></MemoryRouter>)
     expect(screen.getByRole('banner')).not.toHaveTextContent('waiting')
-    expect(screen.getByRole('banner')).toHaveTextContent('Live 2s')
+    expect(screen.getByRole('banner')).toHaveTextContent('Live')
   })
 })
 

@@ -47,16 +47,20 @@ function FreshnessSlot({ freshness }: { freshness: ShellFreshness }) {
     )
   }
 
-  const level = headerFreshnessLevel(ageSec)
+  const level = headerFreshnessLevel(ageSec, freshness.pollIntervalMs)
   const tone = level === 'fault' ? 'text-fault' : level === 'attend' ? 'text-attend' : 'text-gray-11'
   const dot = level === 'fault' ? 'bg-fault' : level === 'attend' ? 'bg-attend' : 'bg-gray-11'
 
   return (
-    // Changes every second by design; a live region here would be a speech denial of
-    // service (7.12), so it is read on demand rather than announced.
+    // The age is printed only once the data stopped arriving. While the app is healthy the
+    // age is always under one poll interval, so a number here counts up and resets on every
+    // poll: it changes every second and reports nothing the operator can act on. A live
+    // region would also be a speech denial of service (7.12), so it is read on demand.
     <span aria-live="off" className={cn('ml-auto flex shrink-0 items-center gap-2 t2', tone)}>
       <span aria-hidden className={cn('size-1.5 rounded-full', dot)} />
-      Live <span className="fig fig-2">{formatAge(ageSec)}</span>
+      {level === 'fresh'
+        ? 'Live'
+        : <>Not updating <span className="fig fig-2">{formatAge(ageSec)}</span></>}
     </span>
   )
 }

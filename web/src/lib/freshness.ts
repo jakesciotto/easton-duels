@@ -22,11 +22,24 @@ export function isStale(lastSuccessAt: number | null, now: number, pollIntervalM
 
 export type FreshnessLevel = 'fresh' | 'attend' | 'fault'
 
-// 6.4: the shell's status region degrades on fixed poll age, not on the adaptive interval --
-// gray-11 under 5s, attend past 5s, fault past 15s. Null (no poll has landed yet) is the
-// caller's job to render as a distinct connecting state.
-export function headerFreshnessLevel(ageSec: number | null): FreshnessLevel {
-  if (ageSec === null || ageSec <= 5) return 'fresh'
-  if (ageSec <= 15) return 'attend'
+/**
+ * 6.4's status region, with two corrections that the running app forced.
+ *
+ * The threshold is measured against the POLL INTERVAL, not a fixed five seconds. The
+ * interval is adaptive and reaches five seconds in data entry mode, so a fixed five
+ * second threshold reports "late" once every single cycle on a perfectly healthy app.
+ * Late means a poll has been MISSED, which is the same fact the clock's stale state
+ * reads, so the two can never disagree about whether the data is old.
+ *
+ * The level is what the header renders, and the AGE is only printed once the level
+ * leaves fresh. While the app is healthy the age is always under one interval, so a
+ * number there counts seconds up and resets on every poll and tells the operator
+ * nothing they can act on. The signal is that the data STOPPED arriving.
+ */
+export function headerFreshnessLevel(ageSec: number | null, pollIntervalMs: number): FreshnessLevel {
+  if (ageSec === null) return 'fresh'
+  const ageMs = ageSec * 1000
+  if (ageMs <= pollIntervalMs * 2) return 'fresh'
+  if (ageMs <= pollIntervalMs * STALE_POLL_MULTIPLIER) return 'attend'
   return 'fault'
 }
