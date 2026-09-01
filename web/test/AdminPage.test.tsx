@@ -35,6 +35,28 @@ describe('AdminPage', () => {
     expect(router.state.location.pathname).toBe('/events/7')
   })
 
+  // Measured in a real browser against the dev server: an event named "test" gave the
+  // name link a 25 by 20px hit area inside a 1102 by 40px row, so clicking the row did
+  // nothing and the list read as broken. The link stretches over the row instead. jsdom
+  // computes no layout, so the structural invariants are what a unit test can hold: the
+  // row is the positioning context, the link carries the overlay, and the only other
+  // destination in the row still sits above it.
+  it('gives the whole row to the event link and keeps Board reachable', async () => {
+    fakeFetch(url => url === '/api/events' ? { json: [summary] } : { json: {} })
+    const router = mount()
+    const name = await screen.findByRole('link', { name: 'Fall Duels' })
+    const row = name.closest('[data-slot="field-row"]')
+    expect(row).not.toBeNull()
+    expect(row).toHaveClass('relative')
+    expect(name.className).toMatch(/after:absolute/)
+    expect(name.className).toMatch(/after:inset-0/)
+
+    const board = screen.getByRole('link', { name: 'Board' })
+    expect(board).toHaveClass('relative')
+    await userEvent.setup().click(board)
+    expect(router.state.location.pathname).toBe('/board/7')
+  })
+
   // Finding 5: `ch` (and so var(--col-num-s)) resolves against each element's own
   // font-size. A head left on the sans face at t1 and a row inheriting the shell's
   // ambient t3 resolved the identical declared track to two different pixel widths.

@@ -32,12 +32,19 @@ const ROW = 'grid h-10 grid-cols-[var(--col-state)_minmax(0,1fr)_92px_var(--col-
 function EventRow({ ev }: { ev: EventSummary }) {
   const [teamA, teamB] = ev.teams
   return (
-    <FieldRow className={ROW}>
+    <FieldRow className={cn(ROW, 'relative')}>
       <span aria-hidden className={cn('h-full self-stretch', STATE_RULE[ev.status])} />
       {/* The row sets the mono face so the numeric track resolves ch correctly.
           Every cell holding words takes the sans face back. */}
       <div className="flex min-w-0 items-center gap-3 font-sans">
-        <Link to={`/events/${ev.id}`} className="truncate t3 font-medium text-gray-12 outline-none focus-visible:shadow-focus">
+        {/* The name is the row's link, so the whole row has to be its target. Left as
+            text alone the hit area is the glyphs: an event named "test" gives a 25 by
+            20px target in a 1102 by 40px row, which reads as a row that does nothing.
+            The overlay also carries the row past the 44px minimum touch target. */}
+        <Link
+          to={`/events/${ev.id}`}
+          className="truncate t3 font-medium text-gray-12 outline-none after:absolute after:inset-0 after:rounded-none focus-visible:shadow-focus"
+        >
           {ev.name}
         </Link>
         {teamA && <TeamPlate color={teamA.color} name={teamA.name} size="inline" />}
@@ -45,7 +52,8 @@ function EventRow({ ev }: { ev: EventSummary }) {
       </div>
       <span className="fig text-gray-10">{ev.date}</span>
       <span className="fig text-right text-gray-10">{ev.matCount}</span>
-      <Link to={`/board/${ev.id}`} className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'font-sans')}>Board</Link>
+      {/* Above the row overlay, or the only other destination in the row is unreachable. */}
+      <Link to={`/board/${ev.id}`} className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'relative font-sans')}>Board</Link>
     </FieldRow>
   )
 }
