@@ -3,9 +3,10 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router'
-import type { MatchView, Snapshot } from '@shared/types'
+import type { EventMode, MatchView, Snapshot } from '@shared/types'
 import { LiveTab } from '@/routes/event/LiveTab'
 import { setAdminToken } from '@/lib/auth'
+import { DESK_NOTE, DESK_NOTE_DETAIL } from '@/lib/eventMode'
 import type { EventDetail } from '@/lib/types'
 import { fakeFetch, snapshotFeed, type Reply, sampleMatch, sampleSnapshot } from './fakes'
 
@@ -16,7 +17,7 @@ afterEach(() => vi.unstubAllGlobals())
 const SERVER_NOW = '2026-10-03T16:00:00.000Z'
 
 const detail: EventDetail = {
-  event: { id: 1, name: 'Fall Duels', date: '2026-10-03', matCount: 1, matCode: '0420', status: 'live', maxAgeGap: 1, maxWeightGap: 10, sameGender: false, createdAt: 'x' },
+  event: { id: 1, name: 'Fall Duels', date: '2026-10-03', matCount: 1, matCode: '0420', status: 'live', mode: 'live', maxAgeGap: 1, maxWeightGap: 10, sameGender: false, createdAt: 'x' },
   teams: [{ id: 1, eventId: 1, name: 'Ridgeline', color: 'red', position: 0 }, { id: 2, eventId: 1, name: 'Lakeside', color: 'blue', position: 1 }],
   athletes: [], rulesets: [], mats: [{ id: 1, eventId: 1, number: 1, currentMatchId: 10 }], matches: [], candidateCount: 0,
 }
@@ -338,7 +339,7 @@ describe('LiveTab', () => {
   it('replaces the rack with the record once the event is finished', async () => {
     const feed = snapshotFeed(sampleSnapshot({
       now: SERVER_NOW,
-      event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'done', matCount: 1 },
+      event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'done', mode: 'live', matCount: 1 },
       teams: [
         { id: 1, name: 'Ridgeline', color: 'red', position: 0, wins: 7, points: 42 },
         { id: 2, name: 'Lakeside', color: 'blue', position: 1, wins: 5, points: 31 },
@@ -362,7 +363,7 @@ describe('LiveTab', () => {
   it('lands the final result head and rows on the same fixed track', async () => {
     const feed = snapshotFeed(sampleSnapshot({
       now: SERVER_NOW,
-      event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'done', matCount: 1 },
+      event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'done', mode: 'live', matCount: 1 },
       teams: [
         { id: 1, name: 'Ridgeline', color: 'red', position: 0, wins: 7, points: 42 },
         { id: 2, name: 'Lakeside', color: 'blue', position: 1, wins: 5, points: 31 },
@@ -377,5 +378,85 @@ describe('LiveTab', () => {
     expect(winsRow.className).toMatch(/62\.4px/)
     expect(winsHead.className).not.toMatch(/auto/)
     expect(winsRow.className).not.toMatch(/auto/)
+  })
+})
+
+const entryDetail: EventDetail = { ...detail, event: { ...detail.event, mode: 'entry' } }
+const atMode = (snapshot: Snapshot, mode: EventMode): Snapshot => ({ ...snapshot, event: { ...snapshot.event, mode } })
+
+describe('LiveTab in entry mode', () => {
+  // The tab is never hidden: an organizer still wants to look at the running order, and a
+  // hidden tab is a screen somebody hunts for. It has to say what it is instead.
+  it('states that the event runs from the desk rather than handing out a mat code', async () => {
+    const feed = snapshotFeed(atMode(oneMat({ current: null, bound: false }, [settled]), 'entry'))
+    const f = mount(url => feed.handle(url) ?? connectOnly(url), entryDetail)
+    expect(await screen.findByText(DESK_NOTE)).toBeInTheDocument()
+    expect(screen.getByText(DESK_NOTE_DETAIL)).toBeInTheDocument()
+    expect(await panel(1)).toBeInTheDocument()
+    expect(screen.getByText(/No iPad is scoring these mats/)).toBeInTheDocument()
+
+    // A mat code on this screen is an invitation to bind a tablet that will sit on an
+    // empty mat all afternoon, so neither the code nor the QR is rendered or even fetched.
+    expect(screen.queryByText('0420')).not.toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: 'QR code' })).not.toBeInTheDocument()
+    expect(f.calls.some(c => c.url.endsWith('/connect'))).toBe(false)
+  })
+
+  it('keeps the connect card and its code in live mode', async () => {
+    const feed = snapshotFeed(oneMat({ current: null, bound: false }, [settled]))
+    mount(url => feed.handle(url) ?? connectOnly(url))
+    expect(await screen.findByText('0420')).toBeInTheDocument()
+    expect(screen.queryByText(DESK_NOTE)).not.toBeInTheDocument()
+    expect(screen.queryByText(/No iPad is scoring these mats/)).not.toBeInTheDocument()
+  })
+
+  /**
+   * One fact, one source. The organizer switches the event from a phone at the desk. This
+   * laptop's event detail is a react-query cache that nothing invalidates on another
+   * device's write, so a tab reading the detail went on offering a mat code and a QR for
+   * a rack the television had already stopped showing.
+   */
+  it('follows the polled stream when the detail cache still says the mats are scoring', async () => {
+    // A running clock, so the stream is on its one second rung and the switch lands on
+    // the next tick rather than three seconds later.
+    const feed = snapshotFeed(oneMat({ bound: false }))
+    mount(url => feed.handle(url) ?? connectOnly(url))
+    expect(await screen.findByText('0420')).toBeInTheDocument()
+
+    feed.push(atMode(oneMat({ bound: false }), 'entry'))
+    expect(await screen.findByText(DESK_NOTE, {}, { timeout: 3000 })).toBeInTheDocument()
+    expect(screen.queryByText('0420')).not.toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: 'QR code' })).not.toBeInTheDocument()
+    expect(screen.getByText(/No iPad is scoring these mats/)).toBeInTheDocument()
+  })
+})
+
+// 6.18: below 640px every dialog in the product goes full screen. The End dialog was the
+// one that stayed a centred rounded card, and a tie is exactly the moment the organizer is
+// deciding on a phone at the desk.
+describe('LiveTab dialogs, 6.18', () => {
+  const goesFullScreenBelow640 = (dialog: HTMLElement) => {
+    expect(dialog.className).toMatch(/(^|\s)max-w-none(\s|$)/)
+    expect(dialog.className).toMatch(/(^|\s)rounded-none(\s|$)/)
+    expect(dialog.className).toMatch(/(^|\s)sm:rounded-xl(\s|$)/)
+  }
+
+  it('puts the End dialog on the shared frame', async () => {
+    const tied = scored({
+      a: { athleteId: 100, name: 'Mateo Rivera', teamId: 1, belt: null, weightLbs: null, score: 3 },
+      b: { athleteId: 200, name: 'Olivia Kim', teamId: 2, belt: null, weightLbs: null, score: 3 },
+    })
+    const feed = snapshotFeed(oneMat({ current: tied, bound: true }))
+    mount(url => feed.handle(url) ?? connectOnly(url))
+    const one = await panel(1)
+    await userEvent.setup().click(within(one).getByRole('button', { name: 'End match' }))
+    goesFullScreenBelow640(await screen.findByRole('dialog'))
+  })
+
+  it('puts the Finish dialog on the shared frame', async () => {
+    const feed = snapshotFeed(oneMat({ bound: true }))
+    mount(url => feed.handle(url) ?? connectOnly(url))
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Finish event' }))
+    goesFullScreenBelow640(await screen.findByRole('dialog'))
   })
 })

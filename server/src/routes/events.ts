@@ -22,6 +22,7 @@ const createEventSchema = z.object({
   name: z.string().trim().min(1).max(80),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   matCount: z.number().int().min(1).max(8),
+  mode: z.enum(['live', 'entry']).optional(),
   teams: z.tuple([teamSchema, teamSchema]),
   maxAgeGap: maxAgeGap.optional(),
   maxWeightGap: maxWeightGap.optional(),
@@ -33,6 +34,7 @@ const patchEventSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   matCount: z.number().int().min(1).max(8).optional(),
   status: z.enum(['live', 'done']).optional(),
+  mode: z.enum(['live', 'entry']).optional(),
   maxAgeGap: maxAgeGap.optional(),
   maxWeightGap: maxWeightGap.optional(),
   sameGender: sameGender.optional(),
@@ -86,6 +88,7 @@ eventRoutes.post('/events', requireAdmin, validate('json', createEventSchema), a
   const detail = await db.transaction(async tx => {
     const ev = await tx.insert(events).values({
       name: body.name, date: body.date, matCount: body.matCount, matCode: randomMatCode(),
+      mode: body.mode ?? 'live',
       maxAgeGap: body.maxAgeGap ?? 1, maxWeightGap: body.maxWeightGap ?? 10, sameGender: body.sameGender ?? false,
       createdAt: new Date().toISOString(),
     }).returning().get()

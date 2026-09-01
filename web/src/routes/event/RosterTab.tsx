@@ -7,6 +7,7 @@ import { PasteRosterDialog } from './PasteRosterDialog'
 import { SyncRosterDialog } from './SyncRosterDialog'
 import { RosterGroup } from './roster-group'
 import { dropZoneValue, useRosterDrag } from './roster-drag'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
@@ -123,7 +124,17 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
   const removable = selectedRows.filter(a => !inMatch.has(a.id))
   const blockedCount = selectedRows.length - removable.length
   const needsData = detail.athletes.filter(a => a.age === null || a.weightLbs === null).length
-  const failure = assign.error ?? patch.error
+  // A react-query mutation holds its error until that same mutation runs again, so
+  // `assign.error ?? patch.error` pinned the banner to whichever failed FIRST: a refused
+  // move at 10:00 was still reading "The move failed" over a weight edit refused ten
+  // minutes later for a different reason, and the operator read the wrong reason for the
+  // wrong action. submittedAt is the moment each failing run started, so the newer failure
+  // wins and the title always names the action that actually failed.
+  const failure = [
+    assign.error ? { title: 'The move failed', message: assign.error.message, at: assign.submittedAt } : null,
+    patch.error ? { title: 'The edit was not saved', message: patch.error.message, at: patch.submittedAt } : null,
+  ].filter((f): f is { title: string; message: string; at: number } => f !== null)
+    .sort((x, y) => y.at - x.at)[0] ?? null
   // 7.12: one polite region per screen, phrased as a sentence, present and empty from
   // the first render, so the toolbar becoming a selection bar is not a silent change.
   const announcement = selected.size === 0
@@ -164,7 +175,12 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
       )}
       {/* Outside the toolbar swap: a refused assign leaves the selection standing,
           and the message has to outlive the bar it was triggered from. */}
-      {failure && <p role="alert" className="t2 text-fault">{failure.message}</p>}
+      {failure && (
+        <Alert>
+          <AlertTitle>{failure.title}</AlertTitle>
+          <AlertDescription>{failure.message}</AlertDescription>
+        </Alert>
+      )}
       <AddKidDialog detail={detail} open={addOpen} onOpenChange={setAddOpen} onRefresh={() => setSyncOpen(true)} />
       <PasteRosterDialog detail={detail} open={pasteOpen} onOpenChange={setPasteOpen} />
       <SyncRosterDialog detail={detail} open={syncOpen} onOpenChange={setSyncOpen} />
@@ -179,9 +195,10 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
             <DialogBody>
               <p className="t3 text-gray-11">This takes the competitor off this event's roster. Competitors already placed in a match cannot be removed.</p>
               {remove.error && (
-                <p role="alert" className="t2 text-fault">
-                  {stoppedOn ? `${stoppedOn} was not removed. ${remove.error.message}` : remove.error.message}
-                </p>
+                <Alert>
+                  <AlertTitle>{stoppedOn ?? 'The competitor'} was not removed</AlertTitle>
+                  <AlertDescription>{remove.error.message}</AlertDescription>
+                </Alert>
               )}
             </DialogBody>
             <DialogFooter>

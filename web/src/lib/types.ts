@@ -1,4 +1,4 @@
-import type { EventStatus, MatchStatus, RulesetAction, RulesetTerminal, TeamColor, WinType } from '@shared/types'
+import type { EventMode, EventStatus, MatchStatus, RulesetAction, RulesetTerminal, TeamColor, WinType } from '@shared/types'
 
 export interface EventRow {
   id: number
@@ -7,6 +7,7 @@ export interface EventRow {
   matCount: number
   matCode: string
   status: EventStatus
+  mode: EventMode
   maxAgeGap: number
   maxWeightGap: number
   sameGender: boolean

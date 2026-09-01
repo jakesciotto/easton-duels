@@ -1,6 +1,13 @@
 export type WinType = 'submission' | 'points' | 'decision'
 export type MatchStatus = 'pending' | 'live' | 'done'
 export type EventStatus = 'setup' | 'live' | 'done'
+/**
+ * How the event is run. 'entry' means the desk types every result and no tablet scores a
+ * mat; 'live' means the mats drive it and the desk corrects. The walkthrough two weeks
+ * before the event decides it, so it is a stored setting rather than something inferred
+ * from whether a mat happens to be bound at this instant.
+ */
+export type EventMode = 'live' | 'entry'
 export type MatchEventType = 'score' | 'set_score' | 'clock_start' | 'clock_pause' | 'terminal' | 'end' | 'admin'
 
 export interface RulesetAction { key: string; label: string; points: number }
@@ -49,7 +56,7 @@ export interface MatView { id: number; number: number; current: MatchView | null
 export interface Snapshot {
   version: number
   now: string
-  event: { id: number; name: string; date: string; status: EventStatus; matCount: number }
+  event: { id: number; name: string; date: string; status: EventStatus; mode: EventMode; matCount: number }
   teams: TeamView[]
   rulesets: RulesetView[]
   mats: MatView[]

@@ -33,6 +33,29 @@ describe('events', () => {
     expect(one.body.candidateCount).toBe(0)
   })
 
+  // How the event runs is a stored fact, because the walkthrough two weeks out decides it.
+  // The app used to infer it from whether a mat happened to be bound at that instant, which
+  // is why the board could change composition on a reload between bouts.
+  it('defaults to live scoring, takes a mode on create, and changes it on patch', async () => {
+    const { app, adminToken } = await createTestApp()
+
+    const live = await call(app, 'POST', '/api/events', body, adminToken)
+    expect(live.body.event.mode).toBe('live')
+
+    const desk = await call(app, 'POST', '/api/events', { ...body, mode: 'entry' }, adminToken)
+    expect(desk.body.event.mode).toBe('entry')
+
+    // Changeable after the fact, and while the event is live: the desk path is the fallback
+    // when the tablets do not work on the day, which is when it is most needed.
+    const patched = await call(app, 'PATCH', `/api/events/${live.body.event.id}`, { mode: 'entry' }, adminToken)
+    expect(patched.status).toBe(200)
+    const after = await call(app, 'GET', `/api/events/${live.body.event.id}`, undefined, adminToken)
+    expect(after.body.event.mode).toBe('entry')
+
+    const bad = await call(app, 'PATCH', `/api/events/${live.body.event.id}`, { mode: 'whenever' }, adminToken)
+    expect(bad.status).toBe(422)
+  })
+
   it('counts the cached candidate pool on event detail', async () => {
     const { app, db, adminToken } = await createTestApp()
     const s = await seedEvent(db, { matches: 0 })

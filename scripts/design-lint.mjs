@@ -59,6 +59,12 @@ const RULES = [
     pattern: /var\(--gray-[2-9]\)|\b(text|bg|border)-gray-[1-9]\b|\bborder-border\b|\bbg-card\b/,
   },
   {
+    name: 'no route pins its own poll interval',
+    why: 'Every route under the event body reads one shared stream, which polls on the derived ramp. A pinned interval is ignored by the stream and then used as a staleness threshold, so the screen calls data fresh after the board has stopped trusting it. The board and the scorer sit outside that provider and own their own poll, so the rule does not reach them.',
+    skip: file => !file.includes('/routes/event/') && !file.endsWith('routes/EventPage.tsx'),
+    pattern: /useSnapshot\([^)]*,[^)]*\)/,
+  },
+  {
     name: 'no --gray-1 on the board outside the three places 6.15 names',
     why: 'The letterbox, the settled row and the plate code. Anywhere else it is a card fill.',
     skip: file => !isBoard(file),

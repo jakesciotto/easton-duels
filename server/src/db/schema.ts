@@ -13,6 +13,10 @@ export const events = sqliteTable('events', {
   matCount: integer('mat_count').notNull(),
   matCode: text('mat_code').notNull(),
   status: text('status', { enum: ['setup', 'live', 'done'] }).notNull().default('setup'),
+  // How the event is run, decided at the walkthrough two weeks out. 'entry' means the
+  // desk types every result and no tablet scores a mat. 'live' means the mats drive it.
+  // Existing events default to 'live', which is the behaviour they were created under.
+  mode: text('mode', { enum: ['live', 'entry'] }).notNull().default('live'),
   maxAgeGap: integer('max_age_gap').notNull().default(1),
   maxWeightGap: integer('max_weight_gap').notNull().default(10),
   sameGender: integer('same_gender', { mode: 'boolean' }).notNull().default(false),

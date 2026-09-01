@@ -18,7 +18,7 @@ describe('buildSnapshot', () => {
     const snap = await buildSnapshot(db, s.eventId, opts)
     expect(snap.version).toBe(0)
     expect(snap.now).toBe('2026-08-27T18:00:00.000Z')
-    expect(snap.event).toEqual({ id: s.eventId, name: 'Fall Duels', date: '2026-10-03', status: 'live', matCount: 2 })
+    expect(snap.event).toEqual({ id: s.eventId, name: 'Fall Duels', date: '2026-10-03', status: 'live', mode: 'live', matCount: 2 })
     expect(snap.teams.map(t => [t.name, t.wins, t.points])).toEqual([['Ridgeline', 0, 0], ['Lakeside', 0, 0]])
     expect(snap.rulesets[0].actions.find(a => a.key === 'mount')?.points).toBe(4)
     expect(snap.mats.map(m => [m.number, m.current?.id ?? null, m.bound])).toEqual([[1, s.matchIds[0], true], [2, s.matchIds[1], false]])

@@ -3,6 +3,8 @@ import { Link, useNavigate, useSearchParams } from 'react-router'
 import type { Snapshot } from '@shared/types'
 import { api, ApiError } from '@/lib/api'
 import { clearMatBinding, getMatBinding, setMatBinding } from '@/lib/auth'
+import { DESK_BIND_REFUSAL } from '@/lib/eventMode'
+import { POLL_DATA_ENTRY_MS } from '@/lib/pollInterval'
 import { useWakeLock } from '@/lib/useWakeLock'
 import { unlockAudio } from '@/lib/sounds'
 import { CodeField } from '@/components/CodeField'
@@ -58,11 +60,22 @@ export default function MatPickPage() {
   const [matId, setMatId] = useState<number | null>(null)
   const [code, setCode] = useState('')
   const [error, setError] = useState<string | null>(null)
+  // The read's own fault, kept apart from the bind's: they share one Alert, and a re-read
+  // that cleared `error` on its own schedule would wipe "wrong mat code" off the screen a
+  // few seconds after the volunteer read it.
+  const [readError, setReadError] = useState<string | null>(null)
+  const [reads, setReads] = useState(0)
   const [busy, setBusy] = useState(false)
   const [binding, setBinding] = useState(() => getMatBinding())
   const [bindable, setBindable] = useState(isBindableViewport)
   const boundToCurrentEvent = binding !== null && (eventQueryId === null || binding.eventId === eventQueryId)
   const otherEventBinding = binding !== null && !boundToCurrentEvent ? binding : null
+  // An entry mode event has no scorer, so binding one hands a volunteer a tablet that sits
+  // on an empty mat all afternoon. Refuse rather than ask: the control is disabled and the
+  // reason is printed beside it.
+  // Optional chained rather than compared against null: a snapshot response the server
+  // truncates leaves this state undefined, which every other read here already tolerates.
+  const entryMode = snapshot?.event.mode === 'entry'
 
   // 6.17b / 7.15: the wake lock is acquired on the code-entry tap, which is the first
   // user gesture on this route. Safari refuses navigator.wakeLock.request() outside a
@@ -91,19 +104,34 @@ export default function MatPickPage() {
     return () => mq.removeEventListener('change', onChange)
   }, [])
 
+  // The refusal below is computed from the event, so it has to track the event. Read once
+  // when the page opened, it did not: a tablet left on this screen at 09:40 kept its Bind
+  // button disabled under a reason the organizer cleared at 10:00, and the only cure was a
+  // reload nobody knows to do. This screen carries no clock, so the data entry rate is
+  // fast enough, and re-reading through the same one-shot keeps the read's own sentence:
+  // a mistyped event number still says what the server said rather than "reconnecting".
+  useEffect(() => {
+    if (!eventId) return
+    const timer = setInterval(() => setReads(n => n + 1), POLL_DATA_ENTRY_MS)
+    return () => clearInterval(timer)
+  }, [eventId])
+
   useEffect(() => {
     if (!eventId) return
     let ignore = false
-    setError(null)
     api<{ version: number; snapshot: Snapshot }>(`/api/events/${eventId}/snapshot`)
-      .then(body => { if (!ignore) setSnapshot(body.snapshot) })
-      .catch(e => { if (!ignore) setError(e instanceof ApiError ? e.message : 'Could not reach the server') })
+      .then(body => {
+        if (ignore) return
+        setSnapshot(body.snapshot)
+        setReadError(null)
+      })
+      .catch(e => { if (!ignore) setReadError(e instanceof ApiError ? e.message : 'Could not reach the server') })
     return () => { ignore = true }
-  }, [eventId])
+  }, [eventId, reads])
 
   const bind = async (e: FormEvent) => {
     e.preventDefault()
-    if (matId === null || !snapshot) return
+    if (matId === null || !snapshot || entryMode) return
     setBusy(true)
     setError(null)
     try {
@@ -208,12 +236,13 @@ export default function MatPickPage() {
               <AlertDescription>Disable auto-lock for this device and keep it plugged in.</AlertDescription>
             </Alert>
           )}
-          {error && (
+          {(error ?? readError) && (
             <Alert>
-              <AlertDescription>{error}</AlertDescription>
+              <AlertDescription>{error ?? readError}</AlertDescription>
             </Alert>
           )}
-          <Button type="submit" size="lg" className="w-full" disabled={busy || matId === null || code.length !== 4}>
+          {entryMode && <p className="t2 text-gray-10">{DESK_BIND_REFUSAL}</p>}
+          <Button type="submit" size="lg" className="w-full" disabled={busy || entryMode || matId === null || code.length !== 4}>
             Bind this iPad
           </Button>
         </form>

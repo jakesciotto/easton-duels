@@ -209,6 +209,36 @@ describe('the far knob', () => {
   })
 })
 
+describe('the hero figures', () => {
+  it('gives both hero numerals a character slot, points included', () => {
+    // 2.8: a fixed slot, so a value change can never change the width of its container.
+    // The points figure was the one board number without one. At a 1920 stage a b3
+    // character is 58.32px, so a team taking a 2 point takedown from 9 grew its label
+    // box by that much in one frame and shoved " pts" sideways on a still hero half.
+    const vars = boardVars(1)
+    const b1 = px(decl('.b-wins', 'font-size'), vars)
+    const b3 = px('var(--b3)', vars)
+    expect(px(decl('.b-wins', 'min-width'), vars, b1)).toBeCloseTo(2 * CH_EM * b1, 6)
+    expect(decl('.b-pts', 'display')).toBe('inline-block')
+    expect(px(decl('.b-pts', 'min-width'), vars, b3)).toBeCloseTo(3 * CH_EM * b3, 6)
+    // Three characters, because a team's points total passes 99 in a full event.
+    expect(3 * CH_EM * b3).toBeCloseTo(174.96, 2)
+    // One rule for the live box and the cold start box, so the two cannot drift apart.
+    expect(css).not.toMatch(/b-cold-pts/)
+  })
+
+  it('states the alignment inside the points slot instead of inheriting two of them', () => {
+    // The two halves do not inherit the same alignment: half B sets text-align: right and
+    // half A leaves it at the start. A slot with no rule of its own therefore put a single
+    // digit hard against " pts" on one half and two blank characters away from it on the
+    // other, which is 116.64px at the design stage on a hero that is meant to mirror.
+    expect(decl('.b-half-b', 'text-align')).toBe('right')
+    expect(ruleFor('.b-half')).not.toMatch(/text-align/)
+    expect(decl('.b-pts', 'text-align')).toBe('right')
+    expect(2 * CH_EM * px('var(--b3)', boardVars(1))).toBeCloseTo(116.64, 2)
+  })
+})
+
 describe('the mat ledger row', () => {
   it('fits inside the safe width at every far, with and without the clock track', () => {
     // The defect: --bn was a fixed 31.2cqw name token beside tracks that scale with the

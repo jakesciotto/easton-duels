@@ -253,6 +253,23 @@
   color: var(--gray-10);
   white-space: nowrap;
 }
+/* 2.8's fixed character slot, which the points figure was the one board number without.
+   Three characters, because a team's points total passes 99 in a full event, and one
+   character of b3 mono is 58.32px at a 1920 stage: a takedown taking a team from 9 to 11
+   moved the word beside it that far, in one frame, on the still half of the hero.
+
+   The alignment inside the slot is stated here rather than inherited. The two halves do
+   not inherit the same one -- half B sets text-align: right and half A leaves it at the
+   start -- so a slot with no rule of its own put a single digit hard against " pts" on
+   one half and two blank characters, 116.64px at the design stage, away from it on the
+   other. Right aligned on both, the digits always end against their own word and the
+   slack always falls on the far side of the number, which is 2.7's register rule for a
+   numeric track. The cold start reserves this same box. */
+.b-pts {
+  display: inline-block;
+  min-width: 3ch;
+  text-align: right;
+}
 .b-half-b .b-plate-row,
 .b-half-b .b-score-row {
   flex-direction: row-reverse;
@@ -514,9 +531,10 @@
    the two wins numerals are Skeletons. There is no snapshot yet, so those positions
    are empty boxes: --team is unset, which paints nothing, and the plate keeps the
    width three uppercase characters will take at b-code (1.8em of Geist Mono plus the
-   plate's own 2.8cqw of padding) so the name lands where it finally lands. */
+   plate's own 2.8cqw of padding) so the name lands where it finally lands. The points
+   box is .b-pts itself, so the slot the cold start reserves cannot drift from the one
+   the first snapshot renders into. */
 .b-cold-code { width: calc(var(--b-code) * 1.8 + 2.8cqw); }
-.b-cold-pts { display: inline-block; width: 3ch; font-size: var(--b3); }
 .b-skel-wins {
   height: var(--b-wins-box);
   width: 2ch;

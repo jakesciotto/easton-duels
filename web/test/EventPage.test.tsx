@@ -3,12 +3,14 @@ import { act, createEvent, fireEvent, render, screen, within } from '@testing-li
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createMemoryRouter, RouterProvider } from 'react-router'
+import type { Snapshot } from '@shared/types'
 import EventPage from '@/routes/EventPage'
 import { qk } from '@/lib/queries'
 import { ENGAGEMENT_RECHECK_MS } from '@/lib/operatorEngaged'
+import { DESK_NOTE, MODE_GROUP_LABEL, MODE_LABEL, MODE_ORDER } from '@/lib/eventMode'
 import { setAdminToken } from '@/lib/auth'
 import type { EventDetail, MatchRow } from '@/lib/types'
-import { fakeFetch, sampleSnapshot, type Reply } from './fakes'
+import { fakeFetch, sampleMatch, sampleSnapshot, type Reply } from './fakes'
 
 vi.mock('qrcode', () => ({ default: { toString: async () => '<svg>mock</svg>' } }))
 beforeEach(() => { localStorage.clear(); setAdminToken('tok') })
@@ -36,7 +38,7 @@ const REORDERED = [match(1, 1, 100, 200), match(2, 2, 101, 201), match(3, 0, 102
 
 function detailWith(matches: MatchRow[], athletes = ROSTER): EventDetail {
   return {
-    event: { id: 7, name: 'Fall Duels', date: '2026-10-03', matCount: 1, matCode: '0420', status: 'setup', maxAgeGap: 1, maxWeightGap: 10, sameGender: false, createdAt: 'x' },
+    event: { id: 7, name: 'Fall Duels', date: '2026-10-03', matCount: 1, matCode: '0420', status: 'setup', mode: 'live', maxAgeGap: 1, maxWeightGap: 10, sameGender: false, createdAt: 'x' },
     teams: [{ id: 1, eventId: 7, name: 'Ridgeline', color: 'red', position: 0 }, { id: 2, eventId: 7, name: 'Lakeside', color: 'blue', position: 1 }],
     athletes,
     rulesets: [{ id: 1, eventId: 7, name: 'Default', defaultLengthSec: 300, actions: [], terminals: [] }],
@@ -49,18 +51,26 @@ function detailWith(matches: MatchRow[], athletes = ROSTER): EventDetail {
 // An event with no mats bound polls at the data-entry rate (7.15), which is five seconds.
 // Nothing in these tests takes that long, so any extra snapshot request inside one is a
 // second poll loop rather than the shared one ticking.
-const SLOW_SNAPSHOT = sampleSnapshot({ mats: [], matches: [] })
+//
+// The stream is where every screen reads the mode from now, so a fixture whose snapshot
+// disagreed with its detail would be describing a stale cache rather than an event.
+const slowSnapshot = (over: Partial<Snapshot['event']> = {}) => sampleSnapshot({
+  mats: [],
+  matches: [],
+  event: { id: 7, name: 'Fall Duels', date: '2026-10-03', status: 'setup', mode: 'live', matCount: 1, ...over },
+})
+const SLOW_SNAPSHOT = slowSnapshot()
 
-function mount(handler: (url: string) => Reply | undefined) {
-  const f = fakeFetch(url => handler(url) ?? { json: [] })
+function mount(handler: (url: string, init?: RequestInit) => Reply | undefined) {
+  const f = fakeFetch((url, init) => handler(url, init) ?? { json: [] })
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const router = createMemoryRouter([{ path: '/events/:eventId', element: <EventPage /> }], { initialEntries: ['/events/7'] })
   render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
   return { f, qc }
 }
 
-const snapshotReply = (url: string): Reply | undefined =>
-  /\/snapshot(\?|$)/.test(url) ? { json: { version: 1, snapshot: SLOW_SNAPSHOT } } : undefined
+const snapshotReply = (url: string, snapshot: Snapshot = SLOW_SNAPSHOT): Reply | undefined =>
+  /\/snapshot(\?|$)/.test(url) ? { json: { version: 1, snapshot } } : undefined
 
 const pendingRows = () => within(screen.getByRole('region', { name: 'Pending matches' })).getAllByRole('row').slice(1)
 
@@ -179,5 +189,158 @@ describe('EventPage, 6.4: one poll for the whole event', () => {
     expect(screen.getByRole('banner')).toHaveTextContent(/Paused/)
     await user.click(screen.getByRole('button', { name: /Paused/ }))
     expect(screen.getByRole('banner')).not.toHaveTextContent('Paused')
+  })
+})
+
+/**
+ * The mode is an EVENT SETTING, not a screen setting. The app used to infer it from
+ * whether a mat happened to be bound at that instant, which let the board flip
+ * composition on a reload between bouts.
+ */
+describe('EventPage: how the event runs is one stored setting on the shell', () => {
+  const withEvent = (over: Partial<EventDetail['event']>) => {
+    const d = detailWith(IN_ORDER)
+    return { ...d, event: { ...d.event, ...over } }
+  }
+  // The two sources agree, which is what a healthy event looks like: the detail is the
+  // row this browser loaded and the snapshot is the same row a second later.
+  const detailRoute = (over: Partial<EventDetail['event']> = {}, snapshot?: Snapshot) => (url: string) =>
+    snapshotReply(url, snapshot ?? slowSnapshot({ mode: over.mode ?? 'live', status: over.status ?? 'setup' }))
+      ?? (url === '/api/events/7' ? { json: withEvent(over) } : undefined)
+  const patchIndex = (f: { calls: { url: string; init?: RequestInit }[] }) =>
+    f.calls.findIndex(c => c.url === '/api/events/7' && c.init?.method === 'PATCH')
+  const deskOption = () => screen.getByRole('radio', { name: MODE_LABEL.entry })
+  const matsOption = () => screen.getByRole('radio', { name: MODE_LABEL.live })
+
+  it('lands on the Roster tab in live mode', async () => {
+    mount(detailRoute())
+    expect(await screen.findByRole('tab', { name: /Roster/ })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: 'Entry' })).toHaveAttribute('aria-selected', 'false')
+  })
+
+  // In entry mode the Entry tab IS the product, so a freshly opened event opens on it
+  // rather than making the desk click across on every reload.
+  it('lands on the Entry tab when the event runs from the desk', async () => {
+    mount(detailRoute({ mode: 'entry' }))
+    expect(await screen.findByRole('tab', { name: 'Entry' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: /Roster/ })).toHaveAttribute('aria-selected', 'false')
+  })
+
+  // The same exported option list the New event dialog renders, so the two screens cannot
+  // drift into different words or the opposite order again.
+  it('names the two ways an event runs in the shared words and order', async () => {
+    mount(detailRoute())
+    const group = await screen.findByRole('radiogroup', { name: MODE_GROUP_LABEL })
+    expect(within(group).getAllByRole('radio').map(r => r.getAttribute('aria-label')))
+      .toEqual(MODE_ORDER.map(m => MODE_LABEL[m]))
+  })
+
+  it('patches the event when the operator picks the other way of running it', async () => {
+    const { f } = mount(detailRoute())
+    const user = userEvent.setup()
+    await screen.findByRole('radiogroup', { name: MODE_GROUP_LABEL })
+    // Nothing is bound on this event, so the switch is a plain tap: no dialog, no second
+    // confirmation, nothing added to the healthy path.
+    await vi.waitFor(() => expect(deskOption()).not.toHaveAttribute('aria-disabled'))
+    expect(matsOption()).toBeChecked()
+
+    await user.click(deskOption())
+    await vi.waitFor(() => expect(patchIndex(f)).toBeGreaterThan(-1))
+    expect(f.body(patchIndex(f))).toEqual({ mode: 'entry' })
+  })
+
+  // The desk path is the fallback for the day the tablets do not work, so a setting that
+  // locks itself at Start event is a fallback nobody can reach.
+  it('stays changeable while the event is live', async () => {
+    const { f } = mount(detailRoute({ status: 'live', mode: 'entry' }))
+    const user = userEvent.setup()
+    await screen.findByRole('radiogroup', { name: MODE_GROUP_LABEL })
+    await vi.waitFor(() => expect(matsOption()).not.toHaveAttribute('aria-disabled'))
+
+    await user.click(matsOption())
+    await vi.waitFor(() => expect(patchIndex(f)).toBeGreaterThan(-1))
+    expect(f.body(patchIndex(f))).toEqual({ mode: 'live' })
+  })
+
+  /**
+   * One fact, one source. The organizer switches the event from a phone at the same desk;
+   * nothing invalidates this laptop's react-query cache, so a shell reading the detail
+   * went on stating the opposite of what the television in the same room had already
+   * repainted to.
+   */
+  it('reads the mode from the polled stream, not from a detail cache nothing invalidated', async () => {
+    mount(url => snapshotReply(url, slowSnapshot({ mode: 'entry' }))
+      ?? (url === '/api/events/7' ? { json: detailWith(IN_ORDER) } : undefined))
+    const user = userEvent.setup()
+
+    await screen.findByRole('radiogroup', { name: MODE_GROUP_LABEL })
+    await vi.waitFor(() => expect(deskOption()).toBeChecked())
+
+    // And the tab under the shell says the same thing, from the same stream.
+    await user.click(screen.getByRole('tab', { name: 'Live' }))
+    expect(await screen.findByText(DESK_NOTE)).toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: 'QR code' })).not.toBeInTheDocument()
+  })
+
+  /**
+   * Refuse rather than ask (6.8). Switching to the desk repaints the television as the
+   * Final Score panel within one poll, so a mat with a scorer on it would go on being
+   * scored by a room that can no longer see it.
+   */
+  it('refuses the switch to the desk while a mat is bound, and prints which mat', async () => {
+    const bound = slowSnapshot()
+    const { f } = mount(url => snapshotReply(url, {
+      ...bound,
+      mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: true }],
+    }) ?? (url === '/api/events/7' ? { json: detailWith(IN_ORDER) } : undefined))
+
+    await screen.findByRole('radiogroup', { name: MODE_GROUP_LABEL })
+    // A segment cell is a span with role=radio, so "disabled" here is the ARIA state the
+    // primitive sets, and base-ui refuses the selection itself on top of the guard below.
+    await vi.waitFor(() => expect(deskOption()).toHaveAttribute('aria-disabled', 'true'))
+    // The reason is printed as text, not left to a tooltip or a silent no-op.
+    expect(screen.getByText(/^Mat 1 has an iPad connected\./)).toBeInTheDocument()
+
+    // A disabled control still leaves a programmatic change able to fire, so the refusal
+    // has to hold at the handler too.
+    fireEvent.click(deskOption())
+    await act(async () => { await Promise.resolve() })
+    expect(patchIndex(f)).toBe(-1)
+  })
+
+  it('refuses while a mat is carrying a match, and lets go once the rack is clear', async () => {
+    const base = slowSnapshot({ status: 'live' })
+    // A running clock, which is both the failure story's own mat and the fastest poll
+    // rung, so the release below lands on the next tick rather than three seconds later.
+    const running = sampleMatch({ id: 10, clock: { elapsedMs: 0, startedAt: base.now, lengthMs: 300_000 } })
+    let mats: Snapshot['mats'] = [{ id: 1, number: 1, current: running, onDeck: [], bound: false }]
+    mount(url => snapshotReply(url, { ...base, mats }) ?? (url === '/api/events/7' ? { json: detailWith(IN_ORDER) } : undefined))
+
+    await screen.findByRole('radiogroup', { name: MODE_GROUP_LABEL })
+    await vi.waitFor(() => expect(deskOption()).toHaveAttribute('aria-disabled', 'true'))
+    expect(screen.getByText(/^Mat 1 is on a match\./)).toBeInTheDocument()
+
+    mats = [{ id: 1, number: 1, current: null, onDeck: [], bound: false }]
+    await vi.waitFor(() => expect(deskOption()).not.toHaveAttribute('aria-disabled'), { timeout: 4000 })
+    expect(screen.queryByText(/is on a match\./)).not.toBeInTheDocument()
+  })
+
+  // 7.12 / the Alert primitive: a failed write says what failed, in a titled band with a
+  // role, not as a bare red fragment wedged in beside the date and the counts.
+  it('reports a refused switch in the Alert primitive, with a title naming the action', async () => {
+    mount((url, init) => {
+      if (url === '/api/events/7' && init?.method === 'PATCH') {
+        return { status: 409, json: { error: { code: 'event_state', message: 'this event is finished' } } }
+      }
+      return snapshotReply(url) ?? (url === '/api/events/7' ? { json: detailWith(IN_ORDER) } : undefined)
+    })
+    const user = userEvent.setup()
+    await screen.findByRole('radiogroup', { name: MODE_GROUP_LABEL })
+    await vi.waitFor(() => expect(deskOption()).not.toHaveAttribute('aria-disabled'))
+    await user.click(deskOption())
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.querySelector('[data-slot="alert-title"]')).toHaveTextContent('How this event runs was not changed')
+    expect(alert.querySelector('[data-slot="alert-description"]')).toHaveTextContent('this event is finished')
   })
 })

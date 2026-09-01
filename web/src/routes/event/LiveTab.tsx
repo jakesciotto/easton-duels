@@ -8,12 +8,14 @@ import { ApiError } from '@/lib/api'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import { newEventId } from '@/lib/ids'
 import { useSnapshot } from '@/lib/useSnapshot'
+import { DESK_NOTE, DESK_NOTE_DETAIL, modeOf } from '@/lib/eventMode'
 import { useClock } from '@/lib/useClock'
 import { pollIntervalForSnapshot } from '@/lib/pollInterval'
 import { teamStyle } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { EventDetail } from '@/lib/types'
 import { Clock } from '@/components/Clock'
+import { dialogBody, dialogFooter, dialogSurface } from '@/components/dialog-frame'
 import { Connecting } from '@/components/Connecting'
 import { QrCode } from '@/components/QrCode'
 import { TeamPlate } from '@/components/TeamPlate'
@@ -56,12 +58,18 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
   // One client event id per match end, held across retries so a resend the server has
   // already applied is deduped rather than ending the next match too.
   const endIds = useRef<Record<number, string>>({})
+  // The stream this tab already polls, not the event detail: the detail is a react-query
+  // cache that nothing invalidates when the organizer switches the event from a phone, so
+  // reading it here left this laptop showing the mat rack and its connect card while the
+  // television in the same room had already repainted as the Final Score panel.
+  const entryMode = modeOf(live, detail.event.mode) === 'entry'
 
   useEffect(() => {
+    if (entryMode) return
     let ignore = false
     adminApi<ConnectInfo>(`/api/events/${eventId}/connect`).then(c => { if (!ignore) setConnect(c) }).catch(() => {})
     return () => { ignore = true }
-  }, [eventId])
+  }, [eventId, entryMode])
 
   const status = useAdminMutation(eventId, (s: 'live' | 'done') => adminApi(`/api/events/${eventId}`, { method: 'PATCH', body: { status: s } }))
   const act = useAdminMutation(eventId, (v: { id: number; action: 'reopen' | 'skip' }) => adminApi(`/api/matches/${v.id}/${v.action}`, { method: 'POST' }))
@@ -166,9 +174,14 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
         <FinalResult view={live} eventId={eventId} />
       ) : (
         <>
-          <ConnectCard connect={connect} eventId={eventId} matUrl={matUrl} collapsed={allBound} matCount={mats.length} />
+          {entryMode
+            ? <DeskCard />
+            : <ConnectCard connect={connect} eventId={eventId} matUrl={matUrl} collapsed={allBound} matCount={mats.length} />}
           {view === null && <p className="t3 text-gray-10">Waiting for the first update from the server.</p>}
           {view !== null && mats.length === 0 && <p className="t3 text-gray-10">This event has no mats.</p>}
+          {view !== null && mats.length > 0 && entryMode && (
+            <p className="t2 text-gray-10">No iPad is scoring these mats. They follow the running order so the desk can see what is next.</p>
+          )}
           {view !== null && (
             <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(300px,1fr))]">
               {mats.map(mat => (
@@ -193,13 +206,13 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
       )}
 
       <Dialog open={finishOpen} onOpenChange={o => { if (o) setFinishOpen(true); else closeFinish() }}>
-        <DialogContent>
+        <DialogContent className={dialogSurface(512)}>
           <DialogHeader><DialogTitle>Finish the event?</DialogTitle></DialogHeader>
-          <DialogBody>
+          <DialogBody className={dialogBody}>
             <p className="t3 text-gray-11">The board switches to the final result. Matches that are still running stay where they are.</p>
             {status.error && <Alert><AlertTitle>The event did not finish</AlertTitle><AlertDescription>{status.error.message}</AlertDescription></Alert>}
           </DialogBody>
-          <DialogFooter>
+          <DialogFooter className={dialogFooter}>
             <Button type="button" variant="secondary" onClick={closeFinish}>Cancel</Button>
             <Button type="button" variant="destructive" disabled={status.isPending} onClick={runFinish}>Finish event</Button>
           </DialogFooter>
@@ -215,6 +228,19 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
         onEnd={winnerAthleteId => { if (ending) runEnd(ending, winnerAthleteId) }}
       />
       <ResultDialog detail={detail} match={editing} open={editing !== null} onOpenChange={o => { if (!o) setEditing(null) }} />
+    </div>
+  )
+}
+
+// The connect card exists to hand a mat code to a tablet, and in entry mode there is no
+// tablet to hand it to. Stating the mode is the whole job: an operator who lands here and
+// finds a code would spend the afternoon on a mat nothing is ever going to score. The
+// standalone connect page prints the same two sentences from the same constants.
+function DeskCard() {
+  return (
+    <div className="grid gap-1 rounded-lg bg-gray-1 px-4 py-3">
+      <p className="t2 text-gray-11">{DESK_NOTE}</p>
+      <p className="t2 text-gray-10">{DESK_NOTE_DETAIL}</p>
     </div>
   )
 }
@@ -507,9 +533,13 @@ function EndDialog({ target, pending, error, teamColor, onCancel, onEnd }: {
   const { match, matNumber } = target
   return (
     <Dialog open onOpenChange={o => { if (!o) onCancel() }}>
-      <DialogContent>
+      {/*
+        6.18: below 640px this goes full screen like every other dialog. A tie needs a
+        decision, and the organizer takes that decision on a phone at the desk.
+      */}
+      <DialogContent className={dialogSurface(512)}>
         <DialogHeader><DialogTitle>Who won on mat {matNumber}?</DialogTitle></DialogHeader>
-        <DialogBody>
+        <DialogBody className={dialogBody}>
           <p className="t3 text-gray-11">The scores are level, so this one ends on a referee decision.</p>
           <div className="grid gap-2 sm:grid-cols-2">
             {[match.a, match.b].map(side => (
@@ -526,7 +556,7 @@ function EndDialog({ target, pending, error, teamColor, onCancel, onEnd }: {
           </div>
           {error && <Alert><AlertTitle>The match did not end</AlertTitle><AlertDescription>{error.message}</AlertDescription></Alert>}
         </DialogBody>
-        <DialogFooter>
+        <DialogFooter className={dialogFooter}>
           <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
           <Button type="button" disabled={pick === null || pending} onClick={() => { if (pick !== null) onEnd(pick) }}>End match</Button>
         </DialogFooter>

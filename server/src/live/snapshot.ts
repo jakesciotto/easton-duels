@@ -79,7 +79,7 @@ export async function buildSnapshot(db: DbLike, eventId: number, opts: SnapshotO
   return {
     version: ev.version,
     now: new Date(opts.nowMs).toISOString(),
-    event: { id: ev.id, name: ev.name, date: ev.date, status: ev.status, matCount: ev.matCount },
+    event: { id: ev.id, name: ev.name, date: ev.date, status: ev.status, mode: ev.mode, matCount: ev.matCount },
     teams: teamViews,
     rulesets: rulesetRows.map(r => ({ id: r.id, name: r.name, defaultLengthSec: r.defaultLengthSec, actions: r.actions, terminals: r.terminals })),
     mats: matViews,

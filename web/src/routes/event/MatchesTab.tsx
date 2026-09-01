@@ -5,6 +5,7 @@ import { CSS } from '@dnd-kit/utilities'
 import { GripVerticalIcon } from 'lucide-react'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import { useSnapshot } from '@/lib/useSnapshot'
+import { pollIntervalForSnapshot } from '@/lib/pollInterval'
 import type { EventDetail, MatchRow, TeamRow } from '@/lib/types'
 import { athleteName, winTypeLabel } from '@/lib/format'
 import { moveId } from '@/lib/reorder'
@@ -30,7 +31,6 @@ interface Pick { matchId: number; side: 'a' | 'b'; teamId: number }
 
 // 4.4 names 2000ms for this tab. The suspension that keeps an arriving snapshot off the
 // screen while the operator is dragging, typing or picking lives in useSnapshot.
-const POLL_MS = 2000
 
 const PENDING_COLUMNS = 9
 
@@ -71,13 +71,14 @@ function CompetitorLine({ team, name, onHover, onPick }: {
 // The live match is not one of forty identical rows. It is lifted into its own strip at
 // t5, and it is where "refuse rather than ask" is visible: the controls that would touch
 // a running match are disabled with the reason printed beside them.
-function LiveStrip({ line, teamA, teamB, nameA, nameB, serverNow, lastSuccessAt, highlight, onHover }: {
+function LiveStrip({ line, teamA, teamB, nameA, nameB, serverNow, lastSuccessAt, pollIntervalMs, highlight, onHover }: {
   line: MatchLine
   teamA: TeamRow
   teamB: TeamRow
   nameA: string
   nameB: string
   serverNow: string | null
+  pollIntervalMs: number
   lastSuccessAt: number | null
   highlight: boolean
   onHover: Hover
@@ -100,7 +101,7 @@ function LiveStrip({ line, teamA, teamB, nameA, nameB, serverNow, lastSuccessAt,
             clock={line.clock}
             serverNow={serverNow}
             lastSuccessAt={lastSuccessAt}
-            pollIntervalMs={POLL_MS}
+            pollIntervalMs={pollIntervalMs}
             className="t5 font-medium!"
           />
         </span>
@@ -345,7 +346,12 @@ function SettledRow({ line, teams, name, highlight, onHover }: {
 
 export function MatchesTab({ detail }: { detail: EventDetail }) {
   const eventId = detail.event.id
-  const { snapshot, lastSuccessAt } = useSnapshot(eventId, POLL_MS)
+  // No pinned interval: this tab always mounts inside the event body's stream, which polls
+  // on the derived ramp. Pinning one here produced a number the stream ignored and then fed
+  // it to the clock as a staleness threshold, so this tab called data fresh for seconds
+  // after the board had already stopped trusting it.
+  const { snapshot, lastSuccessAt } = useSnapshot(eventId)
+  const pollIntervalMs = pollIntervalForSnapshot(snapshot)
   const [pick, setPick] = useState<Pick | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -510,7 +516,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
             <LiveStrip
               key={l.row.id} line={l} teamA={teamA} teamB={teamB}
               nameA={nameOf(l.row.athleteAId, teamA)} nameB={nameOf(l.row.athleteBId, teamB)}
-              serverNow={snapshot?.now ?? null} lastSuccessAt={lastSuccessAt}
+              serverNow={snapshot?.now ?? null} lastSuccessAt={lastSuccessAt} pollIntervalMs={pollIntervalMs}
               highlight={holds(l)} onHover={setHovered}
             />
           ))}

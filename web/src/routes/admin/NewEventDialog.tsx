@@ -1,8 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { RadioGroup } from '@base-ui/react/radio-group'
 import { Radio } from '@base-ui/react/radio'
-import { TEAM_COLOR_KEYS, TEAM_COLOR_LABELS, teamCode, type TeamColor } from '@shared/types'
+import { TEAM_COLOR_KEYS, TEAM_COLOR_LABELS, teamCode, type EventMode, type TeamColor } from '@shared/types'
 import { adminApi, useAdminMutation } from '@/lib/queries'
+import { MODE_GROUP_LABEL, MODE_HELP, MODE_OPTIONS, toMode } from '@/lib/eventMode'
 import { teamStyle } from '@/lib/format'
 import { pairVerdict, type GuardLevel } from '@/lib/team-guard'
 import type { EventDetail } from '@/lib/types'
@@ -13,6 +14,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Segment } from '@/components/ui/segment'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
@@ -155,6 +157,7 @@ function HeroPreview({ a, b }: { a: Team; b: Team }) {
 export function NewEventDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (o: boolean) => void; onCreated: (d: EventDetail) => void }) {
   const [name, setName] = useState('')
   const [date, setDate] = useState(today)
+  const [mode, setMode] = useState<EventMode>('live')
   const [matCount, setMatCount] = useState('1')
   const [teamA, setTeamA] = useState<Team>({ name: '', color: 'red' })
   const [teamB, setTeamB] = useState<Team>({ name: '', color: 'blue' })
@@ -169,6 +172,7 @@ export function NewEventDialog({ open, onOpenChange, onCreated }: { open: boolea
     if (!open) return
     setName('')
     setDate(today())
+    setMode('live')
     setMatCount('1')
     setTeamA({ name: '', color: 'red' })
     setTeamB({ name: '', color: 'blue' })
@@ -186,7 +190,7 @@ export function NewEventDialog({ open, onOpenChange, onCreated }: { open: boolea
   const submit = (e: FormEvent) => {
     e.preventDefault()
     if (!counts) return
-    create.mutate({ name, date, matCount: mats, teams: [teamA, teamB], maxAgeGap: ageGap, maxWeightGap: weightGap, sameGender }, {
+    create.mutate({ name, date, mode, matCount: mats, teams: [teamA, teamB], maxAgeGap: ageGap, maxWeightGap: weightGap, sameGender }, {
       onSuccess: detail => {
         onOpenChange(false)
         onCreated(detail)
@@ -209,6 +213,14 @@ export function NewEventDialog({ open, onOpenChange, onCreated }: { open: boolea
                 <Label htmlFor="ev-date">Date</Label>
                 <Input id="ev-date" type="date" required value={date} onChange={e => setDate(e.target.value)} className="fig" />
               </div>
+            </div>
+
+            {/* One exported option set, so this dialog and the event shell name the two
+                ways an event runs in the same words, in the same order. */}
+            <div className="grid gap-2">
+              <span className="t2 text-gray-11 font-medium!">{MODE_GROUP_LABEL}</span>
+              <Segment aria-label={MODE_GROUP_LABEL} value={mode} onValueChange={v => setMode(toMode(v))} options={MODE_OPTIONS} />
+              <p className="t2 text-gray-10">{MODE_HELP[mode]}</p>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">

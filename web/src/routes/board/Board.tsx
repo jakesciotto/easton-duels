@@ -1,7 +1,7 @@
-import type { CSSProperties } from 'react'
+import { useRef, type CSSProperties } from 'react'
 import type { MatchView, Snapshot } from '@shared/types'
 import { ageSeconds, formatAge, isStale } from '@/lib/freshness'
-import { pollIntervalForSnapshot } from '@/lib/pollInterval'
+import { POLL_CLOCK_RUNNING_MS, POLL_DEADLINE_MIN_MS, pollIntervalForSnapshot } from '@/lib/pollInterval'
 import { useNow } from '@/lib/useClock'
 import { Hero, HeroSkeleton } from './Hero'
 import { MatBand } from './MatBand'
@@ -17,6 +17,35 @@ import './board.css'
 
 // The note prints whole seconds, so it needs no finer tick than the unit it reports.
 const AGE_TICK_MS = 1000
+
+/**
+ * How long a board that has never heard from the server stays silent.
+ *
+ * The first poll is a normal state and it can be in flight for its whole deadline, so
+ * saying anything sooner would print a fault on every healthy start and then take the
+ * line back, which relays out the composition in front of the room. The note waits for a
+ * genuine second attempt, and the arithmetic is the poll loop's own:
+ *
+ *   attempt 1 aborts at max(POLL_DEADLINE_MIN_MS, interval x 3)      4000ms
+ *     nothing has landed, so the interval is POLL_CLOCK_RUNNING_MS
+ *     and 3 x 1000 does not reach the 4000 floor
+ *   the next tick is scheduled one interval after that abort        + 1000ms
+ *   attempt 2 aborts at its own deadline                            + 4000ms
+ *                                                                   = 9000ms
+ *
+ * The old constant was one deadline plus one interval, which is the instant attempt two
+ * is dispatched rather than the instant it settles: on a congested network the board told
+ * the room it could not reach the server while its second request was still in flight.
+ */
+export const FIRST_CONTACT_MS = POLL_DEADLINE_MIN_MS * 2 + POLL_CLOCK_RUNNING_MS
+
+/**
+ * The board is the one polled surface nobody in the room can query. Every other note it
+ * carries is derived from `lastSuccessAt`, so a board opened on the wrong network, or
+ * before the laptop is up, or on an event id that answers 404, has no note at all: it
+ * holds the cold start skeleton for the rest of the afternoon and somebody has to guess.
+ */
+export const NOTE_NO_CONTACT = 'Cannot reach the server'
 
 function settleIds(snapshot: Snapshot | null, held: ReadonlyMap<number, MatchView>, entry: MatchView[]): number[] {
   if (!snapshot) return []
@@ -39,17 +68,23 @@ export function Board({ snapshot, connected, lastSuccessAt = null, screenMaySlee
 }) {
   const far = useFar()
   const held = useHeldResults(snapshot)
-  const plan = boardPlan(snapshot, held)
+  const plan = boardPlan(snapshot)
   const pollIntervalMs = pollIntervalForSnapshot(snapshot)
 
-  const now = useNow(lastSuccessAt !== null, AGE_TICK_MS)
+  // Nothing has ever arrived and the poll is not landing. Both halves matter: without
+  // the second this is the ordinary first moment of every board.
+  const silent = lastSuccessAt === null && !connected
+  const openedAt = useRef(Date.now())
+  const now = useNow(lastSuccessAt !== null || silent, AGE_TICK_MS)
   const stale = isStale(lastSuccessAt, now, pollIntervalMs)
   const ageSec = ageSeconds(lastSuccessAt, now)
+  const unreachable = silent && now - openedAt.current >= FIRST_CONTACT_MS
 
   // 4.3: an attention state is never carried by colour alone, and a 1.2cqh bar at the
   // edge of the stage is not a message. Each of these says what is wrong, in words, at
   // b3, inside the safe area where the room reads.
   const reported = [
+    unreachable ? NOTE_NO_CONTACT : null,
     stale && ageSec !== null ? `Not updating ${formatAge(ageSec)}` : null,
     screenMaySleep ? 'Screen may sleep' : null,
   ].filter((note): note is string => note !== null)

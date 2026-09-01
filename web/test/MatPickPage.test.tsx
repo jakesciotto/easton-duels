@@ -1,22 +1,40 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { routes } from '@/router'
+import MatPickPage from '@/routes/MatPickPage'
 import { getMatBinding, setMatBinding } from '@/lib/auth'
 import { unlockAudio } from '@/lib/sounds'
+import { DESK_BIND_REFUSAL } from '@/lib/eventMode'
+import { POLL_DATA_ENTRY_MS } from '@/lib/pollInterval'
+import type { EventMode } from '@shared/types'
 import { fakeFetch, sampleSnapshot } from './fakes'
 
 vi.mock('@/lib/sounds', () => ({ unlockAudio: vi.fn() }))
 
 beforeEach(() => localStorage.clear())
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   // unlockAudio is a vi.mock() at module scope, so its call count survives across
   // tests unless cleared -- every other test's first code-field tap would otherwise
   // leak into this file's own call-count assertions.
   vi.clearAllMocks()
 })
+
+// The established shape for a polled screen under fake timers: advance the clock and let
+// every promise the tick started settle inside the same act().
+async function flush(ms = 0) {
+  await act(async () => { await vi.advanceTimersByTimeAsync(ms) })
+}
+
+// The route in `routes` is lazy, and a dynamic import needs a turn of the real event loop
+// that a faked clock never gives it, so a test that drives this screen on fake timers
+// mounts the page itself. Everything else about the mount is the same.
+function mountEager(path: string) {
+  render(<RouterProvider router={createMemoryRouter([{ path: '/mat', element: <MatPickPage /> }], { initialEntries: [path] })} />)
+}
 
 function mount(path: string) {
   const router = createMemoryRouter(routes, { initialEntries: [path] })
@@ -83,7 +101,7 @@ describe('MatPickPage', () => {
     fakeFetch(url => {
       if (url === '/api/events/5/snapshot') {
         return { json: { version: 1, snapshot: sampleSnapshot({
-          event: { id: 5, name: 'Winter Duels', date: '2026-11-01', status: 'live', matCount: 1 },
+          event: { id: 5, name: 'Winter Duels', date: '2026-11-01', status: 'live', mode: 'live', matCount: 1 },
           mats: [{ id: 3, number: 1, current: null, onDeck: [], bound: false }],
         }) } }
       }
@@ -101,7 +119,7 @@ describe('MatPickPage', () => {
     fakeFetch(url => {
       if (url === '/api/events/9/snapshot') {
         return { json: { version: 1, snapshot: sampleSnapshot({
-          event: { id: 9, name: 'Empty Duels', date: '2026-12-01', status: 'setup', matCount: 0 },
+          event: { id: 9, name: 'Empty Duels', date: '2026-12-01', status: 'setup', mode: 'live', matCount: 0 },
           mats: [],
         }) } }
       }
@@ -182,7 +200,7 @@ describe('MatPickPage', () => {
     fakeFetch(url => {
       if (url === '/api/events/1/snapshot') {
         return { json: { version: 1, snapshot: sampleSnapshot({
-          event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'live', matCount: 6 },
+          event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'live', mode: 'live', matCount: 6 },
           mats: Array.from({ length: 6 }, (_, i) => ({ id: i + 1, number: i + 1, current: null, onDeck: [], bound: false })),
         }) } }
       }
@@ -201,6 +219,71 @@ describe('MatPickPage', () => {
     expect(bindButton).not.toBeDisabled()
     await user.click(bindButton)
     await vi.waitFor(() => expect(getMatBinding()?.matNumber).toBe(6))
+  })
+
+  // Refuse rather than ask (6.7 / 6.8): an entry mode event has no scorer, so a volunteer
+  // who binds one holds a tablet that sits on an empty mat all afternoon. The control is
+  // disabled with the reason printed as text, never only in a title attribute.
+  it('refuses to bind on an event that runs from the desk, and prints why', async () => {
+    const f = fakeFetch(url => {
+      if (url === '/api/events/3/snapshot') {
+        return { json: { version: 1, snapshot: sampleSnapshot({
+          event: { id: 3, name: 'Fall Duels', date: '2026-10-03', status: 'live', mode: 'entry', matCount: 1 },
+          mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: false }],
+        }) } }
+      }
+      return { json: {} }
+    })
+    mount('/mat?event=3')
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Mat 1' }))
+    await typeMatCode(user, '0420')
+    expect(screen.getByText(/This event runs from the desk/)).toBeInTheDocument()
+    expect(screen.getByText(/no mat for this iPad to score/)).toBeInTheDocument()
+
+    const bind = screen.getByRole('button', { name: 'Bind this iPad' })
+    expect(bind).toBeDisabled()
+    // A disabled button still leaves Enter in the code field able to submit the form, so
+    // the refusal has to hold at the handler too.
+    fireEvent.submit(bind.closest('form') as HTMLFormElement)
+    await act(async () => { await Promise.resolve() })
+    expect(f.calls.some(c => c.url.includes('/bind'))).toBe(false)
+    expect(getMatBinding()).toBeNull()
+  })
+
+  /**
+   * The refusal is computed from the event, so it has to track the event. Read once when
+   * the page opened, it did not: a tablet left on this screen since 09:40 kept refusing
+   * under a reason the organizer cleared at 10:00, and the only cure was a reload nobody
+   * knows to do.
+   */
+  it('re-reads the event, so a refusal cannot outlive the reason for it', async () => {
+    vi.useFakeTimers()
+    let mode: EventMode = 'entry'
+    const f = fakeFetch(url => {
+      if (url === '/api/events/3/snapshot') {
+        return { json: { version: 1, snapshot: sampleSnapshot({
+          event: { id: 3, name: 'Fall Duels', date: '2026-10-03', status: 'live', mode, matCount: 1 },
+          mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: false }],
+        }) } }
+      }
+      return { json: { token: 'mat-tok', mat: { id: 1, number: 1 }, event: { id: 3, name: 'Fall Duels' } } }
+    })
+    mountEager('/mat?event=3')
+    await flush()
+    expect(screen.getByText(DESK_BIND_REFUSAL)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Bind this iPad' })).toBeDisabled()
+
+    // At 10:00 the organizer switches the event back to the mats. Nobody touches the iPad.
+    mode = 'live'
+    await flush(POLL_DATA_ENTRY_MS)
+    expect(screen.queryByText(DESK_BIND_REFUSAL)).not.toBeInTheDocument()
+
+    // And the handler lets go with it, not just the sentence.
+    fireEvent.click(screen.getByRole('button', { name: 'Mat 1' }))
+    fireEvent.submit(screen.getByRole('button', { name: 'Bind this iPad' }).closest('form') as HTMLFormElement)
+    await flush()
+    expect(f.calls.some(c => c.url.includes('/bind'))).toBe(true)
   })
 
   describe('the below-900px / portrait guard (6.17b)', () => {

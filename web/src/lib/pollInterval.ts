@@ -12,12 +12,14 @@ export const STALE_POLL_MULTIPLIER = 3
 // No snapshot has landed yet: poll at the fast rate until the first one arrives and tells
 // us what the event actually looks like.
 //
-// Zero mats stands in for "data entry mode" here: there is no persisted event-wide mode
-// flag yet (the runtime choice is still made at the pilot's dress rehearsal, per the brief),
-// and an event with no mats bound can have no running clock at all, which is the one fact
-// 7.15's data entry row actually depends on.
+// How the event runs is a stored fact now, so the ramp reads it rather than guessing. The
+// guess was "zero mats means data entry", which is wrong for the normal desk event: an
+// entry event still has mats, because they hold the running order for the desk to read.
+// Guessing polled every desk screen five times faster than it needs for the whole
+// afternoon, and it was a second place deciding a question the column already answers.
 export function pollIntervalForSnapshot(snapshot: Snapshot | null): number {
   if (!snapshot) return POLL_CLOCK_RUNNING_MS
+  if (snapshot.event.mode === 'entry') return POLL_DATA_ENTRY_MS
   if (snapshot.mats.length === 0) return POLL_DATA_ENTRY_MS
   const clockRunning = snapshot.mats.some(mat => mat.current !== null && mat.current.clock.startedAt !== null)
   return clockRunning ? POLL_CLOCK_RUNNING_MS : POLL_LIVE_IDLE_MS

@@ -20,7 +20,7 @@ const kid = (id: number, teamId: number | null, first: string, over: Partial<Eve
   belt: 'grey', gender: 'M', source: 'manual', wlUid: null, wlLocation: null, leaderboardId: null, erp: null, ...over,
 })
 const detail: EventDetail = {
-  event: { id: 7, name: 'Fall Duels', date: '2026-10-03', matCount: 1, matCode: '0420', status: 'setup', maxAgeGap: 1, maxWeightGap: 10, sameGender: false, createdAt: 'x' },
+  event: { id: 7, name: 'Fall Duels', date: '2026-10-03', matCount: 1, matCode: '0420', status: 'setup', mode: 'live', maxAgeGap: 1, maxWeightGap: 10, sameGender: false, createdAt: 'x' },
   teams: [{ id: 1, eventId: 7, name: 'Ridgeline', color: 'red', position: 0 }, { id: 2, eventId: 7, name: 'Lakeside', color: 'blue', position: 1 }],
   athletes: [kid(100, 1, 'Mateo'), kid(200, 2, 'Olivia'), kid(300, null, 'Noah', { age: null, ageSource: null }), kid(400, null, 'Zoe', { weightSource: 'leaderboard', erp: 5.2 })],
   rulesets: [], mats: [], matches: [], candidateCount: 0,
@@ -149,7 +149,50 @@ describe('RosterTab', () => {
     const pool = screen.getByRole('region', { name: 'Unassigned' })
     await user.click(within(pool).getByRole('checkbox', { name: 'Select Noah Kid' }))
     await user.click(screen.getByRole('button', { name: 'Move to Lakeside' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('teamId is not on this event')
+    // The Alert primitive, not a bare red paragraph: a title naming the failed action
+    // plus the server sentence, each in its own slot.
+    const alert = await screen.findByRole('alert')
+    expect(alert.querySelector('[data-slot="alert-title"]')).toHaveTextContent('The move failed')
+    expect(alert.querySelector('[data-slot="alert-description"]')).toHaveTextContent('teamId is not on this event')
+  })
+
+  /**
+   * A react-query mutation holds its error until that same mutation runs again, so a
+   * banner rendered as `assign.error ?? patch.error` was pinned to whichever failed
+   * FIRST. A move refused at 10:00 still read "The move failed" over a weight edit
+   * refused ten minutes later for a different reason, and there is no dismiss: the
+   * operator read the wrong reason for the wrong action.
+   */
+  it('shows the newer failure, under the title of the action that actually failed', async () => {
+    fakeFetch((url, init) => {
+      if (url === '/api/events/7/athletes/assign' && init?.method === 'POST') {
+        return { status: 422, json: { error: { code: 'validation', message: 'teamId is not on this event' } } }
+      }
+      if (url === '/api/athletes/400' && init?.method === 'PATCH') {
+        return { status: 422, json: { error: { code: 'validation', message: 'age must be between 3 and 17' } } }
+      }
+      return { json: [] }
+    })
+    mount()
+    const user = userEvent.setup()
+    const pool = screen.getByRole('region', { name: 'Unassigned' })
+    await user.click(within(pool).getByRole('checkbox', { name: 'Select Noah Kid' }))
+    await user.click(screen.getByRole('button', { name: 'Move to Lakeside' }))
+    const first = await screen.findByRole('alert')
+    expect(first.querySelector('[data-slot="alert-title"]')).toHaveTextContent('The move failed')
+
+    // The operator leaves it standing and edits a weight, which is refused for its own
+    // reason. The assign error is still non-null underneath.
+    await user.click(within(pool).getByRole('button', { name: 'Age for Zoe Kid, 8' }))
+    await user.type(within(pool).getByLabelText('Age for Zoe Kid'), '2')
+    await user.tab()
+
+    await vi.waitFor(() => {
+      const alert = screen.getByRole('alert')
+      expect(alert.querySelector('[data-slot="alert-title"]')).toHaveTextContent('The edit was not saved')
+      expect(alert.querySelector('[data-slot="alert-description"]')).toHaveTextContent('age must be between 3 and 17')
+    })
+    expect(screen.queryByText('teamId is not on this event')).not.toBeInTheDocument()
   })
 
   it('removes a kid through a confirm dialog', async () => {
@@ -343,8 +386,11 @@ describe('RosterTab', () => {
     expect(within(dialog).getByText('Remove 2 competitors?')).toBeInTheDocument()
     await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
     // The raw server message names no competitor, which on a bulk remove is the only
-    // fact the organizer needs.
-    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Zoe Kid was not removed. athlete is in a match')
+    // fact the organizer needs, so the Alert title carries it and the description
+    // carries the server's own sentence untouched.
+    const alert = await within(dialog).findByRole('alert')
+    expect(alert.querySelector('[data-slot="alert-title"]')).toHaveTextContent('Zoe Kid was not removed')
+    expect(alert.querySelector('[data-slot="alert-description"]')).toHaveTextContent('athlete is in a match; delete the match first')
     expect(within(dialog).getByText('Remove Zoe Kid?')).toBeInTheDocument()
     const before = f.calls.filter(c => c.init?.method === 'DELETE').length
     await user.click(within(dialog).getByRole('button', { name: 'Remove' }))

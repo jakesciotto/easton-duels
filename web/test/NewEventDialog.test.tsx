@@ -3,6 +3,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { NewEventDialog } from '@/routes/admin/NewEventDialog'
+import { MODE_GROUP_LABEL, MODE_HELP, MODE_LABEL, MODE_ORDER } from '@/lib/eventMode'
 import { setAdminToken } from '@/lib/auth'
 import { fakeFetch } from './fakes'
 
@@ -65,6 +66,32 @@ describe('NewEventDialog', () => {
     await screen.findByRole('dialog')
     await user.type(screen.getByLabelText('Team A name'), 'Ridgeline')
     expect(screen.getAllByText('RID').length).toBeGreaterThan(0)
+  })
+
+  // One vocabulary and one order for the one setting. This dialog said "Live scoring"
+  // then "Data entry" while the event shell said "Runs from the desk" then "Scored on
+  // mats": different words, opposite order, on the two screens an organizer moves between
+  // on the morning of the event. Both now render the same exported list, so a reordering
+  // or a rewording of either one breaks here.
+  it('names the two ways an event runs in the shared words and order, and posts the choice', async () => {
+    const f = fakeFetch((url, init) => (url === '/api/events' && init?.method === 'POST' ? { status: 201, json: {} } : { json: {} }))
+    mount()
+    const user = userEvent.setup()
+    await screen.findByRole('dialog')
+    const modeGrid = grid(MODE_GROUP_LABEL)
+    expect(within(modeGrid).getAllByRole('radio').map(r => r.getAttribute('aria-label')))
+      .toEqual(MODE_ORDER.map(m => MODE_LABEL[m]))
+    expect(within(modeGrid).getByRole('radio', { name: MODE_LABEL.live })).toBeChecked()
+    expect(screen.getByText(MODE_HELP.live)).toBeInTheDocument()
+    await user.click(within(modeGrid).getByRole('radio', { name: MODE_LABEL.entry }))
+    expect(screen.getByText(MODE_HELP.entry)).toBeInTheDocument()
+    await user.type(screen.getByLabelText('Event name'), 'Fall Duels')
+    await user.type(screen.getByLabelText('Team A name'), 'Ridgeline')
+    await user.type(screen.getByLabelText('Team B name'), 'Lakeside')
+    await user.click(screen.getByRole('button', { name: 'Create event' }))
+    await vi.waitFor(() => expect(f.calls.some(c => c.init?.method === 'POST')).toBe(true))
+    const body = f.body(f.calls.findIndex(c => c.init?.method === 'POST'))
+    expect(body.mode).toBe('entry')
   })
 
   it('refuses to submit a count outside the range the server accepts', async () => {

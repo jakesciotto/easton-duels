@@ -61,6 +61,16 @@ scoringRoutes.post('/events/:eventId/mats/:matId/bind', validate('json', z.objec
     await recordFailure(ctx.db, 'bind', ip, Date.now())
     return errorJson(c, 401, 'bad_code', 'wrong mat code')
   }
+  // A mat token is a write credential, and in a desk event the desk is already typing the
+  // results, so a second writer would fight it over the same matches. The tablet refuses
+  // too, but that guard is advisory: a stale tab, a bookmarked link or a retried request
+  // reaches here without it. Checked after the code so an unauthenticated caller learns
+  // nothing about the event. Existing tokens keep working, because the desk path is the
+  // fallback for tablets that failed and cutting them off mid-afternoon helps nobody.
+  if (ev.mode === 'entry') {
+    return errorJson(c, 409, 'desk_mode',
+      'This event runs from the desk. Every result is typed on the Entry tab, so there is no mat for this iPad to score.')
+  }
   return c.json({
     token: signToken({ role: 'mat', eventId, matId, exp: tokenExpiry() }, ctx.secret),
     mat: { id: mat.id, number: mat.number },

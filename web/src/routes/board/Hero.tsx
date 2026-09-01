@@ -17,9 +17,9 @@ function Half({ team, side, tone, quiet }: { team: TeamView; side: 'a' | 'b'; to
         <Fig className={cn('b-wins font-mono', tone)} value={team.wins} />
         <span className="b-labels font-sans">
           <span>Wins</span>
-          <span className="font-mono">
-            {team.points}
-            <span className="font-sans"> pts</span>
+          <span>
+            <span className="b-pts font-mono">{team.points}</span>
+            <span> pts</span>
           </span>
         </span>
       </div>
@@ -70,7 +70,7 @@ export function HeroSkeleton() {
             <span className="b-labels font-sans">
               <span>Wins</span>
               <span>
-                <span className="b-cold-pts font-mono" />
+                <span className="b-pts font-mono" />
                 <span> pts</span>
               </span>
             </span>

@@ -1,0 +1,1 @@
+ALTER TABLE `events` ADD `mode` text DEFAULT 'live' NOT NULL;

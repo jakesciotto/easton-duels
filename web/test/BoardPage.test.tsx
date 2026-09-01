@@ -1,11 +1,12 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve as resolvePath } from 'node:path'
-import { render, screen, within, waitFor } from '@testing-library/react'
+import { act, render, screen, within, waitFor } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router'
-import type { MatView, MatchView, Snapshot } from '@shared/types'
+import type { EventMode, EventStatus, MatView, MatchView, Snapshot } from '@shared/types'
 import { routes } from '@/router'
-import { Board } from '@/routes/board/Board'
+import { Board, FIRST_CONTACT_MS, NOTE_NO_CONTACT } from '@/routes/board/Board'
+import { POLL_CLOCK_RUNNING_MS, POLL_DEADLINE_MIN_MS } from '@/lib/pollInterval'
 import { FLOOR_NOTE_MATS, boardBudget } from '@/routes/board/budget'
 import { fakeFetch, snapshotFeed, sampleMatch, sampleSnapshot } from './fakes'
 
@@ -29,10 +30,20 @@ function mat(id: number, over: Partial<MatView> = {}): MatView {
   return { id, number: id, current: null, onDeck: [], bound: false, ...over }
 }
 
+function event(status: EventStatus, mode: EventMode, matCount = 1): Snapshot['event'] {
+  return { id: 1, name: 'Fall Duels', date: '2026-10-03', status, mode, matCount }
+}
+
+// Which composition the board paints is the event's stored mode, so every board fixture
+// states the mode it is a fixture of rather than inheriting one from the sample.
+function atMode(snapshot: Snapshot, mode: EventMode): Snapshot {
+  return { ...snapshot, event: { ...snapshot.event, mode } }
+}
+
 function liveBoard(count: number, over: Partial<Snapshot> = {}): Snapshot {
   const mats = Array.from({ length: count }, (_, i) =>
     mat(i + 1, { current: pair(100 + i, 'Mateo Rivera', 'Lucas Ferreira', { clock: RUNNING }), bound: true }))
-  return sampleSnapshot({ mats, matches: mats.map(m => m.current!), ...over })
+  return atMode(sampleSnapshot({ mats, matches: mats.map(m => m.current!), ...over }), 'live')
 }
 
 function safe(container: HTMLElement): HTMLElement {
@@ -61,14 +72,18 @@ describe('Board compositions', () => {
       expect(box).not.toHaveAttribute('data-slot', 'skeleton')
     }
     expect(screen.getAllByText('Wins')).toHaveLength(2)
+    // The points box is the same slot the first snapshot renders into, so its arrival
+    // moves nothing.
+    expect(container.querySelectorAll('.b-hero .b-pts')).toHaveLength(2)
   })
 
-  it('is the data entry panel when no mat carries a match', () => {
+  it('is the data entry panel when the event is run from the desk', () => {
     const done = (id: number, endedAt: string) => pair(id, 'Ava Park', 'Sofia Diaz', {
       status: 'done', endedAt, result: { winnerAthleteId: 100, winType: 'submission' },
     })
     const matches = [1, 2, 3, 4, 5].map(i => done(i, `2026-10-03T16:0${i}:00.000Z`))
-    const { container } = render(<Board snapshot={sampleSnapshot({ mats: [mat(1)], matches })} connected />)
+    const snapshot = atMode(sampleSnapshot({ mats: [mat(1)], matches }), 'entry')
+    const { container } = render(<Board snapshot={snapshot} connected />)
 
     expect(safe(container)).toHaveAttribute('data-comp', 'entry')
     // The last four results, newest first, and the running count of every one entered.
@@ -184,27 +199,55 @@ describe('Board compositions', () => {
     expect(container.querySelectorAll('.b-next-line')).toHaveLength(2)
   })
 
-  it('stays on the mat ledger when bound mats are between bouts', () => {
-    // Held results are derived from transitions this client watched, so they are empty
-    // on the first snapshot after a reload. Four bouts ending together used to repaint
-    // the whole board as a Final Score panel until the next one started.
+  it('stays on the mat ledger between bouts, bound or not', () => {
+    // Held results are derived from transitions this client watched and a binding is
+    // dropped between bouts, so both are empty on the first snapshot after a reload.
+    // Four bouts ending together used to repaint the whole board as a Final Score panel
+    // until the next one started. The mode says which board this is; nothing else does.
     const done = pair(1, 'Ava Park', 'Sofia Diaz', {
       status: 'done', endedAt: '2026-10-03T16:01:00.000Z', result: { winnerAthleteId: 100, winType: 'submission' },
     })
-    const snapshot = sampleSnapshot({
-      mats: [1, 2, 3, 4].map(n => mat(n, { bound: true })),
-      matches: [done],
+    for (const bound of [true, false]) {
+      const snapshot = atMode(sampleSnapshot({
+        mats: [1, 2, 3, 4].map(n => mat(n, { bound })),
+        matches: [done],
+      }), 'live')
+      const { container, unmount } = render(<Board snapshot={snapshot} connected />)
+      expect(safe(container), String(bound)).toHaveAttribute('data-comp', 'mats')
+      expect(screen.getAllByRole('region', { name: /^Mat / })).toHaveLength(4)
+      unmount()
+    }
+  })
+
+  it('composes one snapshot two ways, because the mode belongs to the event', () => {
+    // A tablet somebody left bound to mat 1 is not the event changing shape. The desk
+    // board reads its results and the live board reads its mat, off the same data.
+    const done = pair(1, 'Ava Park', 'Sofia Diaz', {
+      status: 'done', endedAt: '2026-10-03T16:01:00.000Z', result: { winnerAthleteId: 100, winType: 'submission' },
     })
-    const { container } = render(<Board snapshot={snapshot} connected />)
-    expect(safe(container)).toHaveAttribute('data-comp', 'mats')
-    expect(screen.getAllByRole('region', { name: /^Mat / })).toHaveLength(4)
+    const live = pair(2, 'Mateo Rivera', 'Lucas Ferreira', { clock: RUNNING })
+    const snapshot = sampleSnapshot({
+      mats: [mat(1, { current: live, bound: true })],
+      matches: [done, live],
+    })
+
+    const desk = render(<Board snapshot={atMode(snapshot, 'entry')} connected />)
+    expect(safe(desk.container)).toHaveAttribute('data-comp', 'entry')
+    expect(screen.queryByRole('region', { name: 'Mat 1' })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('region', { name: /^Result/ })).toHaveLength(1)
+    desk.unmount()
+
+    const mats = render(<Board snapshot={atMode(snapshot, 'live')} connected />)
+    expect(safe(mats.container)).toHaveAttribute('data-comp', 'mats')
+    expect(screen.getByRole('region', { name: 'Mat 1' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: /^Result/ })).not.toBeInTheDocument()
   })
 
   it('shows what is first up on each mat while the event is still in setup', () => {
     const queue = (m: number) => [1, 2, 3, 4].map(i =>
       pair(m * 10 + i, `Kai${m}${i} Nakamura`, `Rosa${m}${i} Oliveira`, { status: 'pending' }))
     const snapshot = sampleSnapshot({
-      event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'setup', matCount: 2 },
+      event: event('setup', 'live', 2),
       mats: [mat(1, { onDeck: queue(1), bound: true }), mat(2, { onDeck: queue(2), bound: true })],
       matches: [],
     })
@@ -224,7 +267,7 @@ describe('Board compositions', () => {
   // failed to load, and the room cannot ask anyone.
   it('says a mat is not drawn yet rather than heading an empty column', () => {
     const snapshot = sampleSnapshot({
-      event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'setup', matCount: 1 },
+      event: event('setup', 'live'),
       mats: [mat(1, { onDeck: [], bound: true })],
       matches: [],
     })
@@ -274,7 +317,7 @@ describe('Board compositions', () => {
 
   it('closes on a final summary of wins, points and matches', () => {
     const snapshot = sampleSnapshot({
-      event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'done', matCount: 1 },
+      event: event('done', 'live'),
       teams: [
         { id: 1, name: 'Ridgeline', color: 'red', position: 0, wins: 7, points: 41 },
         { id: 2, name: 'Lakeside', color: 'blue', position: 1, wins: 5, points: 33 },
@@ -409,6 +452,84 @@ describe('Board figure change', () => {
     // Only the incoming value is announced.
     expect(slots[0]).toHaveAttribute('aria-hidden', 'true')
     expect(slots[1]).toHaveAttribute('aria-hidden', 'false')
+  })
+
+  it('holds the team points figure in its own character slot at every value', () => {
+    // 2.8: every number gets a fixed slot. This was the one figure on the board without
+    // one, so a team going from 9 points to 11 grew its label box by a whole character
+    // in one frame and shoved the word beside it sideways on a still hero.
+    const withPoints = (points: number) => atMode(sampleSnapshot({
+      teams: [
+        { id: 1, name: 'Ridgeline', color: 'red', position: 0, wins: 3, points },
+        { id: 2, name: 'Lakeside', color: 'blue', position: 1, wins: 2, points: 7 },
+      ],
+    }), 'live')
+
+    const { container, rerender } = render(<Board snapshot={withPoints(9)} connected />)
+    const slots = () => [...container.querySelectorAll('.b-hero .b-pts')]
+    expect(slots()).toHaveLength(2)
+    // Only the digits are in the slot: " pts" inside it would size the box by the word.
+    expect(slots()[0].textContent).toBe('9')
+
+    rerender(<Board snapshot={withPoints(11)} connected />)
+    expect(slots()[0].textContent).toBe('11')
+    expect(screen.getAllByText(/pts/)).toHaveLength(2)
+  })
+})
+
+describe('Board first contact', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('says it cannot reach the server when no poll has ever landed', () => {
+    // The television opened before the laptop is up, or on the wrong network, or on an
+    // event id that answers 404. Every note the board had was derived from a
+    // lastSuccessAt, so this board sat on the cold start skeleton with no words at all.
+    vi.useFakeTimers()
+    render(<Board snapshot={null} connected={false} />)
+    // A first poll in flight is the ordinary opening of every board. Saying anything
+    // here would print a fault on every healthy start and then take the line back.
+    expect(screen.queryByText(NOTE_NO_CONTACT)).not.toBeInTheDocument()
+
+    act(() => { vi.advanceTimersByTime(FIRST_CONTACT_MS + 1000) })
+    const note = screen.getByText(NOTE_NO_CONTACT)
+    expect(note.parentElement).toHaveClass('b-note')
+    // In the safe area where the room reads, not the letterbox margin outside it.
+    expect(note.closest('.b-safe')).not.toBeNull()
+  })
+
+  it('stays silent while a genuine second attempt is still in flight', () => {
+    // The poll aborts attempt one at POLL_DEADLINE_MIN_MS and schedules the next tick one
+    // interval after that, so deadline + interval is the instant attempt two is
+    // DISPATCHED. The old constant fired the note there, which on a congested network
+    // told the room the server was unreachable while the second request was in the air.
+    expect(FIRST_CONTACT_MS).toBeGreaterThanOrEqual(POLL_DEADLINE_MIN_MS * 2 + POLL_CLOCK_RUNNING_MS)
+
+    vi.useFakeTimers()
+    render(<Board snapshot={null} connected={false} />)
+    act(() => { vi.advanceTimersByTime(POLL_DEADLINE_MIN_MS + POLL_CLOCK_RUNNING_MS + 500) })
+    expect(screen.queryByText(NOTE_NO_CONTACT)).not.toBeInTheDocument()
+
+    // Attempt two has now had its own whole deadline and settled nothing.
+    act(() => { vi.advanceTimersByTime(POLL_DEADLINE_MIN_MS) })
+    expect(screen.getByText(NOTE_NO_CONTACT)).toBeInTheDocument()
+  })
+
+  it('leaves a board that has heard from the server to the stale note', () => {
+    vi.useFakeTimers()
+    render(<Board snapshot={liveBoard(1)} connected={false} lastSuccessAt={Date.now()} />)
+    act(() => { vi.advanceTimersByTime(FIRST_CONTACT_MS * 4) })
+
+    expect(screen.queryByText(NOTE_NO_CONTACT)).not.toBeInTheDocument()
+    expect(screen.getByText(/^Not updating \d+s$/)).toBeInTheDocument()
+  })
+
+  it('never faults a board whose poll is landing but is not timestamped', () => {
+    // The note is two facts, not one: nothing has arrived AND the poll is not landing.
+    // A caller that feeds the board without a lastSuccessAt is not a broken television.
+    vi.useFakeTimers()
+    render(<Board snapshot={liveBoard(1)} connected />)
+    act(() => { vi.advanceTimersByTime(FIRST_CONTACT_MS * 4) })
+    expect(screen.queryByText(NOTE_NO_CONTACT)).not.toBeInTheDocument()
   })
 })
 

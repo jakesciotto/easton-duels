@@ -4,7 +4,8 @@ import userEvent from '@testing-library/user-event'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { routes } from '@/router'
 import { setAdminToken } from '@/lib/auth'
-import { fakeFetch } from './fakes'
+import { DESK_NOTE, DESK_NOTE_DETAIL } from '@/lib/eventMode'
+import { fakeFetch, sampleSnapshot } from './fakes'
 
 vi.mock('qrcode', () => ({ default: { toString: async () => '<svg>mock</svg>' } }))
 beforeEach(() => { localStorage.clear(); setAdminToken('tok') })
@@ -38,6 +39,29 @@ describe('ConnectPage', () => {
     mount('/connect?event=7')
     expect(await screen.findByRole('heading', { name: 'Admin' })).toBeInTheDocument()
     expect(screen.queryByText('0420')).not.toBeInTheDocument()
+  })
+
+  /**
+   * This page's whole job is handing a mat code and a QR to a volunteer, and it read no
+   * mode at all while the Live tab had already stopped showing a code in entry mode. A
+   * volunteer scanned the QR here, walked to a mat, typed the code, and only there met a
+   * Bind button the app had already decided to refuse.
+   */
+  it('states the desk mode in the Live tab words instead of a code and a QR', async () => {
+    fakeFetch(url => {
+      if (/\/snapshot(\?|$)/.test(url)) {
+        return { json: { version: 1, snapshot: sampleSnapshot({
+          event: { id: 7, name: 'Fall Duels', date: '2026-10-03', status: 'live', mode: 'entry', matCount: 1 },
+        }) } }
+      }
+      return { json: { url: 'http://192.168.1.20:8422', matCode: '0420' } }
+    })
+    mount('/connect?event=7')
+    expect(await screen.findByText(DESK_NOTE)).toBeInTheDocument()
+    expect(screen.getByText(DESK_NOTE_DETAIL)).toBeInTheDocument()
+    expect(screen.queryByText('0420')).not.toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: 'QR code' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Guided Access/)).not.toBeInTheDocument()
   })
 
   it('shows an error rather than a silent fallback when the connect info cannot be fetched', async () => {

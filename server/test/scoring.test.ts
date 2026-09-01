@@ -2,10 +2,35 @@ import { describe, it, expect } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { createTestApp, call, matToken } from './helpers.js'
 import { seedEvent } from './fixtures.js'
-import { mats } from '../src/db/schema.js'
+import { events, mats } from '../src/db/schema.js'
 import { endMatch } from '../src/match/events.js'
 
 describe('bind and heartbeat', () => {
+  // A mat token is a write credential. In a desk event the desk is already typing the
+  // results, so a second writer would fight it over the same matches. The tablet refuses
+  // too, but that guard is advisory: a stale tab or a bookmarked link reaches the endpoint
+  // without it.
+  it('refuses a bind on an event that runs from the desk, after checking the code', async () => {
+    const { app, db } = await createTestApp()
+    const s = await seedEvent(db)
+    await db.update(events).set({ mode: 'entry' }).where(eq(events.id, s.eventId)).run()
+
+    // A wrong code still fails as a wrong code, so an unauthenticated caller learns nothing
+    // about how the event is run.
+    const bad = await call(app, 'POST', `/api/events/${s.eventId}/mats/${s.matIds[0]}/bind`, { code: '9999' })
+    expect(bad.status).toBe(401)
+
+    const refused = await call(app, 'POST', `/api/events/${s.eventId}/mats/${s.matIds[0]}/bind`, { code: '0420' })
+    expect(refused.status).toBe(409)
+    expect(refused.body.error.code).toBe('desk_mode')
+    expect(refused.body.error.message).toMatch(/runs from the desk/)
+
+    // Switching back hands out a token again, because the desk path is a fallback rather
+    // than a one way door.
+    await db.update(events).set({ mode: 'live' }).where(eq(events.id, s.eventId)).run()
+    expect((await call(app, 'POST', `/api/events/${s.eventId}/mats/${s.matIds[0]}/bind`, { code: '0420' })).status).toBe(200)
+  })
+
   it('issues a mat token for the right code and locks after twenty failed codes', async () => {
     const { app, db } = await createTestApp()
     const s = await seedEvent(db)

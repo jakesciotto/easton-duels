@@ -25,27 +25,31 @@ export function sortDoneMatches(matches: MatchView[]): MatchView[] {
 /**
  * Six compositions, not one grid with holes. Every budget in board.css sums to the
  * safe area's 90cqh, so the composition has to be chosen before anything is measured.
+ *
+ * How the event is run is a stored fact about the EVENT, not something read off
+ * whichever mat happens to be bound this second. `entry` means the desk types every
+ * result and the room reads a Final Score panel; `live` means the mats drive the event
+ * and the room reads the mat ledger. The board never chooses between them.
+ *
+ * There is no inference left to fall back to. The column is NOT NULL with a default of
+ * `live`, and the bundle and the snapshot come off one deploy, so a snapshot without the
+ * field is not a state this code can reach; a missing mode is read as `live`, which is
+ * the only value an event that predates the column can hold. The inference that used to
+ * sit here is the code whose own bug motivated the column: held results are derived from
+ * transitions this client watched and a binding is dropped between bouts, so on the first
+ * snapshot after a reload it read the board as a desk and repainted the whole stage as a
+ * Final Score panel until a mat started again.
  */
-export function boardPlan(snapshot: Snapshot | null, held: ReadonlyMap<number, MatchView>): BoardPlan {
+export function boardPlan(snapshot: Snapshot | null): BoardPlan {
   if (!snapshot || snapshot.teams.length < 2) return { comp: 'cold', mats: 1 }
   if (snapshot.event.status === 'done') return { comp: 'done', mats: 1 }
 
   const mats = Math.max(1, snapshot.mats.length)
   const results = snapshot.matches.some(m => m.status === 'done')
-  // Whether a mat is bound is an event-wide setting that survives a reload. Whether one
-  // happens to be carrying a match this second is not, and the held results are derived
-  // from transitions this client watched, so both are empty on the first snapshot after
-  // any reload. Gating on those alone repainted the whole board as a Final Score panel
-  // every time four bouts ended together, and relaid it out again the moment mat 1
-  // started.
-  const matsInUse = snapshot.mats.some(m => m.bound || m.current !== null || held.has(m.id))
 
-  // Before the first whistle nobody is asking about a score, and the queue fits.
+  // Before the first whistle nobody is asking about a score, and the queue fits. Both
+  // modes open here.
   if (snapshot.event.status === 'setup' && !results) return { comp: 'setup', mats }
-  if (matsInUse) return { comp: 'mats', mats }
-  // No mat is bound, carrying or holding a match and results exist, so somebody is
-  // typing them at a desk. That is a final score panel, not a degraded live board.
-  if (results) return { comp: 'entry', mats: 1 }
 
-  return { comp: 'mats', mats }
+  return snapshot.event.mode === 'entry' ? { comp: 'entry', mats: 1 } : { comp: 'mats', mats }
 }

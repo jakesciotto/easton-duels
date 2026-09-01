@@ -24,7 +24,7 @@ const match = (id: number, status: MatchRow['status']): MatchRow => ({
 
 function mount(matches: MatchRow[] = [], rs: RulesetRow | undefined = ruleset) {
   const detail: EventDetail = {
-    event: { id: 7, name: 'Fall Duels', date: '2026-10-03', matCount: 1, matCode: '0420', status: 'live', maxAgeGap: 1, maxWeightGap: 10, sameGender: false, createdAt: 'x' },
+    event: { id: 7, name: 'Fall Duels', date: '2026-10-03', matCount: 1, matCode: '0420', mode: 'live', status: 'live', maxAgeGap: 1, maxWeightGap: 10, sameGender: false, createdAt: 'x' },
     teams: [], athletes: [], rulesets: [ruleset], mats: [], matches, candidateCount: 0,
   }
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })

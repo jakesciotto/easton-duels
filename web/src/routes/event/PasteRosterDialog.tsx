@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { parseRosterPaste } from '@/lib/roster-paste'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import type { EventDetail, ManualKid } from '@/lib/types'
-import { beltLabel } from '@/lib/format'
+import { beltLabel, genderLabel } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { dialogBody, dialogFooter, dialogSurface } from '@/components/dialog-frame'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -109,10 +109,13 @@ export function PasteRosterDialog({ detail, open, onOpenChange }: { detail: Even
                     ) : (
                       <>
                         <TableCell className="text-gray-12">{l.row?.firstName} {l.row?.lastName}</TableCell>
-                        <TableCell numeric>{l.row?.age ?? '--'}</TableCell>
-                        <TableCell numeric>{l.row?.weightLbs ?? '--'}</TableCell>
+                        {/* A missing value is a state, not a value: it renders in the
+                            attend colour, the way the roster row marks the same gap. It
+                            used to inherit white and read brighter than the name. */}
+                        <TableCell numeric className={l.row?.age == null ? 'text-attend' : undefined}>{l.row?.age ?? '--'}</TableCell>
+                        <TableCell numeric className={l.row?.weightLbs == null ? 'text-attend' : undefined}>{l.row?.weightLbs ?? '--'}</TableCell>
                         <TableCell className="text-gray-11">{beltLabel(l.row?.belt ?? null)}</TableCell>
-                        <TableCell className="text-gray-11">{l.row?.gender ?? '--'}</TableCell>
+                        <TableCell className={l.row?.gender ? 'text-gray-11' : 'text-gray-10'}>{genderLabel(l.row?.gender ?? null) ?? '--'}</TableCell>
                       </>
                     )}
                   </TableRow>
