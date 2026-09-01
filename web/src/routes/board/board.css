@@ -560,6 +560,22 @@
   overflow: hidden;
 }
 
+/* A head over an empty column reads as a board that failed to load, and the room
+   cannot ask anyone. It takes the same step as a pairing so the column keeps its
+   shape, and it stays at gray-10, which is the floor for anything read at all. */
+.b-setup-empty {
+  flex: none;
+  height: var(--b3);
+  display: flex;
+  align-items: center;
+  font-size: var(--b3);
+  line-height: 1;
+  font-weight: 500;
+  color: var(--gray-10);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
 /* n panels plus n - 1 gaps come to exactly the band at every count the API accepts,
    and the row inside a panel is whatever the panel has left after its queue. Both
    numbers are budget.ts's; four hard coded rules meant mats five and up never reached

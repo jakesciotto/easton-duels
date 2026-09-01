@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { PencilLine } from 'lucide-react'
-import type { WinType } from '@shared/types'
+import { teamCode, type WinType } from '@shared/types'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import { newEventId } from '@/lib/ids'
 import type { AthleteRow, EventDetail, MatchRow, TeamRow } from '@/lib/types'
@@ -425,11 +425,13 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
             </span>
           </div>
           <div className={cn(LEDGER_COLS, 'h-8 bg-gray-1')}>
-            <span className="truncate font-sans t1 text-gray-10 uppercase">{teamA.name}</span>
+            {/* The full name truncates to five letters here, and the code is the short
+                form the plates already use everywhere else. */}
+            <span className="truncate font-sans t1 text-gray-10" title={teamA.name}>{teamCode(teamA.name)}</span>
             <span className="tick text-right font-sans t1 text-gray-10 uppercase">Pts</span>
             <span className="text-center font-sans t1 text-gray-10 uppercase">Win by</span>
             <span className="tick text-right font-sans t1 text-gray-10 uppercase">Pts</span>
-            <span className="truncate text-right font-sans t1 text-gray-10 uppercase">{teamB.name}</span>
+            <span className="truncate text-right font-sans t1 text-gray-10" title={teamB.name}>{teamCode(teamB.name)}</span>
             <span className="text-right font-sans t1 text-gray-10 uppercase">At</span>
             <span className="sr-only">Edit</span>
           </div>
@@ -545,8 +547,9 @@ function PointsField({ id, team, value, onChange, digitKey = false, align = 'lef
           inputMode="numeric"
           autoComplete="off"
           maxLength={2}
+          placeholder="0"
           aria-keyshortcuts={digitKey ? '0 1 2 3 4 5 6 7 8 9' : undefined}
-          className="fig fig-2 w-full bg-transparent text-center t8 text-gray-12 outline-none"
+          className="fig fig-2 w-full bg-transparent text-center t8 text-gray-12 outline-none placeholder:text-gray-9"
         />
       </div>
     </div>

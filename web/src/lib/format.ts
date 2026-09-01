@@ -24,3 +24,12 @@ export function teamHex(color: string): string {
 export function teamStyle(color: string): CSSProperties {
   return { '--team': teamHex(color) } as CSSProperties
 }
+
+// The column is free text up to ten characters, and the roster sync writes "Male" while a
+// hand entry writes "M". The roster row prints it inside a line that must never wrap, so a
+// four letter value costs the rating its place. Display only: the stored value never changes.
+export function genderLabel(gender: string | null): string | null {
+  if (!gender) return null
+  const first = gender.trim().charAt(0).toUpperCase()
+  return first === '' ? null : first
+}

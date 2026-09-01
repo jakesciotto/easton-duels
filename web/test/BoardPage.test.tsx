@@ -219,6 +219,23 @@ describe('Board compositions', () => {
     expect(screen.queryByText('Kai14')).not.toBeInTheDocument()
   })
 
+  // Seen on the real board against a new event: "Mat 1 first up" over an empty column and
+  // the rest of a 55 inch panel black. A head with nothing under it reads as a board that
+  // failed to load, and the room cannot ask anyone.
+  it('says a mat is not drawn yet rather than heading an empty column', () => {
+    const snapshot = sampleSnapshot({
+      event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'setup', matCount: 1 },
+      mats: [mat(1, { onDeck: [], bound: true })],
+      matches: [],
+    })
+    const { container } = render(<Board snapshot={snapshot} connected />)
+
+    expect(safe(container)).toHaveAttribute('data-comp', 'setup')
+    expect(screen.getByText('Mat 1 first up')).toBeInTheDocument()
+    expect(screen.getByText('Not drawn yet')).toBeInTheDocument()
+    expect(container.querySelectorAll('.b-next-line')).toHaveLength(0)
+  })
+
   it('names are first name plus last initial at every mat count', () => {
     for (const count of [1, 2, 3, 4]) {
       const { unmount } = render(<Board snapshot={liveBoard(count)} connected />)

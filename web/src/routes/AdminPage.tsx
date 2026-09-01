@@ -49,8 +49,11 @@ function EventRow({ ev }: { ev: EventSummary }) {
         >
           {ev.name}
         </Link>
-        {teamA && <TeamPlate color={teamA.color} name={teamA.name} size="inline" />}
-        {teamB && <TeamPlate color={teamB.color} name={teamB.name} size="inline" />}
+        {/* Below 640px the two plates and the date leave the name about one character,
+            and the name is the row's identity and its link. The plates stand down: the
+            teams are on the event's own page, the name is the only thing that is not. */}
+        {teamA && <TeamPlate color={teamA.color} name={teamA.name} size="inline" className="hidden sm:inline-flex" />}
+        {teamB && <TeamPlate color={teamB.color} name={teamB.name} size="inline" className="hidden sm:inline-flex" />}
       </div>
       <span className="fig text-gray-10">{ev.date}</span>
       <span className="fig text-right text-gray-10">{ev.matCount}</span>

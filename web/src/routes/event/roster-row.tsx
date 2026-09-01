@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { XIcon } from 'lucide-react'
 import type { AthleteRow } from '@/lib/types'
-import { athleteName, beltLabel } from '@/lib/format'
+import { athleteName, beltLabel, genderLabel } from '@/lib/format'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { FieldRow } from '@/components/ui/field-set'
@@ -120,7 +120,7 @@ export function RosterRow({ kid, selected, fault, inMatch, onSelect, onPatch, on
   // takes no pointer events and so can never show a title.
   const meta = [
     beltLabel(kid.belt),
-    kid.gender,
+    genderLabel(kid.gender),
     kid.erp === null ? 'unrated' : `ERP ${kid.erp.toFixed(1)}`,
     inMatch ? 'In a match' : null,
   ]
