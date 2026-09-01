@@ -14,8 +14,10 @@ export function winTypeLabel(w: WinType): string {
   return w === 'submission' ? 'by submission' : w === 'points' ? 'on points' : 'by decision'
 }
 
+// The only consumer is teamStyle, which assigns the result to a custom property,
+// so the fallback stays a token reference rather than a literal.
 export function teamHex(color: string): string {
-  return TEAM_COLORS[color as TeamColor] ?? '#64748b'
+  return TEAM_COLORS[color as TeamColor] ?? 'var(--gray-8)'
 }
 
 // Sets --team so Tailwind classes like bg-[var(--team)] and text-[var(--team)] pick the team colour.

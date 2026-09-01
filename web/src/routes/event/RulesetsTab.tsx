@@ -24,7 +24,7 @@ export function RulesetsTab({ detail }: { detail: EventDetail }) {
           <Card key={r.id}>
             <CardHeader>
               <CardTitle>{r.name}</CardTitle>
-              <span className="shrink-0 font-mono text-[13px] tabular-nums text-faint">{Math.floor(r.defaultLengthSec / 60)}:{String(r.defaultLengthSec % 60).padStart(2, '0')}</span>
+              <span className="shrink-0 font-mono text-[13px] tabular-nums text-gray-10">{Math.floor(r.defaultLengthSec / 60)}:{String(r.defaultLengthSec % 60).padStart(2, '0')}</span>
               <div className="ml-auto flex shrink-0 gap-2">
                 <Button size="sm" variant="ghost" onClick={() => { setEditing(r); setOpen(true) }}>Edit</Button>
                 <Button size="sm" variant="destructive" onClick={() => remove.mutate(r.id)} disabled={used.has(r.id) || detail.rulesets.length === 1}>Delete</Button>

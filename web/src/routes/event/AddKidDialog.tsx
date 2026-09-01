@@ -147,7 +147,7 @@ export function AddKidDialog({ detail, open, onOpenChange, onRefresh }: {
                   </span>
                   <List className="max-h-72 overflow-y-auto">
                     {visible.length === 0
-                      ? <ListRow className="text-[13px] text-faint">No competitors to add</ListRow>
+                      ? <ListRow className="text-[13px] text-gray-10">No competitors to add</ListRow>
                       : visible.map(c => (
                         <ListRow key={c.wlUid} className="flex items-center gap-3">
                           <Checkbox aria-label={`Select ${c.firstName} ${c.lastName}`} checked={picked.has(c.wlUid)} onCheckedChange={v => toggle(c.wlUid, v)} />

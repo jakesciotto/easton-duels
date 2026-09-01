@@ -22,7 +22,7 @@ function ScoreLine({ match, teamColor }: { match: MatchView; teamColor: (teamId:
     <div className="flex flex-wrap items-center gap-2">
       <TeamDot color={teamColor(match.a.teamId)} name={match.a.name} />
       <span className="font-mono tabular text-soft">{match.a.score}</span>
-      <span className="text-xs text-faint">to</span>
+      <span className="text-xs text-gray-9">to</span>
       <span className="font-mono tabular text-soft">{match.b.score}</span>
       <TeamDot color={teamColor(match.b.teamId)} name={match.b.name} />
     </div>
@@ -119,9 +119,9 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
                   <tr key={m.id} aria-label={`Mat ${m.number}`} className="border-b border-border last:border-0">
                     <td className="px-3 py-2.5 font-semibold">Mat {m.number}</td>
                     <td className="px-3 py-2.5">
-                      {current ? <ScoreLine match={current} teamColor={teamColor} /> : <span className="text-faint">Idle</span>}
+                      {current ? <ScoreLine match={current} teamColor={teamColor} /> : <span className="text-gray-10">Idle</span>}
                     </td>
-                    <td className="px-3 py-2.5">{current ? <Clock clock={current.clock} serverNow={snapshot?.now ?? null} /> : <span className="text-faint">-</span>}</td>
+                    <td className="px-3 py-2.5">{current ? <Clock clock={current.clock} serverNow={snapshot?.now ?? null} /> : <span className="text-gray-10">-</span>}</td>
                     <td className="px-3 py-2.5"><Badge variant={m.bound ? 'live' : 'default'}>{m.bound ? 'scorer connected' : 'no scorer'}</Badge></td>
                     <td className="px-3 py-2.5">
                       {current && (
@@ -132,7 +132,7 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
                 )
               })}
               {(snapshot?.mats ?? []).length === 0 && (
-                <tr><td colSpan={5} className="px-3 py-2.5 text-[13px] text-faint">Waiting for the stream</td></tr>
+                <tr><td colSpan={5} className="px-3 py-2.5 text-[13px] text-gray-10">Waiting for the stream</td></tr>
               )}
             </tbody>
           </table>
@@ -155,7 +155,7 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
             <tbody>
               {(snapshot?.matches ?? []).filter(m => m.status !== 'pending').map(m => (
                 <tr key={m.id} aria-label={`Match ${m.orderIndex + 1}`} className="border-b border-border last:border-0">
-                  <td className="px-3 py-2.5 font-mono tabular text-faint">{m.orderIndex + 1}</td>
+                  <td className="px-3 py-2.5 font-mono tabular text-gray-10">{m.orderIndex + 1}</td>
                   <td className="px-3 py-2.5"><ScoreLine match={m} teamColor={teamColor} /></td>
                   <td className="px-3 py-2.5"><Badge variant={m.status === 'live' ? 'live' : 'done'}>{m.status}</Badge></td>
                   <td className="px-3 py-2.5 text-soft">{m.result ? `${m.result.winnerAthleteId === m.a.athleteId ? m.a.name : m.b.name} ${winTypeLabel(m.result.winType)}` : ''}</td>
@@ -170,7 +170,7 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
                 </tr>
               ))}
               {(snapshot?.matches ?? []).filter(m => m.status !== 'pending').length === 0 && (
-                <tr><td colSpan={5} className="px-3 py-2.5 text-[13px] text-faint">No live or finished matches yet</td></tr>
+                <tr><td colSpan={5} className="px-3 py-2.5 text-[13px] text-gray-10">No live or finished matches yet</td></tr>
               )}
             </tbody>
           </table>

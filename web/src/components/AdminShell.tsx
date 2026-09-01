@@ -19,8 +19,8 @@ export function AdminShell({ title, status, actions, meta, children }: {
             <img src="/easton-logo.png" alt="Easton Training Center" width={24} height={24} className="size-6 shrink-0 rounded-full" />
             <Wordmark />
           </Link>
-          <span aria-hidden className="text-[#42434d]">/</span>
-          <span className="truncate font-medium text-[#d9d9de]">{title}</span>
+          <span aria-hidden className="text-gray-8">/</span>
+          <span className="truncate font-medium text-gray-12">{title}</span>
           {status}
           <div className="ml-auto flex items-center gap-2">
             {actions}

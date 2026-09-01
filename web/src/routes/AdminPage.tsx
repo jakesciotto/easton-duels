@@ -24,11 +24,11 @@ function EventList() {
     <AdminShell title="Events" actions={<Button size="sm" onClick={() => setOpen(true)}>New event</Button>}>
       <NewEventDialog open={open} onOpenChange={setOpen} onCreated={d => navigate(`/events/${d.event.id}`)} />
       <div className="grid gap-6 px-6 pb-10">
-        {events.isLoading && <p className="text-faint">Loading</p>}
+        {events.isLoading && <p className="text-gray-10">Loading</p>}
         {events.error && <p role="alert" className="text-destructive">{events.error.message}</p>}
         {events.data?.length === 0 && (
           <List>
-            <ListRow className="text-[13px] text-faint">No events yet. Create the first one.</ListRow>
+            <ListRow className="text-[13px] text-gray-10">No events yet. Create the first one.</ListRow>
           </List>
         )}
         {events.data && events.data.length > 0 && (
@@ -41,8 +41,8 @@ function EventList() {
                     <Badge variant={STATUS[ev.status].variant}>{STATUS[ev.status].label}</Badge>
                   </div>
                   <div className="flex min-w-0 items-center gap-3 text-[13px]">
-                    <span className="font-mono text-faint tabular-nums">{ev.date}</span>
-                    <span className="text-faint"><span className="font-mono tabular-nums">{ev.matCount}</span> {ev.matCount === 1 ? 'mat' : 'mats'}</span>
+                    <span className="font-mono text-gray-10 tabular-nums">{ev.date}</span>
+                    <span className="text-gray-10"><span className="font-mono tabular-nums">{ev.matCount}</span> {ev.matCount === 1 ? 'mat' : 'mats'}</span>
                     {ev.teams.map(t => <TeamDot key={t.id} color={t.color} name={t.name} className="text-soft" />)}
                   </div>
                 </div>

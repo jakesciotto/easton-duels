@@ -10,8 +10,18 @@ describe('ColourSwatches', () => {
     expect(screen.getByRole('radiogroup', { name: 'Team A colour' })).toBeInTheDocument()
     expect(screen.getAllByRole('radio')).toHaveLength(TEAM_COLOR_KEYS.length)
     expect(screen.getAllByRole('radio')).toHaveLength(8)
-    expect(screen.getByRole('radio', { name: 'Red' })).toBeChecked()
-    expect(screen.getByRole('radio', { name: 'Blue' })).not.toBeChecked()
+    expect(screen.getByRole('radio', { name: 'Crimson' })).toBeChecked()
+    expect(screen.getByRole('radio', { name: 'Azure' })).not.toBeChecked()
+  })
+
+  it('labels every swatch with the colour a person sees, not the stored key', () => {
+    render(<ColourSwatches value="red" onChange={() => {}} aria-label="Team A colour" />)
+    // Eight evenly spread hues leave room for only two warm ones, so the keys
+    // "green" and "amber" can no longer match their own hue. The stored key is
+    // frozen for data compatibility and the label is what the organizer reads.
+    expect(screen.getByRole('radio', { name: 'Citron' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Green' })).toBeInTheDocument()
+    expect(screen.queryByRole('radio', { name: 'Red' })).not.toBeInTheDocument()
   })
 
   it('calls onChange with the key of the clicked colour', async () => {

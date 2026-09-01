@@ -56,18 +56,46 @@ export interface Snapshot {
   matches: MatchView[]
 }
 
+// Eight hues at one lightness and one chroma, oklch(0.70 0.14 h), spread 45 degrees
+// apart. The previous values were the Tailwind v3 500 ramp, whose lightness spread
+// meant a team could be visibly quieter than its opponent on the same wall. Holding
+// lightness constant drops the contrast spread from 1.80x to 1.15x.
+//
+// The KEYS are frozen: they are stored in teams.color and changing one needs a data
+// migration. Two of them can no longer match their hue, because eight evenly spread
+// hues leave room for only two warm ones. TEAM_COLOR_LABELS is what a person sees,
+// so the name always agrees with the swatch.
 export const TEAM_COLORS = {
-  red: '#ef4444',
-  blue: '#3b82f6',
-  green: '#22c55e',
-  amber: '#f59e0b',
-  purple: '#a855f7',
-  pink: '#ec4899',
-  teal: '#14b8a6',
-  orange: '#f97316',
+  red: '#e97871',
+  blue: '#53a3f2',
+  green: '#a1a62b',
+  amber: '#54b66e',
+  purple: '#ac89e8',
+  pink: '#d779ba',
+  teal: '#00b5b7',
+  orange: '#d78c29',
 } as const
 export type TeamColor = keyof typeof TEAM_COLORS
 export const TEAM_COLOR_KEYS = Object.keys(TEAM_COLORS) as TeamColor[]
+
+export const TEAM_COLOR_LABELS: Record<TeamColor, string> = {
+  red: 'Crimson',
+  orange: 'Amber',
+  green: 'Citron',
+  amber: 'Green',
+  teal: 'Teal',
+  blue: 'Azure',
+  purple: 'Violet',
+  pink: 'Magenta',
+}
+
+// A three letter code cut out of the team fill. Every fill takes --gray-1 text at
+// 6.73:1 or better, so the plate is legal at every size for every pair.
+export function teamCode(name: string): string {
+  const letters = name.replace(/[^a-zA-Z]/g, '')
+  if (letters.length >= 3) return letters.slice(0, 3).toUpperCase()
+  return (letters + name.replace(/[^a-zA-Z0-9]/g, '')).slice(0, 3).toUpperCase() || 'TBD'
+}
 
 export const KIDS_BELTS = [
   'white',

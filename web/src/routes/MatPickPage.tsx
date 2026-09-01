@@ -123,7 +123,7 @@ export default function MatPickPage() {
               </List>
             ) : (
               <List>
-                <ListRow className="text-[13px] text-faint">This event has no mats yet</ListRow>
+                <ListRow className="text-[13px] text-gray-10">This event has no mats yet</ListRow>
               </List>
             )
           )}

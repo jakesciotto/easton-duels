@@ -129,7 +129,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
           */}
           <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-[1fr_auto_1fr]">
             <TeamHead color={teamA.color} name={teamA.name} role="Team A" className="sm:col-start-1 sm:row-start-1" />
-            <span aria-hidden className="text-xs text-faint sm:col-start-2 sm:row-span-4 sm:row-start-1 sm:self-center sm:justify-self-center">vs</span>
+            <span aria-hidden className="text-xs text-gray-9 sm:col-start-2 sm:row-span-4 sm:row-start-1 sm:self-center sm:justify-self-center">vs</span>
             <TeamHead color={teamB.color} name={teamB.name} role="Team B" className="sm:col-start-3 sm:row-start-1" />
 
             <KidSelect
@@ -150,14 +150,14 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
             <WinnerButton kid={b} color={teamB.color} pressed={winner === 'b'} onClick={() => pickWinner('b')} className="sm:col-start-3 sm:row-start-4" />
           </div>
           <Segment value={winType} onValueChange={v => pickType(v as WinType)} options={WIN_TYPES} aria-label="Win type" />
-          {winner === null && a && b && <p className="text-[13px] text-faint">Scores are tied. Pick the winner.</p>}
+          {winner === null && a && b && <p className="text-[13px] text-gray-10">Scores are tied. Pick the winner.</p>}
           {error && <p role="alert" className="text-[13px] text-destructive">{error.message}</p>}
           <div className="flex items-center gap-3">
             <Button type="submit" disabled={!canSave || create.isPending || correct.isPending}>
               {f.editingId !== null ? 'Save correction' : 'Save result'}
             </Button>
             {f.editingId !== null && <Button type="button" variant="ghost" onClick={() => setF(fresh())}>Cancel edit</Button>}
-            {saved && <span aria-live="polite" className="text-[13px] text-faint">{saved}</span>}
+            {saved && <span aria-live="polite" className="text-[13px] text-gray-10">{saved}</span>}
           </div>
         </form>
         {pending.length > 0 && (
@@ -167,7 +167,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
               {pending.map(m => (
                 <ListRow key={m.id} className="flex items-center gap-3">
                   <span className="min-w-0 flex-1 truncate text-sm">{name(m.athleteAId)} vs {name(m.athleteBId)}</span>
-                  {m.why && <span className="text-xs text-faint">{m.why}</span>}
+                  {m.why && <span className="text-xs text-gray-10">{m.why}</span>}
                   <Button size="sm" variant="secondary" onClick={() => use(m)}>Use</Button>
                 </ListRow>
               ))}
@@ -179,7 +179,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
         <h3 className="label">Results ({done.length})</h3>
         {done.length === 0 ? (
           <List>
-            <ListRow className="text-[13px] text-faint">No results yet</ListRow>
+            <ListRow className="text-[13px] text-gray-10">No results yet</ListRow>
           </List>
         ) : (
           <List>
@@ -188,13 +188,13 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
               const bWon = m.winnerAthleteId === m.athleteBId
               return (
                 <ListRow key={m.id} className="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-3">
-                  <div className={cn('flex min-w-0 items-center gap-2 font-medium', !aWon && 'font-normal text-faint')}>
+                  <div className={cn('flex min-w-0 items-center gap-2 font-medium', !aWon && 'font-normal text-gray-10')}>
                     <TeamDot color={teamA.color} />
                     <span className="truncate">{name(m.athleteAId)}</span>
                     <span className="font-mono tabular text-soft">{m.pointsA}</span>
                   </div>
                   <span className="min-w-[84px] text-center text-xs text-muted-foreground">{m.winType ? WIN_TYPE_SHORT[m.winType] : ''}</span>
-                  <div className={cn('flex min-w-0 items-center justify-end gap-2 font-medium', !bWon && 'font-normal text-faint')}>
+                  <div className={cn('flex min-w-0 items-center justify-end gap-2 font-medium', !bWon && 'font-normal text-gray-10')}>
                     <span className="font-mono tabular text-soft">{m.pointsB}</span>
                     <span className="truncate">{name(m.athleteBId)}</span>
                     <TeamDot color={teamB.color} />
@@ -214,7 +214,7 @@ function TeamHead({ color, name, role, className }: { color: string; name: strin
   return (
     <div className={cn('flex items-center gap-2', className)}>
       <TeamDot color={color} name={name} />
-      <span className="ml-auto shrink-0 text-xs text-faint">{role}</span>
+      <span className="ml-auto shrink-0 text-xs text-gray-10">{role}</span>
     </div>
   )
 }
@@ -278,7 +278,7 @@ function WinnerButton({ kid, color, pressed, onClick, className }: { kid: Athlet
       disabled={!kid}
       onClick={onClick}
       className={cn(
-        'inline-flex h-9 items-center justify-center gap-2 rounded-md text-sm font-medium text-soft shadow-[0_0_0_1px_#2f3037] transition-[color,background-color,box-shadow] duration-150 focus-visible:shadow-focus aria-pressed:bg-secondary aria-pressed:text-foreground aria-pressed:shadow-ring disabled:pointer-events-none disabled:opacity-40',
+        'inline-flex h-9 items-center justify-center gap-2 rounded-md text-sm font-medium text-soft shadow-[0_0_0_1px_var(--input)] transition-[color,background-color,box-shadow] duration-150 focus-visible:shadow-focus aria-pressed:bg-secondary aria-pressed:text-foreground aria-pressed:shadow-ring disabled:pointer-events-none disabled:opacity-40',
         className,
       )}
     >

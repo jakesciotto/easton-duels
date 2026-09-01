@@ -22,7 +22,7 @@ function Fighter({ side, teams }: { side: MatchView['a']; teams: TeamView[] }) {
       <div className="flex min-w-0 items-center gap-[calc(0.7vw*var(--scale,1))]">
         <TeamDot color={team?.color ?? 'red'} size="calc(0.8vw*var(--scale,1))" />
         <b className="truncate text-[calc(1.6vw*var(--scale,1))] font-semibold tracking-[-0.02em]">{side.name}</b>
-        {detail && <small className="shrink-0 text-[calc(0.95vw*var(--scale,1))] text-faint">{detail}</small>}
+        {detail && <small className="shrink-0 text-[calc(0.95vw*var(--scale,1))] text-gray-10">{detail}</small>}
       </div>
       <span className="font-mono text-[calc(3vw*var(--scale,1))] leading-none font-medium tabular">{side.score}</span>
     </div>
@@ -70,7 +70,7 @@ export function MatTile({ mat, teams, serverNow, recent, large = false }: {
     >
       <div className="flex items-baseline gap-[calc(0.8vw*var(--scale,1))]">
         <span className="text-[calc(1.5vw*var(--scale,1))] font-semibold tracking-[-0.02em]">Mat {mat.number}</span>
-        {showing && <span className="text-[calc(1vw*var(--scale,1))] text-faint">Match {showing.orderIndex + 1}</span>}
+        {showing && <span className="text-[calc(1vw*var(--scale,1))] text-gray-10">Match {showing.orderIndex + 1}</span>}
         {pending && <Badge variant="warn">Submission pending</Badge>}
         {showing && (
           <Clock
@@ -82,9 +82,9 @@ export function MatTile({ mat, teams, serverNow, recent, large = false }: {
       </div>
       {showing
         ? <MatchBody match={showing} teams={teams} />
-        : <div className="row-[2/4] grid place-items-center text-[calc(1.4vw*var(--scale,1))] text-faint">Waiting for the next match</div>}
+        : <div className="row-[2/4] grid place-items-center text-[calc(1.4vw*var(--scale,1))] text-gray-10">Waiting for the next match</div>}
       {mat.onDeck[0] && (
-        <div className="border-t border-border pt-[calc(0.5vw*var(--scale,1))] text-[calc(1vw*var(--scale,1))] text-faint">
+        <div className="border-t border-border pt-[calc(0.5vw*var(--scale,1))] text-[calc(1vw*var(--scale,1))] text-gray-10">
           <b className="mr-[calc(0.5vw*var(--scale,1))] font-medium text-muted-foreground">Next</b>
           {mat.onDeck[0].a.name} vs {mat.onDeck[0].b.name}
         </div>

@@ -14,16 +14,16 @@ export function OnDeckStrip({ mats, teams, fallbackCount }: { mats: MatView[]; t
         <>
           <span className="text-[1vw] font-medium text-muted-foreground">On deck</span>
           {mats.map(m => (
-            <span key={m.id} className="flex items-center gap-[0.5vw] text-[1.1vw] text-[#d9d9de]">
-              <span className="font-mono text-[0.95vw] font-medium text-faint">Mat {m.number}</span>
+            <span key={m.id} className="flex items-center gap-[0.5vw] text-[1.1vw] text-gray-12">
+              <span className="font-mono text-[0.95vw] font-medium text-gray-10">Mat {m.number}</span>
               {m.onDeck[0] ? (
                 <>
                   <TeamDot color={colorFor(teams, m.onDeck[0].a.teamId)} name={m.onDeck[0].a.name} size="0.7vw" className="gap-[0.5vw]" />
-                  <span className="text-[0.95vw] text-[#5e5f6e]">vs</span>
+                  <span className="text-[0.95vw] text-gray-9">vs</span>
                   <TeamDot color={colorFor(teams, m.onDeck[0].b.teamId)} name={m.onDeck[0].b.name} size="0.7vw" className="gap-[0.5vw]" />
                 </>
               ) : (
-                <span className="text-faint">None scheduled</span>
+                <span className="text-gray-10">None scheduled</span>
               )}
             </span>
           ))}

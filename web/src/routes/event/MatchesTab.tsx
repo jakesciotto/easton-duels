@@ -33,7 +33,7 @@ function Row({ m, detail, index, pendingIndex, pendingCount, doubleBooked, onPic
   const locked = m.status !== 'pending'
 
   return (
-    <tr ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={cn('border-b border-border', locked && 'text-faint')}>
+    <tr ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={cn('border-b border-border', locked && 'text-gray-10')}>
       <td className="px-3 py-2.5">
         <Button
           type="button" variant="ghost" size="icon" aria-label="Drag to reorder" disabled={locked}
@@ -201,7 +201,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" onClick={onGenerateClick} disabled={generate.isPending}>{hasPending ? 'Regenerate' : 'Generate'}</Button>
         <Button size="sm" variant="secondary" onClick={() => setAddOpen(true)}>Add match</Button>
-        {summary && <span aria-live="polite" className="text-[13px] text-faint">{summary}</span>}
+        {summary && <span aria-live="polite" className="text-[13px] text-gray-10">{summary}</span>}
         {error && <p role="alert" className="text-[13px] text-destructive">{error.message}</p>}
       </div>
       <Dialog open={confirmOpen} onOpenChange={o => { if (o) setConfirmOpen(true); else closeConfirm() }}>
@@ -238,7 +238,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
               </thead>
               <tbody>
                 {ordered.length === 0 ? (
-                  <tr><td colSpan={9} className="px-3 py-2.5 text-[13px] text-faint">No matches yet</td></tr>
+                  <tr><td colSpan={9} className="px-3 py-2.5 text-[13px] text-gray-10">No matches yet</td></tr>
                 ) : ordered.map((m, i) => (
                   <Row
                     key={m.id} m={m} detail={detail} index={i}
@@ -259,7 +259,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
           >
             <div className="flex flex-wrap gap-1">
               {kids.length === 0
-                ? <span className="text-[13px] text-faint">Everyone is paired</span>
+                ? <span className="text-[13px] text-gray-10">Everyone is paired</span>
                 : kids.map(k => <Badge key={k.id}>{athleteName(k)}</Badge>)}
             </div>
           </TeamCard>

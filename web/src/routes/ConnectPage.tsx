@@ -41,12 +41,12 @@ export default function ConnectPage() {
               />
             </div>
           ) : !target ? (
-            <p className="text-[13px] text-faint">Finding the server address</p>
+            <p className="text-[13px] text-gray-10">Finding the server address</p>
           ) : (
             <>
               <QrCode text={target} size={240} />
               <p className="break-all font-mono text-2xl text-foreground">{target}</p>
-              <p className="text-[13px] text-faint">Scan, pick your mat, and enter the mat code from the organizer.</p>
+              <p className="text-[13px] text-gray-10">Scan, pick your mat, and enter the mat code from the organizer.</p>
             </>
           )}
         </CardContent>

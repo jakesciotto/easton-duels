@@ -12,12 +12,12 @@ export function ScoreSide({ side, team, ruleset, disabled, pendingKey, onTap, on
   return (
     <section
       aria-label={side.name}
-      style={{ ...teamStyle(color), background: 'color-mix(in oklab, var(--team) 8%, #000)' }}
+      style={{ ...teamStyle(color), background: 'color-mix(in oklab, var(--team) 8%, var(--black))' }}
       className="relative flex flex-1 flex-col gap-3 p-4 before:absolute before:top-0 before:left-4 before:right-4 before:h-[0.35vw] before:rounded-b-sm before:bg-[var(--team)] before:content-['']"
     >
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-2xl font-semibold tracking-[-0.035em]">{side.name}</span>
-        <span className="shrink-0 text-xs text-faint">{meta}</span>
+        <span className="shrink-0 text-xs text-gray-10">{meta}</span>
       </div>
       <div className="grid flex-1 place-items-center text-[20vh] leading-none font-mono font-medium tabular text-foreground">{side.score}</div>
       <div className="grid grid-cols-3 gap-2">
@@ -31,7 +31,7 @@ export function ScoreSide({ side, team, ruleset, disabled, pendingKey, onTap, on
             className={cn('touch h-14 flex-col gap-0.5 whitespace-normal text-base', a.points < 0 && 'border border-warn/40')}
           >
             {a.label}
-            <span className="text-xs font-normal text-faint">{a.points >= 0 ? '+' : ''}{a.points}</span>
+            <span className="text-xs font-normal text-gray-10">{a.points >= 0 ? '+' : ''}{a.points}</span>
           </Button>
         ))}
         {(ruleset?.terminals ?? []).map(t => (

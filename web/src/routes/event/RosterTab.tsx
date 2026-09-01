@@ -43,7 +43,7 @@ function KidRow({ kid, selected, onSelect, onPatch, onRemove }: {
         <div className="min-w-0 flex-1 truncate font-medium">{name}</div>
         <Button size="sm" variant="ghost" aria-label={`Remove ${name}`} onClick={onRemove}>Remove</Button>
       </div>
-      <div className="flex flex-wrap items-center gap-2 pl-6 text-[13px] text-faint">
+      <div className="flex flex-wrap items-center gap-2 pl-6 text-[13px] text-gray-10">
         <span>{beltLabel(kid.belt)}</span>
         {kid.gender && <span>{kid.gender}</span>}
         {kid.erp !== null && <Badge>ERP <span className="font-mono tabular-nums">{kid.erp.toFixed(1)}</span></Badge>}
@@ -79,12 +79,12 @@ function Column({ title, roleLabel, color, teamId, kids, selected, onSelect, onP
   const content = (
     <>
       <div className="flex items-center gap-2">
-        <span className="text-[13px] text-faint"><span className="font-mono tabular-nums">{kids.length}</span> {kids.length === 1 ? 'competitor' : 'competitors'}</span>
+        <span className="text-[13px] text-gray-10"><span className="font-mono tabular-nums">{kids.length}</span> {kids.length === 1 ? 'competitor' : 'competitors'}</span>
         {selectedElsewhere > 0 && <Button size="sm" variant="secondary" className="ml-auto" onClick={moveHere}>Move {selectedElsewhere} here</Button>}
       </div>
       <List>
         {kids.length === 0
-          ? <ListRow className="text-[13px] text-faint">No competitors here yet</ListRow>
+          ? <ListRow className="text-[13px] text-gray-10">No competitors here yet</ListRow>
           : kids.map(k => <KidRow key={k.id} kid={k} selected={selected.has(k.id)} onSelect={v => onSelect(k.id, v)} onPatch={body => onPatch(k.id, body)} onRemove={() => onRemove(k)} />)}
       </List>
     </>

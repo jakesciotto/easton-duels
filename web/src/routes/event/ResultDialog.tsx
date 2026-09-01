@@ -19,7 +19,7 @@ function WinnerButton({ name, color, pressed, onClick }: { name: string; color: 
       type="button"
       aria-pressed={pressed}
       onClick={onClick}
-      className="inline-flex h-9 items-center justify-center gap-2 rounded-md text-sm font-medium text-soft shadow-[0_0_0_1px_#2f3037] transition-[color,background-color,box-shadow] duration-150 focus-visible:shadow-focus aria-pressed:bg-secondary aria-pressed:text-foreground aria-pressed:shadow-ring"
+      className="inline-flex h-9 items-center justify-center gap-2 rounded-md text-sm font-medium text-soft shadow-[0_0_0_1px_var(--input)] transition-[color,background-color,box-shadow] duration-150 focus-visible:shadow-focus aria-pressed:bg-secondary aria-pressed:text-foreground aria-pressed:shadow-ring"
     >
       <TeamDot color={color} />
       <span>{name} wins</span>

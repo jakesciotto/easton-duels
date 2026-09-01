@@ -120,7 +120,7 @@ export function SyncRosterDialog({ detail, open, onOpenChange }: { detail: Event
               <div className="flex flex-wrap items-center gap-3">
                 <Label htmlFor="cand-search">Search</Label>
                 <Input id="cand-search" value={search} onChange={e => setSearch(e.target.value)} className="max-w-xs" />
-                <span className="text-[13px] text-faint"><span className="font-mono tabular-nums">{candidates.length}</span> competitors found</span>
+                <span className="text-[13px] text-gray-10"><span className="font-mono tabular-nums">{candidates.length}</span> competitors found</span>
                 <Button size="sm" variant="ghost" onClick={() => setSelected(new Set(visible.map(c => c.wlUid)))}>Select shown</Button>
               </div>
               <List className="max-h-80 overflow-y-auto">
@@ -128,11 +128,11 @@ export function SyncRosterDialog({ detail, open, onOpenChange }: { detail: Event
                   <ListRow key={c.wlUid} className="flex items-center gap-3">
                     <Checkbox aria-label={`Select ${c.firstName} ${c.lastName}`} checked={selected.has(c.wlUid)} onCheckedChange={checked => toggle(c.wlUid, checked)} />
                     <span className="min-w-0 flex-1 truncate font-medium">{c.firstName} {c.lastName}</span>
-                    <span className="text-[13px] text-faint">{c.wlLocation}</span>
+                    <span className="text-[13px] text-gray-10">{c.wlLocation}</span>
                     <span className="text-[13px] text-soft">{beltLabel(c.belt)}</span>
                     {c.erp !== null && <Badge>ERP <span className="font-mono tabular-nums">{c.erp.toFixed(1)}</span></Badge>}
-                    {c.age !== null && <span className="text-[13px] text-faint">age <span className="font-mono tabular-nums">{c.age}</span></span>}
-                    {c.weightLbs !== null && <span className="text-[13px] text-faint"><span className="font-mono tabular-nums">{c.weightLbs}</span> lb</span>}
+                    {c.age !== null && <span className="text-[13px] text-gray-10">age <span className="font-mono tabular-nums">{c.age}</span></span>}
+                    {c.weightLbs !== null && <span className="text-[13px] text-gray-9"><span className="font-mono tabular-nums">{c.weightLbs}</span> lb</span>}
                     {already.has(c.wlUid) && <Badge variant="done">on roster</Badge>}
                   </ListRow>
                 ))}

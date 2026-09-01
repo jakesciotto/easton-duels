@@ -25,7 +25,7 @@ export function KidPickerDialog({ detail, teamId, matchId, open, onOpenChange, o
           <Input aria-label="Search competitors" autoFocus value={search} onChange={e => setSearch(e.target.value)} />
           <List className="max-h-80 overflow-y-auto">
             {kids.length === 0
-              ? <ListRow className="text-sm text-faint">No competitors match</ListRow>
+              ? <ListRow className="text-sm text-gray-10">No competitors match</ListRow>
               : kids.map(k => (
                 <ListRow key={k.id} className="p-0">
                   <button
@@ -36,9 +36,9 @@ export function KidPickerDialog({ detail, teamId, matchId, open, onOpenChange, o
                   >
                     <span className="flex-1 truncate font-medium">{athleteName(k)}</span>
                     {isDoubleBooked(k.id, detail.matches, matchId ?? undefined) && <Badge variant="warn">double-booked</Badge>}
-                    <span className="text-faint">{beltLabel(k.belt)}</span>
-                    <span className="font-mono tabular text-faint">{k.age ?? '?'}y {k.weightLbs ?? '?'}lb</span>
-                    {k.erp !== null && <span className="font-mono tabular text-faint">ERP {k.erp.toFixed(1)}</span>}
+                    <span className="text-gray-10">{beltLabel(k.belt)}</span>
+                    <span className="font-mono tabular text-gray-10">{k.age ?? '?'}y {k.weightLbs ?? '?'}lb</span>
+                    {k.erp !== null && <span className="font-mono tabular text-gray-10">ERP {k.erp.toFixed(1)}</span>}
                   </button>
                 </ListRow>
               ))}

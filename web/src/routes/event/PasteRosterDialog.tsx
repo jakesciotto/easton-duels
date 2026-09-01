@@ -29,10 +29,10 @@ export function PasteRosterDialog({ detail, open, onOpenChange }: { detail: Even
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader><DialogTitle>Paste roster</DialogTitle></DialogHeader>
         <DialogBody>
-          <p className="text-sm text-soft">One competitor per line: <code className="font-mono text-faint">First Last, age, weight, belt, gender</code>. Everything after the name is optional.</p>
+          <p className="text-sm text-soft">One competitor per line: <code className="font-mono text-gray-10">First Last, age, weight, belt, gender</code>. Everything after the name is optional.</p>
           <textarea aria-label="Roster text" value={text} onChange={e => setText(e.target.value)}
             placeholder={'Mateo Rivera, 8, 62, grey, M\nOlivia Kim, 8, 60, grey/white, F'}
-            className="h-40 w-full rounded-md border border-input bg-card p-2.5 font-mono text-sm text-foreground placeholder:text-faint outline-none focus-visible:border-transparent focus-visible:shadow-focus" />
+            className="h-40 w-full rounded-md border border-input bg-card p-2.5 font-mono text-sm text-foreground placeholder:text-gray-9 outline-none focus-visible:border-transparent focus-visible:shadow-focus" />
           <div className="flex items-center gap-3">
             <Label htmlFor="paste-team">Put them on</Label>
             <Select value={teamId} onValueChange={setTeamId} items={teamItems}>
@@ -48,7 +48,7 @@ export function PasteRosterDialog({ detail, open, onOpenChange }: { detail: Even
           {parsed.rows.length > 0 && (
             <div className="max-h-56 overflow-y-auto rounded-lg border border-border">
               <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-card text-[13px] text-faint">
+                <thead className="sticky top-0 bg-card text-[13px] text-gray-10">
                   <tr>
                     <th className="px-3 py-2 text-left font-medium">Name</th>
                     <th className="px-3 py-2 text-left font-medium">Age</th>
