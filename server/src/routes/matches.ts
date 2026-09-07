@@ -9,6 +9,7 @@ import { generateMatches } from '../matchmaker/generate.js'
 import { resolvePair, leastLoadedMat } from '../match/pairs.js'
 import { eventDetail } from './events.js'
 import { bumpVersion } from '../match/events.js'
+import { advanceMat } from '../match/mats.js'
 
 const createSchema = z.object({
   athleteAId: z.number().int(),
@@ -55,6 +56,9 @@ matchRoutes.post('/events/:eventId/matches', requireAdmin, validate('json', crea
       matId,
       orderIndex: (max?.m ?? -1) + 1,
     }).returning().get()
+    // An idle mat has nothing to advance it, so on a live event the new match starts there.
+    // advanceMat is a no-op while the event is in setup or the mat already has a live match.
+    if (matId !== null) await advanceMat(tx, matId)
     await bumpVersion(tx, eventId)
     return inserted
   })
@@ -87,6 +91,7 @@ matchRoutes.patch('/matches/:matchId', requireAdmin, validate('json', patchSchem
   }
   await db.transaction(async tx => {
     if (Object.keys(update).length > 0) await tx.update(matches).set(update).where(eq(matches.id, id)).run()
+    if (update.matId !== undefined && update.matId !== null) await advanceMat(tx, update.matId)
     await bumpVersion(tx, existing.eventId)
   })
   return c.json(await db.select().from(matches).where(eq(matches.id, id)).get())

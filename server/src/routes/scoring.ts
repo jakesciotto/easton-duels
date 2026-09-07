@@ -9,7 +9,7 @@ import { clientIp, errorJson, requireAdmin, requireMatOrAdmin } from '../auth/mi
 import { checkLimit, recordFailure } from '../auth/dbRateLimit.js'
 import { pinMatches } from '../auth/pin.js'
 import { signToken, tokenExpiry } from '../auth/tokens.js'
-import { appendMatchEvent, endMatch, undoLastMatchEvent, loadMatch, latestEndedAt, bumpVersion, SeqConflict } from '../match/events.js'
+import { appendMatchEvent, endMatch, undoLastMatchEvent, loadMatch, latestEndedAt, bumpVersion, MatchStateError, SeqConflict } from '../match/events.js'
 import { advanceMat, reopenMatch, setResult, skipMatch } from '../match/mats.js'
 import { expireOverdue } from '../match/lazyExpiry.js'
 import { toMatchView, buildSnapshot } from '../live/snapshot.js'
@@ -30,9 +30,16 @@ async function matchView(c: Context<Env>, match: MatchRow) {
 
 // Every caller bumps the version inside its own write transaction, so this only reads.
 export async function respond(c: Context<Env>, match: MatchRow) {
+  return respondOptional(c, match.eventId, match)
+}
+
+// The same envelope for a write that can legitimately produce no match, which is what an
+// advance onto an empty queue does.
+export async function respondOptional(c: Context<Env>, eventId: number, match: MatchRow | null) {
   const { db } = c.get('ctx')
-  const snap = await buildSnapshot(db, match.eventId, { nowMs: Date.now() })
-  return c.json({ match: snap.matches.find(m => m.id === match.id) ?? await matchView(c, match), version: snap.version })
+  const snap = await buildSnapshot(db, eventId, { nowMs: Date.now() })
+  const view = match === null ? null : snap.matches.find(m => m.id === match.id) ?? await matchView(c, match)
+  return c.json({ match: view, version: snap.version })
 }
 
 // Choke point for the three mat-scoring writes (events, undo, end): expiry runs at
@@ -76,6 +83,26 @@ scoringRoutes.post('/events/:eventId/mats/:matId/bind', validate('json', z.objec
     mat: { id: mat.id, number: mat.number },
     event: { id: ev.id, name: ev.name },
   })
+})
+
+// The mats advance themselves when a match ends, but a mat that is idle when a match is
+// added or moved onto it has nothing to trigger on, and neither does a mat created after
+// Start. This is the Live panel's Call the next match.
+scoringRoutes.post('/mats/:matId/advance', requireAdmin, async c => {
+  const { db } = c.get('ctx')
+  const matId = Number(c.req.param('matId'))
+  const mat = await db.select().from(mats).where(eq(mats.id, matId)).get()
+  if (!mat) return errorJson(c, 404, 'not_found', 'mat not found')
+  const advanced = await db.transaction(async tx => {
+    if (mat.currentMatchId !== null) {
+      const current = await tx.select({ status: matches.status }).from(matches).where(eq(matches.id, mat.currentMatchId)).get()
+      if (current?.status === 'live') throw new MatchStateError('this mat is already showing a match')
+    }
+    const next = await advanceMat(tx, matId)
+    if (next) await bumpVersion(tx, mat.eventId)
+    return next
+  })
+  return respondOptional(c, mat.eventId, advanced)
 })
 
 scoringRoutes.post('/mats/:matId/heartbeat', requireMatOrAdmin(c => Number(c.req.param('matId'))), async c => {
