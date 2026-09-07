@@ -1,4 +1,4 @@
-import { and, asc, eq, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import type { DbLike } from '../db/client.js'
 import { events, rulesets, mats, matches, matchEvents, type MatchRow } from '../db/schema.js'
 import { loadMatch, recompute, MatchStateError } from './events.js'
@@ -65,6 +65,24 @@ export async function enterResult(db: DbLike, matchId: number, input: EntryInput
   })
 }
 
+// The desk types a result for a pair, not for a match id, so the pair has to resolve to
+// whatever match already holds it. A live one counts: in live mode the mats load the first
+// designed pair, and the desk is the fallback when a tablet fails. Preferring the match a
+// mat is currently showing means that entry ends the match on that mat rather than a
+// duplicate, and the mat then advances.
+async function findOpenMatch(db: DbLike, eventId: number, pair: { a: number; b: number }): Promise<MatchRow | undefined> {
+  const open = await db.select().from(matches)
+    .where(and(
+      eq(matches.eventId, eventId), inArray(matches.status, ['pending', 'live']),
+      eq(matches.athleteAId, pair.a), eq(matches.athleteBId, pair.b),
+    ))
+    .orderBy(asc(matches.orderIndex)).all()
+  if (open.length === 0) return undefined
+  const matRows = await db.select({ currentMatchId: mats.currentMatchId }).from(mats).where(eq(mats.eventId, eventId)).all()
+  const onMat = new Set(matRows.map(m => m.currentMatchId).filter((id): id is number => id !== null))
+  return open.find(m => onMat.has(m.id)) ?? open.find(m => m.status === 'live') ?? open[0]
+}
+
 export async function createEntry(db: DbLike, eventId: number, input: CreateEntryInput): Promise<EntryResult> {
   return db.transaction(async tx => {
     const replay = await replayed(tx, input.entryId)
@@ -72,9 +90,7 @@ export async function createEntry(db: DbLike, eventId: number, input: CreateEntr
     if (!await tx.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get()) throw new MatchStateError('event not found')
     const pair = await resolvePair(tx, eventId, input.athleteAId, input.athleteBId)
     if (typeof pair === 'string') throw new MatchStateError(pair)
-    const existing = await tx.select().from(matches)
-      .where(and(eq(matches.eventId, eventId), eq(matches.status, 'pending'), eq(matches.athleteAId, pair.a), eq(matches.athleteBId, pair.b)))
-      .orderBy(asc(matches.orderIndex)).get()
+    const existing = await findOpenMatch(tx, eventId, pair)
     let matchId: number
     if (existing) {
       matchId = existing.id

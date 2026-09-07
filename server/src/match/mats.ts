@@ -25,6 +25,10 @@ export async function startEvent(db: DbLike, eventId: number): Promise<void> {
     if (!ev) throw new MatchStateError('event not found')
     if (ev.status !== 'setup') throw new MatchStateError(`event is ${ev.status}`)
     await tx.update(events).set({ status: 'live' }).where(eq(events.id, eventId)).run()
+    // Organizers design matches in entry mode too, because the list is the running order.
+    // Nothing scores those mats, so loading one would leave a match live all afternoon and
+    // the desk's typed result would land on a second copy of the same pair.
+    if (ev.mode !== 'live') return
     for (const mat of await tx.select().from(mats).where(eq(mats.eventId, eventId)).all()) await advanceMat(tx, mat.id)
   })
 }

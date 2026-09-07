@@ -17,6 +17,19 @@ describe('startEvent', () => {
     expect((await loadMatch(db, s.matchIds[0])).status).toBe('live')
   })
 
+  it('leaves every mat idle in entry mode and still binds in live mode', async () => {
+    const db = await freshDb()
+    const s = await seedEvent(db, { matCount: 2, mode: 'entry' })
+    await startEvent(db, s.eventId)
+    expect((await db.select().from(events).where(eq(events.id, s.eventId)).get())?.status).toBe('live')
+    expect((await db.select().from(mats).where(eq(mats.eventId, s.eventId)).all()).map(m => m.currentMatchId)).toEqual([null, null])
+    expect((await loadMatch(db, s.matchIds[0])).status).toBe('pending')
+    const live = await freshDb()
+    const t = await seedEvent(live, { matCount: 2, mode: 'live' })
+    await startEvent(live, t.eventId)
+    expect((await loadMatch(live, t.matchIds[0])).status).toBe('live')
+  })
+
   it('refuses when the event is not in setup', async () => {
     const db = await freshDb()
     const s = await seedEvent(db, { live: true })

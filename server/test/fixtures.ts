@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { createDb, initDb, migrateDb, type Db } from '../src/db/client.js'
 import { events, teams, athletes, rulesets, mats, matches } from '../src/db/schema.js'
-import { DEFAULT_ACTIONS, DEFAULT_TERMINALS, DEFAULT_LENGTH_SEC } from '../src/shared/types.js'
+import { DEFAULT_ACTIONS, DEFAULT_TERMINALS, DEFAULT_LENGTH_SEC, type EventMode } from '../src/shared/types.js'
 
 export interface Seeded {
   eventId: number
@@ -40,11 +40,11 @@ export async function freshDb(): Promise<Db> {
 // Two teams, two kids each, one default ruleset, `matCount` mats, up to two matches
 // (a1 vs b1 on mat 1, a2 vs b2 on mat 2 or mat 1). `live` marks the event live and
 // loads the first match on each mat without going through match/mats.ts.
-export async function seedEvent(db: Db, opts: { matCount?: number; live?: boolean; matches?: number } = {}): Promise<Seeded> {
+export async function seedEvent(db: Db, opts: { matCount?: number; live?: boolean; matches?: number; mode?: EventMode } = {}): Promise<Seeded> {
   const matCount = opts.matCount ?? 2
   const ev = await db.insert(events).values({
     name: 'Fall Duels', date: '2026-10-03', matCount, matCode: '0420',
-    status: opts.live ? 'live' : 'setup', createdAt: '2026-08-27T00:00:00.000Z',
+    status: opts.live ? 'live' : 'setup', mode: opts.mode ?? 'live', createdAt: '2026-08-27T00:00:00.000Z',
   }).returning().get()
   const [ta, tb] = await db.insert(teams).values([
     { eventId: ev.id, name: 'Ridgeline', color: 'red', position: 0 },

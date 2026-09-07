@@ -5,6 +5,7 @@ import { createTestApp, call } from './helpers.js'
 import { enterResult, createEntry } from '../src/match/entry.js'
 import { loadMatch, loadEvents, appendMatchEvent } from '../src/match/events.js'
 import { mats, matches } from '../src/db/schema.js'
+import { buildSnapshot } from '../src/live/snapshot.js'
 
 describe('enterResult', () => {
   it('fills a pending match, marks it done, and advances the mat', async () => {
@@ -68,6 +69,31 @@ describe('createEntry', () => {
     expect(r.match.id).toBe(s.matchIds[0])
     expect(r.match.pointsA).toBe(3)
     expect(await db.select().from(matches).where(eq(matches.eventId, s.eventId)).all()).toHaveLength(2)
+  })
+
+  it('lands on the match a mat is showing, ends it, and advances that mat', async () => {
+    const db = await freshDb()
+    const s = await seedEvent(db, { matCount: 1, live: true })
+    const [first, second] = s.matchIds
+    const r = await createEntry(db, s.eventId, { entryId: 'entry-0001', athleteAId: s.b1, athleteBId: s.a1, pointsA: 5, pointsB: 1, winnerAthleteId: s.a1, winType: 'points' })
+    expect(r.match.id).toBe(first)
+    expect(r.match.status).toBe('done')
+    expect(await db.select().from(matches).where(eq(matches.eventId, s.eventId)).all()).toHaveLength(2)
+    expect((await db.select().from(mats).where(eq(mats.id, s.matIds[0])).get())?.currentMatchId).toBe(second)
+    const snap = await buildSnapshot(db, s.eventId, { nowMs: Date.now() })
+    expect(snap.teams.map(t => t.wins)).toEqual([1, 0])
+  })
+
+  it('prefers a live match over a later pending one for the same pair', async () => {
+    const db = await freshDb()
+    const s = await seedEvent(db, { matCount: 1, live: true, matches: 1 })
+    const extra = await db.insert(matches).values({
+      eventId: s.eventId, matId: null, orderIndex: 5, rulesetId: s.rulesetId,
+      lengthSec: 300, athleteAId: s.a1, athleteBId: s.b1,
+    }).returning().get()
+    const r = await createEntry(db, s.eventId, { entryId: 'entry-0002', athleteAId: s.a1, athleteBId: s.b1, pointsA: 2, pointsB: 0, winnerAthleteId: s.a1, winType: 'points' })
+    expect(r.match.id).toBe(s.matchIds[0])
+    expect((await loadMatch(db, extra.id)).status).toBe('pending')
   })
 
   it('creates an unassigned match at the end of the order otherwise', async () => {
