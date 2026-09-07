@@ -32,11 +32,21 @@ async function replayed(db: DbLike, entryId: string): Promise<EntryResult | null
   return row ? { duplicate: true, match: await loadMatch(db, row.matchId) } : null
 }
 
+// The board has already announced the final score, so a stray keystroke at the desk must
+// not move it. A replay of an entry taken before Finish still answers, because it changes
+// nothing. Setup and live both stay open: entries are how a rehearsal is filled in.
+async function assertEventOpen(db: DbLike, eventId: number): Promise<void> {
+  const ev = await db.select({ status: events.status }).from(events).where(eq(events.id, eventId)).get()
+  if (!ev) throw new MatchStateError('event not found')
+  if (ev.status === 'done') throw new MatchStateError('event is done')
+}
+
 export async function enterResult(db: DbLike, matchId: number, input: EntryInput): Promise<EntryResult> {
   return db.transaction(async tx => {
     const replay = await replayed(tx, input.entryId)
     if (replay) return replay
     const match = await loadMatch(tx, matchId)
+    await assertEventOpen(tx, match.eventId)
     if (input.winnerAthleteId !== match.athleteAId && input.winnerAthleteId !== match.athleteBId) throw new MatchStateError('athlete not in match')
     const at = input.at ?? new Date().toISOString()
     const wasDone = match.status === 'done'
@@ -87,7 +97,7 @@ export async function createEntry(db: DbLike, eventId: number, input: CreateEntr
   return db.transaction(async tx => {
     const replay = await replayed(tx, input.entryId)
     if (replay) return replay
-    if (!await tx.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get()) throw new MatchStateError('event not found')
+    await assertEventOpen(tx, eventId)
     const pair = await resolvePair(tx, eventId, input.athleteAId, input.athleteBId)
     if (typeof pair === 'string') throw new MatchStateError(pair)
     const existing = await findOpenMatch(tx, eventId, pair)

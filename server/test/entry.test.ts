@@ -132,6 +132,26 @@ describe('entry routes', () => {
     expect((await call(app, 'POST', `/api/matches/${r.body.match.id}/entry`, { entryId: 'short', pointsA: 0, pointsB: 0, winnerAthleteId: s.a1, winType: 'points' }, adminToken)).status).toBe(422)
   })
 
+  it('refuses a new entry and a correction once the event is done', async () => {
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db, { live: true })
+    const first = await call(app, 'POST', `/api/matches/${s.matchIds[0]}/entry`, { entryId: 'entry-0001', pointsA: 3, pointsB: 1, winnerAthleteId: s.a1, winType: 'points' }, adminToken)
+    expect(first.status).toBe(200)
+    expect((await call(app, 'PATCH', `/api/events/${s.eventId}`, { status: 'done' }, adminToken)).status).toBe(200)
+
+    const late = await call(app, 'POST', `/api/events/${s.eventId}/entries`, { entryId: 'entry-0002', athleteAId: s.a2, athleteBId: s.b2, pointsA: 2, pointsB: 0, winnerAthleteId: s.a2, winType: 'points' }, adminToken)
+    expect(late.status).toBe(409)
+    expect(late.body.error).toMatchObject({ code: 'match_state', message: 'event is done' })
+
+    const correction = await call(app, 'POST', `/api/matches/${s.matchIds[0]}/entry`, { entryId: 'entry-0003', pointsA: 0, pointsB: 5, winnerAthleteId: s.b1, winType: 'points' }, adminToken)
+    expect(correction.status).toBe(409)
+    expect(correction.body.error).toMatchObject({ code: 'match_state', message: 'event is done' })
+
+    const replay = await call(app, 'POST', `/api/matches/${s.matchIds[0]}/entry`, { entryId: 'entry-0001', pointsA: 3, pointsB: 1, winnerAthleteId: s.a1, winType: 'points' }, adminToken)
+    expect(replay.status).toBe(200)
+    expect(replay.body.match.lastSeq).toBe(first.body.match.lastSeq)
+  })
+
   it('replays a create entry as a 200 without a second match', async () => {
     const { app, db, adminToken } = await createTestApp()
     const s = await seedEvent(db, { matches: 0 })
