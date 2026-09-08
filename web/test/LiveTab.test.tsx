@@ -284,6 +284,49 @@ describe('LiveTab', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('this mat is already showing a match')
   })
 
+  /**
+   * G20. The primary used to end the match on whatever the dead tablet last sent, and the
+   * true score then needed "Edit the last result" afterwards with nothing on the screen
+   * saying so. The entry route on a live match pauses the clock and ends it with the typed
+   * score in one write, so the panel opens the result dialog and the two steps become one.
+   */
+  it('routes the primary through the result dialog when the scorer is gone', async () => {
+    const feed = snapshotFeed(oneMat({ bound: false }))
+    const f = mount(url => feed.handle(url) ?? connectOnly(url))
+    const one = await panel(1)
+    expect(within(one).queryByRole('button', { name: 'End match' })).not.toBeInTheDocument()
+
+    const user = userEvent.setup()
+    await user.click(within(one).getByRole('button', { name: 'Enter the result' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByRole('heading', { name: 'Edit result' })).toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: /Mateo Rivera wins/ }))
+    await user.click(within(dialog).getByRole('button', { name: 'Save result' }))
+    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/matches/10/entry' && c.init?.method === 'POST')).toBe(true))
+    const body = f.body(f.calls.findIndex(c => c.url === '/api/matches/10/entry'))
+    expect(body).toMatchObject({ pointsA: 6, pointsB: 2, winnerAthleteId: 100, winType: 'points' })
+  })
+
+  it('keeps End match as the primary while a scorer is bound', async () => {
+    const feed = snapshotFeed(oneMat({ bound: true }))
+    mount(url => feed.handle(url) ?? connectOnly(url))
+    const one = await panel(1)
+    expect(within(one).getByRole('button', { name: 'End match' })).toBeInTheDocument()
+    expect(within(one).queryByRole('button', { name: 'Enter the result' })).not.toBeInTheDocument()
+  })
+
+  // A settled result still sitting on an unbound mat is not the dead tablet case: it has
+  // its own door in the overflow, and offering to enter a result over it would invite a
+  // second write on a match that already has one.
+  it('leaves a settled match on an unbound mat to the overflow', async () => {
+    const done = scored({ status: 'done', endedAt: '2026-10-03T15:55:00.000Z', result: { winnerAthleteId: 100, winType: 'points' } })
+    const feed = snapshotFeed(oneMat({ current: done, bound: false }, [settled, done]))
+    mount(url => feed.handle(url) ?? connectOnly(url))
+    const one = await panel(1)
+    expect(within(one).queryByRole('button', { name: 'Enter the result' })).not.toBeInTheDocument()
+  })
+
   it('repaints the panel and its control when the clock runs out', async () => {
     const feed = snapshotFeed(oneMat({ current: scored({ clock: expiredClock }), bound: true }))
     mount(url => feed.handle(url) ?? connectOnly(url))

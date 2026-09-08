@@ -8,8 +8,16 @@ import { timeOfDay, winTypeLabel } from '@/lib/format'
 
 export type PanelTone = 'live' | 'attend' | 'neutral'
 
-/** What pressing the panel's one control does. */
-export type PanelAction = 'end' | 'advance'
+/**
+ * What pressing the panel's one control does.
+ *
+ * `result` is the dead tablet path (G20). Ending a match whose scorer is gone ends it on
+ * whatever the dead tablet last sent, and the true score then needed "Edit the last
+ * result" afterwards with nothing on the screen saying so. The entry route on a live
+ * match pauses the clock and ends it with the typed score in one write, so the panel
+ * opens the result dialog instead and the two steps become one named action.
+ */
+export type PanelAction = 'end' | 'advance' | 'result'
 
 export interface PanelControl {
   label: string
@@ -55,6 +63,9 @@ const inert = (label: string): PanelControl => ({ label, tone: 'secondary', disa
 export const NO_MATCH_NOTE = 'No match on this mat'
 export const NO_SCORER_NOTE = 'No scorer'
 export const NO_MATCH_WORD = 'No match'
+
+/** G20: one named action with the score in it, rather than End then Edit the last result. */
+export const ENTER_RESULT_LABEL = 'Enter the result'
 
 // A tie with no terminal on the board cannot be ended without a person naming the
 // winner (the server answers 422 decision_required), so the desk asks first.
@@ -115,9 +126,14 @@ export function matPanelModel(
         : !mat.bound ? NO_SCORER_NOTE
         : running ? 'Live'
         : current.clock.elapsedMs > 0 ? 'Paused' : 'Ready',
-      control: expired
-        ? { label: 'Time expired. Record result', tone: 'attend', disabled: false, action: 'end' }
-        : { label: 'End match', tone: 'secondary', disabled: false, action: 'end' },
+      // No scorer outranks the clock: with the tablet gone the last transmitted score is
+      // not the result, so the only honest primary is the one that asks for it. A settled
+      // match still sitting on the mat is not this case and keeps the overflow's own door.
+      control: !mat.bound && current.status !== 'done'
+        ? { label: ENTER_RESULT_LABEL, tone: 'attend', disabled: false, action: 'result' }
+        : expired
+          ? { label: 'Time expired. Record result', tone: 'attend', disabled: false, action: 'end' }
+          : { label: 'End match', tone: 'secondary', disabled: false, action: 'end' },
       nowNotes: [],
       nowHint: null,
       queueNote: mat.onDeck.length > 0 ? null : `Nothing else queued on mat ${mat.number}`,

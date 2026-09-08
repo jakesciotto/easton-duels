@@ -656,6 +656,10 @@ function MatPanel({ mat, view, mode, paused, lastSuccessAt, pollIntervalMs, busy
             className={cn('w-full', model.control.tone === 'attend' && 'bg-attend text-black shadow-primary hover:bg-attend active:bg-attend')}
             onClick={() => {
               if (model.control?.action === 'advance') onAdvance(mat.id)
+              // The dead tablet path: the desk types the score and the one write pauses
+              // the clock and ends the match, rather than ending on the last thing the
+              // tablet managed to send and correcting it afterwards.
+              else if (model.control?.action === 'result' && current) onEditResult(current)
               else if (model.control?.action === 'end' && current) onPrimary({ match: current, matNumber: mat.number })
             }}
           >
