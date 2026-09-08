@@ -13,7 +13,9 @@ import { entryRoutes } from './routes/entries.js'
 import { matchRoutes } from './routes/matches.js'
 import { rosterRoutes } from './routes/roster.js'
 
-export const VERSION = '0.1.0'
+// Kept beside the package version by health.test.ts, so a release that bumps one and
+// forgets the other fails a test instead of reporting the wrong build in production.
+export const VERSION = '0.6.1'
 
 export function createApp(ctx: AppContext) {
   const app = new Hono<Env>()

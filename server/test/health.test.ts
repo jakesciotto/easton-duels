@@ -1,3 +1,4 @@
+import pkg from '../package.json' with { type: 'json' }
 import { describe, it, expect } from 'vitest'
 import { createApp } from '../src/app.js'
 
@@ -6,6 +7,6 @@ describe('health', () => {
     const app = createApp({ port: 8422 } as never)
     const res = await app.request('/api/health')
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ ok: true, version: '0.1.0' })
+    expect(await res.json()).toEqual({ ok: true, version: pkg.version })
   })
 })
