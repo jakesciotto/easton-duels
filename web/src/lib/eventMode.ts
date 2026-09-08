@@ -89,3 +89,11 @@ export function deskSwitchRefusal(snapshot: Snapshot | null): string | null {
   const said = clauses.map(clause => `${clause[0].toUpperCase()}${clause.slice(1)}.`).join(' ')
   return `${said} The board drops the mat rack as soon as the desk takes over.`
 }
+
+/**
+ * The Entry tab exists in both modes and means opposite things in them. On a live event
+ * the tablets own every result and the desk is the fallback, so the tab says so where the
+ * results go in: a volunteer who does not know it types a result the mat has already
+ * recorded, and the team score counts it twice.
+ */
+export const MAT_NOTE = 'The mats own the results in this event. Type a result here only when a tablet has failed.'

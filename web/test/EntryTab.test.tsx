@@ -7,8 +7,10 @@ import { EntryTab } from '@/routes/event/EntryTab'
 import { saveDraft } from '@/routes/event/entry-state'
 import { setAdminToken } from '@/lib/auth'
 import { useEventDetail } from '@/lib/queries'
+import { SnapshotStreamContext, type StreamState } from '@/lib/useSnapshot'
+import type { Snapshot } from '@shared/types'
 import type { EventDetail, MatchRow } from '@/lib/types'
-import { fakeFetch } from './fakes'
+import { fakeFetch, sampleSnapshot } from './fakes'
 
 beforeEach(() => { localStorage.clear(); sessionStorage.clear(); setAdminToken('tok') })
 afterEach(() => vi.unstubAllGlobals())
@@ -31,9 +33,22 @@ const detail: EventDetail = {
   candidateCount: 0,
 }
 
-function mount(d: EventDetail = detail) {
+// The event body owns the one poll for the event and every tab under it reads that
+// stream, so the tab is always mounted under a provider and never starts a poll of its
+// own. A null snapshot is the state before the first tick, where the stored mode rules.
+const stream = (snapshot: Snapshot | null = null): StreamState => ({
+  snapshot, connected: true, lastSuccessAt: null, paused: false, waiting: 0, setPaused: () => {}, live: snapshot,
+})
+
+function mount(d: EventDetail = detail, view: Snapshot | null = null) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={qc}><EntryTab detail={d} /></QueryClientProvider>)
+  return render(
+    <QueryClientProvider client={qc}>
+      <SnapshotStreamContext value={{ eventId: d.event.id, state: stream(view) }}>
+        <EntryTab detail={d} />
+      </SnapshotStreamContext>
+    </QueryClientProvider>,
+  )
 }
 
 // The tab as the event body actually mounts it: the detail arrives through
@@ -46,7 +61,13 @@ function LiveEntry({ eventId }: { eventId: number }) {
 
 function mountLive() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={qc}><LiveEntry eventId={7} /></QueryClientProvider>)
+  return render(
+    <QueryClientProvider client={qc}>
+      <SnapshotStreamContext value={{ eventId: 7, state: stream() }}>
+        <LiveEntry eventId={7} />
+      </SnapshotStreamContext>
+    </QueryClientProvider>,
+  )
 }
 
 // The two competitor fields are the Select primitive, so a pick is a click on the
@@ -585,6 +606,33 @@ describe('EntryTab', () => {
     mount(reloaded)
     const results = screen.getByRole('region', { name: 'Results' })
     expect(within(results).getByText('2:07')).toBeInTheDocument()
+  })
+
+  // G10. The tab means opposite things in the two modes, and only said so in one. A desk
+  // volunteer typing a result a tablet has already recorded doubles the team score.
+  describe('the note about who owns the results', () => {
+    const snapshotIn = (mode: 'live' | 'entry'): Snapshot => {
+      const s = sampleSnapshot()
+      return { ...s, event: { ...s.event, id: 7, mode } }
+    }
+
+    // The stream outranks the stored row in both directions: another device can switch the
+    // mode from a phone and nothing invalidates this laptop's copy of the event.
+    it('warns that the mats own the results in a live event', () => {
+      mount({ ...detail, event: { ...detail.event, mode: 'entry' } }, snapshotIn('live'))
+      expect(screen.getByText(/^The mats own the results in this event\./)).toBeInTheDocument()
+    })
+
+    it('says nothing of the sort when the event runs from the desk', () => {
+      mount(detail, snapshotIn('entry'))
+      expect(screen.queryByText(/^The mats own the results/)).not.toBeInTheDocument()
+    })
+
+    // The stored mode is the fallback until the first snapshot lands.
+    it('falls back to the stored mode before the first snapshot', () => {
+      mount({ ...detail, event: { ...detail.event, mode: 'entry' } })
+      expect(screen.queryByText(/^The mats own the results/)).not.toBeInTheDocument()
+    })
   })
 
   // G15. Only the setup banner was conditional, so a finished event kept a live form and

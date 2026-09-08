@@ -4,6 +4,8 @@ import { teamCode, type WinType } from '@shared/types'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import { focusWithoutEngaging } from '@/lib/operatorEngaged'
 import { sortDoneMatches } from '@/lib/matchOrder'
+import { MAT_NOTE, modeOf } from '@/lib/eventMode'
+import { useSnapshot } from '@/lib/useSnapshot'
 import { newEventId } from '@/lib/ids'
 import type { AthleteRow, EventDetail, MatchRow, TeamRow } from '@/lib/types'
 import { athleteName, winTypeLabel } from '@/lib/format'
@@ -65,6 +67,10 @@ interface EntryResult { res: EntryResponse; duplicate: boolean }
 export function EntryTab({ detail }: { detail: EventDetail }) {
   const eventId = detail.event.id
   const [teamA, teamB] = detail.teams
+  // One fact, one source: the stream the event body already polls, with the stored value
+  // as the fallback until the first snapshot lands. The newest snapshot rather than a
+  // frozen one, because this is a statement about the room and not about a picture.
+  const mode = modeOf(useSnapshot(eventId).live, detail.event.mode)
   // One read of storage for the three things a restored draft decides: the form, the
   // banner over it, and the payload the id it carries is already bound to.
   const [restored] = useState(() => {
@@ -398,7 +404,10 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
               <h3 className="t4">{f.editingId !== null ? 'Correct a result' : 'New result'}</h3>
               {f.editingId !== null && <span className="t2 text-attend">Editing a saved result</span>}
             </div>
-            <p className="mb-4 t2 text-gray-10">Type each result as it comes off the mat. Pick both competitors, enter points, press Save.</p>
+            <div className="mb-4 grid gap-1">
+              <p className="t2 text-gray-10">Type each result as it comes off the mat. Pick both competitors, enter points, press Save.</p>
+              {mode === 'live' && <p className="t2 text-gray-11">{MAT_NOTE}</p>}
+            </div>
 
             {/*
               One flat grid, not two nested per-team grids: spec 9.2 fixes the tab
