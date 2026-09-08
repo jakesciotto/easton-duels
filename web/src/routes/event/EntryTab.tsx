@@ -101,8 +101,11 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   const a = f.aId ? byId.get(Number(f.aId)) : undefined
   const b = f.bId ? byId.get(Number(f.bId)) : undefined
 
-  const create = useAdminMutation(eventId, (body: NewEntryBody) => adminApi<EntryResponse>(`/api/events/${eventId}/entries`, { method: 'POST', body }))
-  const correct = useAdminMutation(eventId, (v: { id: number; body: CorrectionBody }) => adminApi<EntryResponse>(`/api/matches/${v.id}/entry`, { method: 'POST', body: v.body }))
+  // 7.12's deadline and 6.6's confirmation both belong to the POST. The refetch that
+  // repaints the ledger runs behind them, so a slow one can no longer spend the desk's
+  // eight seconds and report a saved result as a failure.
+  const create = useAdminMutation(eventId, (body: NewEntryBody) => adminApi<EntryResponse>(`/api/events/${eventId}/entries`, { method: 'POST', body }), { awaitRefetch: false })
+  const correct = useAdminMutation(eventId, (v: { id: number; body: CorrectionBody }) => adminApi<EntryResponse>(`/api/matches/${v.id}/entry`, { method: 'POST', body: v.body }), { awaitRefetch: false })
   const start = useAdminMutation<void>(eventId, () => adminApi(`/api/events/${eventId}`, { method: 'PATCH', body: { status: 'live' } }))
 
   // Every terminal outcome re-enables Save, the watchdog included, because a POST

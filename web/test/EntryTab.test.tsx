@@ -587,6 +587,57 @@ describe('EntryTab', () => {
     expect(within(results).getByText('2:07')).toBeInTheDocument()
   })
 
+  // G14. The eight second deadline is written for the POST. It used to cover the POST
+  // plus the refetch the mutation ran on success, so a save that landed in a second and
+  // a refetch that took nine reported a saved result as a network failure.
+  it('confirms a slow success from the post alone', async () => {
+    let matches = detail.matches
+    const wait = (ms: number) => new Promise(r => setTimeout(r, ms))
+    let gets = 0
+    const f = fakeFetch(async url => {
+      if (url === '/api/events/7') {
+        gets += 1
+        if (gets > 1) await wait(9_000)
+        return { json: { ...detail, matches } }
+      }
+      if (url === '/api/events/7/entries') {
+        await wait(1_000)
+        matches = [...matches, match(9, {
+          status: 'done', athleteAId: 101, athleteBId: 201, pointsA: 5, pointsB: 2,
+          winnerAthleteId: 101, winType: 'points', endedAt: new Date(2026, 9, 3, 14, 22).toISOString(),
+        })]
+        return { status: 201, json: { match: { id: 9 }, version: 2 } }
+      }
+      return { json: null }
+    })
+    mountLive()
+    const user = userEvent.setup()
+    await screen.findByRole('region', { name: 'Results' })
+    await pick(user, 'Ridgeline competitor', 'Ava Park')
+    await pick(user, 'Lakeside competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+    await user.type(screen.getByLabelText('Lakeside points'), '2')
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(saveButton())
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_000) })
+      expect(saveButton()).toHaveTextContent('Saved')
+
+      // Past the deadline, with the refetch still out.
+      await act(async () => { await vi.advanceTimersByTimeAsync(9_000) })
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      expect(f.calls.filter(c => c.url === '/api/events/7/entries')).toHaveLength(1)
+
+      // And the refetch still lands, behind the confirmation rather than inside it.
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_000) })
+      const results = screen.getByRole('region', { name: 'Results' })
+      expect(within(results).getByRole('button', { name: 'Edit Ava Park over Noah Tran' })).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   // G13. The ledger sorted by id, so a result typed against a match the designer had
   // already laid out landed mid list under a head that says newest first, and the
   // arrival highlight fired off screen.

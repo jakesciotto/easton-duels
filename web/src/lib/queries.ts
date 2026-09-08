@@ -43,16 +43,36 @@ export function useEventDetail(eventId: number): EventDetailQuery {
   return { data: useHeldWhileEngaged(q.data, eventId), error: q.error, isLoading: q.isLoading }
 }
 
+export interface AdminMutationOptions {
+  /**
+   * Whether the write is finished only once the event has been refetched. It is, for
+   * every screen that reports the write by showing the refreshed row, which is all of
+   * them but one.
+   *
+   * The Entry tab is the exception, and it has to be: it confirms in words from the
+   * POST's own response and it holds a timeout over the round trip, so counting the
+   * refetch as part of the write put a GET inside a deadline written for a POST and a
+   * slow success was reported to the desk as a network failure. Passing false hands the
+   * caller its result the moment the POST lands; the refetch still runs, just behind it.
+   */
+  awaitRefetch?: boolean
+}
+
 // One mutation helper for every admin write: runs the request, then refetches the event and the list.
-export function useAdminMutation<TVars, TResult = unknown>(eventId: number | null, run: (vars: TVars) => Promise<TResult>) {
+export function useAdminMutation<TVars, TResult = unknown>(
+  eventId: number | null,
+  run: (vars: TVars) => Promise<TResult>,
+  opts: AdminMutationOptions = {},
+) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: run,
-    onSuccess: async () => {
-      await Promise.all([
+    onSuccess: () => {
+      const refetched = Promise.all([
         qc.invalidateQueries({ queryKey: qk.events }),
         eventId !== null ? qc.invalidateQueries({ queryKey: qk.event(eventId) }) : Promise.resolve(),
       ])
+      return opts.awaitRefetch === false ? undefined : refetched
     },
   })
 }
