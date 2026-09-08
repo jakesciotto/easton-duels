@@ -184,6 +184,29 @@ describe('MatPickPage', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('too many attempts; wait a minute')
   })
 
+  /**
+   * G21 / 7.12: one banner, one fixed place, on every route. A tablet on this screen with
+   * no way to reach the server was told nothing at all, and the volunteer holding it had
+   * no way to tell a wrong mat code from a dead access point.
+   */
+  it('prints the connection banner when the read never reaches the server', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))
+    mount('/mat?event=1')
+    expect(await screen.findByText('Reconnecting to the server')).toBeInTheDocument()
+  })
+
+  // A refusal the server answered is not an outage. The Alert says what the server said
+  // and the banner stays down, or a mistyped event number reads as a dead network.
+  it('keeps the banner down when the server answers a refusal', async () => {
+    fakeFetch(url => {
+      if (url === '/api/events/1/snapshot') return { status: 404, json: { error: { code: 'not_found', message: 'no such event' } } }
+      return { json: {} }
+    })
+    mount('/mat?event=1')
+    expect(await screen.findByRole('alert')).toHaveTextContent('no such event')
+    expect(screen.queryByText('Reconnecting to the server')).not.toBeInTheDocument()
+  })
+
   it('holds mat 2 at the same grid position whether the event runs 2 mats or 4 (6.17b: fixed grid, unused slots empty)', async () => {
     fakeFetch(url => {
       if (url === '/api/events/1/snapshot') return { json: { version: 1, snapshot: sampleSnapshot({ mats: [{ id: 10, number: 2, current: null, onDeck: [], bound: false }, { id: 11, number: 4, current: null, onDeck: [], bound: false }] }) } }

@@ -5,6 +5,7 @@ import { adminApi } from '@/lib/queries'
 import { DESK_NOTE, DESK_NOTE_DETAIL, modeOf } from '@/lib/eventMode'
 import { contactLine } from '@/lib/format'
 import { useSnapshot } from '@/lib/useSnapshot'
+import { Connecting } from '@/components/Connecting'
 import { PinGate } from '@/components/PinGate'
 import { QrCode } from '@/components/QrCode'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -23,7 +24,9 @@ function Connect({ eventId }: { eventId: number }) {
   // event and the connect endpoint does not carry it. Without it this screen went on
   // handing a code and a QR to a volunteer who walked to a mat, typed the code, and only
   // there met a Bind button the app had already decided to refuse.
-  const { snapshot } = useSnapshot(eventId)
+  // 7.12: one banner, one fixed place, on every route. This page is the one a volunteer
+  // reads before they walk to a mat, so it has to say when the code on it is stale.
+  const { snapshot, connected } = useSnapshot(eventId)
   const entryMode = modeOf(snapshot, 'live') === 'entry'
 
   useEffect(() => {
@@ -50,6 +53,7 @@ function Connect({ eventId }: { eventId: number }) {
   if (entryMode) {
     return (
       <div className="grid max-w-sm justify-items-center gap-2 text-center">
+        <Connecting connected={connected} />
         <p className="t3 text-gray-11">{DESK_NOTE}</p>
         <p className="t2 text-gray-10">{DESK_NOTE_DETAIL}</p>
         {footer}
@@ -59,6 +63,7 @@ function Connect({ eventId }: { eventId: number }) {
 
   return (
     <div className="grid justify-items-center gap-6 text-center">
+      <Connecting connected={connected} />
       {info ? <QrCode text={target} size={200} /> : <Skeleton className="size-[200px] rounded-lg" />}
       {info ? (
         <span className="max-w-[90vw] truncate rounded-sm bg-black px-4 py-2 t7 font-mono text-white">{target}</span>

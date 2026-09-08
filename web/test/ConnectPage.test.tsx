@@ -25,6 +25,25 @@ describe('ConnectPage', () => {
     expect(await screen.findByRole('img', { name: 'QR code' })).toBeInTheDocument()
   })
 
+  /**
+   * G21 / 7.12: one banner, one fixed place, on every route. This is the screen a
+   * volunteer reads before they walk to a mat, so it has to say when the code on it is
+   * no longer coming from a server anybody can reach.
+   */
+  it('prints the connection banner until the stream lands', async () => {
+    let resolveSnapshot!: (r: { json: unknown }) => void
+    const pending = new Promise<{ json: unknown }>(resolve => { resolveSnapshot = resolve })
+    let snapshotCalls = 0
+    fakeFetch(url => {
+      if (url.includes('/snapshot')) return snapshotCalls++ === 0 ? pending : { json: { version: 1, now: sampleSnapshot().now } }
+      return { json: { url: 'http://192.168.1.20:8422', matCode: '0420' } }
+    })
+    mount('/connect?event=7')
+    expect(await screen.findByText('Reconnecting to the server')).toBeInTheDocument()
+    resolveSnapshot({ json: { version: 1, snapshot: sampleSnapshot() } })
+    await vi.waitFor(() => expect(screen.queryByText('Reconnecting to the server')).not.toBeInTheDocument())
+  })
+
   it('asks for an event number when the url has none', async () => {
     fakeFetch(() => ({ json: { url: 'http://192.168.1.20:8422', matCode: '0420' } }))
     mount('/connect')

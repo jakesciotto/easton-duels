@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import type { Snapshot } from '@shared/types'
 import { api, ApiError } from '@/lib/api'
@@ -10,6 +10,7 @@ import { useWakeLock } from '@/lib/useWakeLock'
 import { unlockAudio } from '@/lib/sounds'
 import { unbind } from '@/lib/scoring'
 import { CodeField } from '@/components/CodeField'
+import { Connecting } from '@/components/Connecting'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Toggle } from '@/components/ui/toggle'
 import { Input } from '@/components/ui/input'
@@ -93,6 +94,10 @@ export default function MatPickPage() {
   // that cleared `error` on its own schedule would wipe "wrong mat code" off the screen a
   // few seconds after the volunteer read it.
   const [readError, setReadError] = useState<string | null>(null)
+  // 7.12: one banner, one fixed place, on every route. A refusal the server answered is
+  // not an outage, so only a read that never reached it takes the banner down, and the
+  // Alert keeps saying what the server said.
+  const [reachable, setReachable] = useState(true)
   const [reads, setReads] = useState(0)
   const [busy, setBusy] = useState(false)
   // Which mat the server has already refused for this device, and so the only one the
@@ -156,8 +161,13 @@ export default function MatPickPage() {
         if (ignore) return
         setSnapshot(body.snapshot)
         setReadError(null)
+        setReachable(true)
       })
-      .catch(e => { if (!ignore) setReadError(e instanceof ApiError ? e.message : 'Could not reach the server') })
+      .catch(e => {
+        if (ignore) return
+        setReadError(e instanceof ApiError ? e.message : 'Could not reach the server')
+        setReachable(e instanceof ApiError)
+      })
     return () => { ignore = true }
   }, [eventId, reads])
 
@@ -188,10 +198,14 @@ export default function MatPickPage() {
     }
   }
 
-  if (!bindable) return <TooSmallToScore eventId={eventQueryId ?? snapshot?.event.id ?? null} />
+  // Every exit from this route carries the banner, and it is fixed to the viewport, so
+  // one wrapper covers the device guard, the bound state, the desk refusal and the picker.
+  const frame = (body: ReactNode) => <><Connecting connected={reachable} />{body}</>
+
+  if (!bindable) return frame(<TooSmallToScore eventId={eventQueryId ?? snapshot?.event.id ?? null} />)
 
   if (binding && boundToCurrentEvent) {
-    return (
+    return frame(
       <main className="grid min-h-dvh place-items-center p-6">
         <div className="grid w-full max-w-sm gap-4 rounded-lg border border-gray-7 bg-gray-2 p-4 text-center">
           <div className="grid gap-1">
@@ -216,12 +230,12 @@ export default function MatPickPage() {
     )
   }
 
-  if (snapshot && entryMode) return <DeskEvent eventId={snapshot.event.id} />
+  if (snapshot && entryMode) return frame(<DeskEvent eventId={snapshot.event.id} />)
 
   const matSlotCount = Math.max(MIN_MAT_SLOTS, snapshot?.event.matCount ?? MIN_MAT_SLOTS)
   const matSlots = Array.from({ length: matSlotCount }, (_, i) => snapshot?.mats.find(m => m.number === i + 1) ?? null)
 
-  return (
+  return frame(
     <main className="grid min-h-dvh place-items-center p-6">
       <div className="grid w-full max-w-md gap-4 rounded-lg border border-gray-7 bg-gray-2 p-4">
         <h1 className="t6 text-gray-12">Pick your mat</h1>

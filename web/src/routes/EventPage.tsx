@@ -195,7 +195,7 @@ function EventBody({ eventId }: { eventId: number }) {
   if (q.isLoading) return <RouteFallback rung="two-line" />
   if (q.error || !q.data) {
     return (
-      <AdminShell title="Event">
+      <AdminShell title="Event" connected={stream.connected}>
         <div className={PANEL}>
           <Alert>
             <AlertDescription>{q.error?.message ?? 'Not found'}</AlertDescription>
@@ -245,6 +245,7 @@ function EventBody({ eventId }: { eventId: number }) {
         paused: stream.paused,
         waiting: stream.waiting,
       }}
+      connected={stream.connected}
       meta={<EventMeta eventId={eventId} detail={detail} mode={mode} refusal={refusal} certified={certified} snapshot={stream.live} />}
       footer={contactFooter(detail)}
     >

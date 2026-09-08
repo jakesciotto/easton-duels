@@ -16,7 +16,6 @@ import type { EventDetail } from '@/lib/types'
 import { Clock } from '@/components/Clock'
 import { CodeField } from '@/components/CodeField'
 import { dialogBody, dialogFooter, dialogSurface } from '@/components/dialog-frame'
-import { Connecting } from '@/components/Connecting'
 import { OverflowMenu } from '@/components/OverflowMenu'
 import { QrCode } from '@/components/QrCode'
 import { TeamPlate } from '@/components/TeamPlate'
@@ -74,7 +73,9 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
   // 4.4 / WCAG 2.2.2: the operator can stop the picture. The pause lives on the shared
   // stream, not here, so the shell's freshness readout reports the frozen rack instead
   // of claiming live data over a screen the operator deliberately stopped.
-  const { snapshot: view, connected, lastSuccessAt, paused, waiting, setPaused, live } = useSnapshot(eventId)
+  // 7.12: the connection banner is the shell's, in one fixed place on every route, so
+  // this tab no longer mounts its own.
+  const { snapshot: view, lastSuccessAt, paused, waiting, setPaused, live } = useSnapshot(eventId)
   const [connect, setConnect] = useState<ConnectInfo | null>(null)
   const [editing, setEditing] = useState<MatchView | null>(null)
   const [ending, setEnding] = useState<EndTarget | null>(null)
@@ -227,8 +228,6 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
 
   return (
     <div className="grid gap-6">
-      <Connecting connected={connected} />
-
       <div className="flex flex-wrap items-center gap-3">
         <h3 className="t4">{done ? 'Final result' : 'Mats'}</h3>
         <div className="ml-auto flex items-center gap-3">

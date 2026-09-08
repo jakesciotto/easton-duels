@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { clearAdminToken } from '@/lib/auth'
+import { Connecting } from '@/components/Connecting'
 import { Wordmark } from '@/components/Wordmark'
 import { Button } from '@/components/ui/button'
 import { useNow } from '@/lib/useClock'
@@ -86,12 +87,17 @@ function useHeaderHeight() {
   return ref
 }
 
-export function AdminShell({ title, status, actions, meta, freshness, footer, children }: {
+export function AdminShell({ title, status, actions, meta, freshness, connected, footer, children }: {
   title: string
   status?: ReactNode
   actions?: ReactNode
   meta?: ReactNode
   freshness?: ShellFreshness
+  // 7.12: one connection banner, one fixed place, on every route. The shell is that
+  // place for every admin screen, so a tab no longer decides for itself whether the
+  // desk is told the server went away. Absent on a screen that polls nothing, because
+  // a shell with no stream has no connection to report and must not invent one.
+  connected?: boolean
   // 6.4: "one line: Questions at the desk: [organizer first name], [phone]." The event
   // shell passes it from the event's own contact columns and passes nothing when either
   // half is empty, so the band renders only where there is a real person to call and
@@ -102,6 +108,7 @@ export function AdminShell({ title, status, actions, meta, freshness, footer, ch
   const headerRef = useHeaderHeight()
   return (
     <div className="flex min-h-dvh flex-col">
+      {connected !== undefined && <Connecting connected={connected} />}
       {/* z-20 keeps the app header above every in-page sticky. A subhead that pins at
           the same level wins on document order and paints over the wordmark. */}
       <header ref={headerRef} className="sticky top-0 z-20 border-b border-gray-7 bg-background py-3">

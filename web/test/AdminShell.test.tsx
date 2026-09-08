@@ -53,6 +53,30 @@ describe('AdminShell freshness readout', () => {
   })
 })
 
+/**
+ * G21 / 7.12: one connection banner, one fixed place, on every route. The Live tab used to
+ * mount its own and every other admin screen had none, so the desk could sit on the Entry
+ * tab through an outage and be told nothing.
+ */
+describe('AdminShell connection banner', () => {
+  it('prints the banner while the stream is disconnected', () => {
+    mount(<AdminShell title="Event" connected={false}>content</AdminShell>)
+    expect(screen.getByRole('status')).toHaveTextContent('Reconnecting to the server')
+  })
+
+  it('prints nothing while the stream is connected', () => {
+    mount(<AdminShell title="Event" connected>content</AdminShell>)
+    expect(screen.queryByText('Reconnecting to the server')).not.toBeInTheDocument()
+  })
+
+  // A shell with no stream has no connection to report, and a banner it invented would be
+  // the fabricated status the freshness slot already refuses to print.
+  it('prints nothing at all on a screen that polls nothing', () => {
+    mount(<AdminShell title="Events">content</AdminShell>)
+    expect(screen.queryByText('Reconnecting to the server')).not.toBeInTheDocument()
+  })
+})
+
 // 4.4 / WCAG 2.2.2: the poll keeps running while the operator has stopped the picture, so
 // a header driven by lastSuccessAt alone would read "Live 1s" over a screen that has not
 // moved since they pressed the button. The two must not disagree.

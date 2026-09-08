@@ -155,6 +155,27 @@ describe('EventPage, 4.4: the event detail is held while the operator is engaged
   })
 })
 
+/**
+ * G21 / 7.12: one connection banner, one fixed place, on every route. Only the scorer and
+ * the Live tab mounted it, so the desk could sit on the Entry tab through an outage and be
+ * told nothing. The shell carries it now, which puts it on every tab of the event.
+ */
+describe('EventPage: the connection banner on the shell', () => {
+  it('prints the banner until the shared stream lands, on whichever tab is open', async () => {
+    let resolveSnapshot!: (r: Reply) => void
+    const pending = new Promise<Reply>(resolve => { resolveSnapshot = resolve })
+    let snapshotCalls = 0
+    mount(url => {
+      if (/\/snapshot(\?|$)/.test(url)) return (snapshotCalls++ === 0 ? pending : { json: { version: 1, now: SLOW_SNAPSHOT.now } }) as unknown as Reply
+      if (url === '/api/events/7') return { json: detailWith(IN_ORDER) }
+      return undefined
+    })
+    expect(await screen.findByText('Reconnecting to the server')).toBeInTheDocument()
+    resolveSnapshot({ json: { version: 1, snapshot: SLOW_SNAPSHOT } })
+    await vi.waitFor(() => expect(screen.queryByText('Reconnecting to the server')).not.toBeInTheDocument())
+  })
+})
+
 describe('EventPage, 6.4: one poll for the whole event', () => {
   it('serves every tab from the stream the event body owns rather than one loop per tab', async () => {
     const { f } = mount(url => snapshotReply(url) ?? (url === '/api/events/7' ? { json: detailWith(IN_ORDER) } : undefined))
