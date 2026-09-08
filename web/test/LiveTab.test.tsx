@@ -517,7 +517,23 @@ describe('LiveTab certification', () => {
     mount(url => feed.handle(url) ?? connectOnly(url), finishedDetail('done'))
     expect(await screen.findByRole('button', { name: 'Certify results' })).toBeInTheDocument()
     expect(screen.getByText(FINISHED_LINE)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Certified event actions' })).not.toBeInTheDocument()
+  })
+
+  /**
+   * The history is the record's own account of itself, so it is reachable in both
+   * finished states. Hanging the whole overflow off certified put it out of reach on a
+   * done event and took it away again on every unlock, which is exactly when somebody
+   * wants to read what happened.
+   */
+  it('reaches the event history on a finished event, with no unlock to offer yet', async () => {
+    const feed = record('done')
+    const f = mount(url => feed.handle(url) ?? (url.endsWith('/history') ? { json: [] } : connectOnly(url)), finishedDetail('done'))
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Event actions' }))
+    expect(screen.queryByRole('menuitem', { name: 'Unlock the results' })).not.toBeInTheDocument()
+    await user.click(await screen.findByRole('menuitem', { name: 'Event history' }))
+    expect(await screen.findByRole('dialog')).toHaveTextContent('Event history')
+    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/events/1/history')).toBe(true))
   })
 
   it('asks for the PIN again, and only enables the write at six digits', async () => {
@@ -577,11 +593,74 @@ describe('LiveTab certification', () => {
     const feed = record('certified', { certifiedAt })
     const f = mount(url => feed.handle(url) ?? (url.endsWith('/history') ? { json: [] } : connectOnly(url)), finishedDetail('certified', { certifiedAt }))
     const user = userEvent.setup()
-    await user.click(await screen.findByRole('button', { name: 'Certified event actions' }))
+    await user.click(await screen.findByRole('button', { name: 'Event actions' }))
     expect(await screen.findByRole('menuitem', { name: 'Unlock the results' })).toBeInTheDocument()
     await user.click(screen.getByRole('menuitem', { name: 'Event history' }))
     expect(await screen.findByRole('dialog')).toHaveTextContent('Event history')
     await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/events/1/history')).toBe(true))
+  })
+
+  /**
+   * The toolbar pins the write's own answer so it does not keep offering Certify results
+   * for the seconds before the next poll. The pin has to be released by the stream MOVING,
+   * not by it reporting the status this write produced: a second device that flips the
+   * event back inside the same poll means the stream never reports that status at all, and
+   * a pin waiting for it stands forever over a record that has changed underneath it.
+   */
+  it('lets go of a pinned signature when another device unlocks inside the same poll', async () => {
+    const feed = record('done')
+    mount(url => feed.handle(url) ?? (url.endsWith('/certify')
+      ? { json: { ...detail, event: { ...detail.event, status: 'certified', certifiedAt } } }
+      : connectOnly(url)), finishedDetail('done'))
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Certify results' }))
+    const dialog = await screen.findByRole('dialog')
+    await typeCode(user, dialog, '274193')
+    await user.click(within(dialog).getByRole('button', { name: 'Certify results' }))
+    expect(await screen.findByText(/^Certified/)).toBeInTheDocument()
+
+    // The other desk unlocked before this browser's next poll, so the event never reaches
+    // certified on the stream. It still moves, which is what releases the pin.
+    feed.push(sampleSnapshot({
+      now: SERVER_NOW,
+      event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'done', mode: 'live', matCount: 1, contact: null, certifiedAt: null },
+      teams: [
+        { id: 1, name: 'Ridgeline', color: 'red', position: 0, wins: 7, points: 42 },
+        { id: 2, name: 'Lakeside', color: 'blue', position: 1, wins: 5, points: 31 },
+      ],
+      mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: false }],
+      matches: [settled],
+    }))
+    expect(await screen.findByRole('button', { name: 'Certify results' }, { timeout: 4000 })).toBeInTheDocument()
+    expect(screen.queryByText(/^Certified/)).not.toBeInTheDocument()
+  })
+
+  it('lets go of a pinned unlock when another device certifies inside the same poll', async () => {
+    const feed = record('certified', { certifiedAt })
+    mount(url => feed.handle(url) ?? (url.endsWith('/uncertify')
+      ? { json: { ...detail, event: { ...detail.event, status: 'done', certifiedAt: null } } }
+      : connectOnly(url)), finishedDetail('certified', { certifiedAt }))
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Event actions' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Unlock the results' }))
+    const dialog = await screen.findByRole('dialog')
+    await typeCode(user, dialog, '274193')
+    await user.type(within(dialog).getByLabelText(/^Reason/), 'mat 2 typed the wrong winner')
+    await user.click(within(dialog).getByRole('button', { name: 'Unlock the results' }))
+    expect(await screen.findByRole('button', { name: 'Certify results' })).toBeInTheDocument()
+
+    feed.push(sampleSnapshot({
+      now: SERVER_NOW,
+      event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'certified', mode: 'live', matCount: 1, contact: null, certifiedAt },
+      teams: [
+        { id: 1, name: 'Ridgeline', color: 'red', position: 0, wins: 7, points: 42 },
+        { id: 2, name: 'Lakeside', color: 'blue', position: 1, wins: 5, points: 31 },
+      ],
+      mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: false }],
+      matches: [settled],
+    }))
+    expect(await screen.findByText(/^Certified/, undefined, { timeout: 4000 })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Certify results' })).not.toBeInTheDocument()
   })
 
   it('takes a PIN and a reason before it will unlock, and posts both', async () => {
@@ -590,7 +669,7 @@ describe('LiveTab certification', () => {
       ? { json: { ...detail, event: { ...detail.event, status: 'done', certifiedAt: null } } }
       : connectOnly(url)), finishedDetail('certified', { certifiedAt }))
     const user = userEvent.setup()
-    await user.click(await screen.findByRole('button', { name: 'Certified event actions' }))
+    await user.click(await screen.findByRole('button', { name: 'Event actions' }))
     await user.click(await screen.findByRole('menuitem', { name: 'Unlock the results' }))
     const dialog = await screen.findByRole('dialog')
     const confirm = within(dialog).getByRole('button', { name: 'Unlock the results' })

@@ -253,11 +253,14 @@ export function restoredBannerCopy(draft: EntryDraft, matches: MatchRow[], athle
   return { title: `This correction to ${label} never sent`, body: 'It was kept on this device. Check it, then press Save.' }
 }
 
-// 6.9's done voice, in one place. The tab that has stopped taking results and the banner
-// that reports the server refusing one have to say the same thing, or the desk reads the
-// refusal as something that could be retried.
-const DONE_BODY = 'No result can be entered now, and the results here are the record.'
-export const EVENT_DONE: SaveErrorCopy = { title: 'This event is finished', body: DONE_BODY }
+// 6.9's done voice for a refused NEW result. It deliberately reads differently from the
+// tab's own FINISHED_LINE: the tab is standing over an event that still takes corrections
+// until somebody certifies it, and this is the server refusing the one thing a finished
+// event does not take. Saying the tab's sentence here would tell the desk to retry.
+export const EVENT_DONE: SaveErrorCopy = {
+  title: 'This event is finished',
+  body: 'No result can be entered now, and the results here are the record.',
+}
 
 // Certification is the harder refusal: a finished event still takes a correction (the
 // server accepts one on a settled match), and a certified one takes nothing at all.

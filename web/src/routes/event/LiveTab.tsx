@@ -37,8 +37,17 @@ import { Toggle } from '@/components/ui/toggle'
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 interface ConnectInfo { url: string; matCode: string }
-/** The event status plus the moment it was signed off, from one source at a time. */
-interface SignOff { status: EventStatus; certifiedAt: string | null }
+/**
+ * The event status plus the moment it was signed off, from one source at a time.
+ *
+ * `version` is the stream's version at the moment of the write, and it is what releases
+ * the pin. Waiting for the stream to report the status this write produced pins forever
+ * whenever a second device flips the event back inside the same poll: a certify followed
+ * by a remote unlock leaves the stream on done, which the pinned certified never equals,
+ * and the toolbar keeps claiming a signature the record no longer carries.
+ */
+interface Signature { status: EventStatus; certifiedAt: string | null }
+interface SignOff extends Signature { version: number }
 
 export const CERTIFY_TITLE = 'Certify the results?'
 export const CERTIFY_NOTE = 'The results become the record. Every change on this event is refused, on every screen, until an admin unlocks it.'
@@ -90,15 +99,18 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
   // The status the same way: a Finish pressed on a second device, or a match a tablet just
   // ended, reaches this tab through the stream and never through the detail cache.
   const streamStatus = statusOf(live, detail.event.status)
-  const streamRecord: SignOff = {
+  const streamRecord: Signature = {
     status: streamStatus,
     certifiedAt: live?.event.certifiedAt ?? detail.event.certifiedAt ?? null,
   }
-  const record = signed ?? streamRecord
+  const record: Signature = signed ?? streamRecord
   const eventStatus = record.status
+  // Either signal means the stream has caught up: it reports what the write produced, or
+  // it has moved past the version the write was issued against, whatever it now says.
+  const liveVersion = live?.version ?? -1
   useEffect(() => {
-    setSigned(s => (s !== null && s.status === streamStatus ? null : s))
-  }, [streamStatus])
+    setSigned(s => (s !== null && (s.status === streamStatus || liveVersion > s.version) ? null : s))
+  }, [streamStatus, liveVersion])
 
   useEffect(() => {
     if (entryMode) return
@@ -125,7 +137,11 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
     adminApi<EventDetail>(`/api/events/${eventId}/certify`, { method: 'POST', body: { pin } }))
   const uncertify = useAdminMutation(eventId, (v: { pin: string; reason: string }) =>
     adminApi<EventDetail>(`/api/events/${eventId}/uncertify`, { method: 'POST', body: v }))
-  const signOff = (d: EventDetail) => setSigned({ status: d.event.status, certifiedAt: d.event.certifiedAt ?? null })
+  const signOff = (d: EventDetail) => setSigned({
+    status: d.event.status,
+    certifiedAt: d.event.certifiedAt ?? null,
+    version: liveVersion,
+  })
   const runCertify = (pin: string) => certify.mutate(pin, {
     onSuccess: d => { signOff(d); setCertifyOpen(false); certify.reset() },
   })
@@ -240,18 +256,25 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
             <Button size="lg" onClick={() => { certify.reset(); setCertifyOpen(true) }} disabled={certify.isPending}>Certify results</Button>
           )}
           {certified && (
-            <>
-              <span className="t2 text-gray-11">
-                Certified{certifiedAt === null ? '' : <> at <span className="fig">{certifiedAt}</span></>}
-              </span>
-              <OverflowMenu
-                label="Certified event actions"
-                items={[
-                  { key: 'history', label: 'Event history', disabled: false, onSelect: () => setHistory(eventHistorySource(detail)) },
-                  { key: 'unlock', label: 'Unlock the results', disabled: uncertify.isPending, tone: 'destructive', onSelect: () => { uncertify.reset(); setUnlockOpen(true) } },
-                ]}
-              />
-            </>
+            <span className="t2 text-gray-11">
+              Certified{certifiedAt === null ? '' : <> at <span className="fig">{certifiedAt}</span></>}
+            </span>
+          )}
+          {/* The history is the record's own account of itself, so it is reachable in both
+              finished states. Hanging it off the certified branch alone put it out of reach
+              on a done event and, worse, took it away again on every unlock. Unlock is the
+              item that belongs to certified, and it is destructive, so it is never a button
+              on the face. */}
+          {done && (
+            <OverflowMenu
+              label="Event actions"
+              items={[
+                { key: 'history', label: 'Event history', disabled: false, onSelect: () => setHistory(eventHistorySource(detail)) },
+                ...(certified
+                  ? [{ key: 'unlock', label: 'Unlock the results', disabled: uncertify.isPending, tone: 'destructive' as const, onSelect: () => { uncertify.reset(); setUnlockOpen(true) } }]
+                  : []),
+              ]}
+            />
           )}
         </div>
       </div>

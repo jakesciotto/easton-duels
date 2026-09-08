@@ -586,13 +586,25 @@ describe('EntryTab', () => {
     }
   })
 
-  // xs is a 28px control in a 44px hit area, which is 4px taller than the 40px
-  // ledger rung and would sit on top of the rows above and below.
-  it('keeps the ledger edit hit area inside its own row', () => {
+  /**
+   * xs is a 28px control in a 44px hit area. That is 4px taller than the 40px ledger rung,
+   * so it would sit on top of the rows above and below, and 8px wider on each side than
+   * the two adjacent 28px tracks can take: with a 12px gap between them the two hit areas
+   * overlapped by 4px, and a press in that band landed on whichever of History and Edit
+   * the DOM order gave it. Both reaches are clamped, so neither button reaches its
+   * neighbour and neither reaches the next row.
+   */
+  it('keeps each ledger hit area inside its own row and off its neighbour', () => {
     mount()
-    const edit = screen.getByRole('button', { name: 'Edit Mateo Rivera over Olivia Kim' })
-    expect(edit).toHaveClass('before:-top-1.5')
-    expect(edit).toHaveClass('before:-bottom-1.5')
+    for (const name of ['Edit Mateo Rivera over Olivia Kim', 'History of Mateo Rivera over Olivia Kim']) {
+      const button = screen.getByRole('button', { name })
+      expect(button, name).toHaveClass('before:-top-1.5')
+      expect(button, name).toHaveClass('before:-bottom-1.5')
+      // The clamps sit alongside the size variant's own before:-inset-2 rather than
+      // replacing it: inset-inline, top and bottom are all emitted after inset in the
+      // stylesheet, so at equal specificity each of them wins on its own axis.
+      expect(button, name).toHaveClass('before:-inset-x-1')
+    }
   })
 
   // The At column was fed only by this session's own saves, so a reload or a second

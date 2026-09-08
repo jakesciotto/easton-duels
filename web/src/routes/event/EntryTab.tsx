@@ -749,8 +749,12 @@ function LedgerRow({ match, nameA, nameB, at, cued, cueing, onEdit, onHistory }:
       {/*
         xs carries a 44px hit area as a 28px control plus an 8px pseudo-element
         inset, which is 4px taller than this 40px rung and would sit on top of the
-        rows above and below. The vertical reach is clamped to the row; the
-        horizontal reach keeps the full 44px.
+        rows above and below. It is also too wide for these two adjacent 28px tracks:
+        the gap between them is 12px, so an 8px reach from each side left the two hit
+        areas overlapping by 4px and a press in that band landed on whichever of
+        History and Edit the DOM order gave it. Both reaches are clamped: 6px above
+        and below fills the 40px rung, and 4px each side makes a 36px wide target with
+        4px still clear between them.
       */}
       <Button
         variant="ghost"
@@ -758,7 +762,7 @@ function LedgerRow({ match, nameA, nameB, at, cued, cueing, onEdit, onHistory }:
         title="Match history"
         aria-label={`History of ${winnerName} over ${loserName}`}
         onClick={onHistory}
-        className="before:-top-1.5 before:-bottom-1.5"
+        className="before:-inset-x-1 before:-top-1.5 before:-bottom-1.5"
       >
         <History />
       </Button>
@@ -769,7 +773,7 @@ function LedgerRow({ match, nameA, nameB, at, cued, cueing, onEdit, onHistory }:
           title="Edit result"
           aria-label={`Edit ${winnerName} over ${loserName}`}
           onClick={onEdit}
-          className="before:-top-1.5 before:-bottom-1.5"
+          className="before:-inset-x-1 before:-top-1.5 before:-bottom-1.5"
         >
           <PencilLine />
         </Button>

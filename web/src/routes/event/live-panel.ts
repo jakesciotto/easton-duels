@@ -13,8 +13,9 @@ export type PanelAction = 'end' | 'advance'
 
 export interface PanelControl {
   label: string
-  // 7.7: the panel's primary is `lg` (40px). `attend` repaints it; `secondary` is the
-  // neutral frequent action; an inert control still holds the slot and says why.
+  // 7.7: the panel's primary is `lg`, which is 44px since the console stepped up a size.
+  // `attend` repaints it; `secondary` is the neutral frequent action; an inert control
+  // still holds the slot and says why.
   tone: 'attend' | 'secondary'
   disabled: boolean
   /** Null on an inert control, which reports a state rather than offering a press. */
