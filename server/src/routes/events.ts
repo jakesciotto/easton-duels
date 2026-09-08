@@ -8,7 +8,7 @@ import { validate } from '../lib/validate.js'
 import { lanIp } from '../lib/lanIp.js'
 import { errorJson, requireAdmin } from '../auth/middleware.js'
 import { randomMatCode } from '../auth/pin.js'
-import { startEvent } from '../match/mats.js'
+import { advanceMat, startEvent } from '../match/mats.js'
 import { MatchStateError, bumpVersion, endedAtByMatch } from '../match/events.js'
 import { eventContact } from '../live/snapshot.js'
 import { DEFAULT_ACTIONS, DEFAULT_TERMINALS, DEFAULT_LENGTH_SEC, TEAM_COLOR_KEYS, type TeamColor } from '../shared/types.js'
@@ -131,6 +131,12 @@ eventRoutes.patch('/events/:eventId', requireAdmin, validate('json', patchEventS
   await db.transaction(async tx => {
     if (Object.keys(fields).length > 0) await tx.update(events).set(fields).where(eq(events.id, eventId)).run()
     if (matCount !== undefined && matCount !== ev.matCount) await setMatCount(tx, eventId, matCount)
+    // Start skips the mats in entry mode, so an event that switches to the mats halfway
+    // through the afternoon has to load them here. Nothing else would: the mats advance
+    // when a match ends, and none of them is holding one.
+    if (rest.mode === 'live' && ev.mode !== 'live' && ev.status === 'live') {
+      for (const mat of await tx.select({ id: mats.id }).from(mats).where(eq(mats.eventId, eventId)).all()) await advanceMat(tx, mat.id)
+    }
     if (status === 'live') await startEvent(tx, eventId)
     if (status === 'done') {
       if (ev.status !== 'live') throw new MatchStateError('only a live event can finish')

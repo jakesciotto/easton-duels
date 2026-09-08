@@ -79,6 +79,20 @@ describe('events', () => {
     expect((await call(app, 'POST', '/api/events', { ...body, contactPhone: '5'.repeat(31) }, adminToken)).status).toBe(422)
   })
 
+  it('loads every idle mat when a running desk event switches to the mats', async () => {
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db, { matCount: 2, mode: 'entry' })
+
+    expect((await call(app, 'PATCH', `/api/events/${s.eventId}`, { status: 'live' }, adminToken)).status).toBe(200)
+    expect((await db.select().from(mats).where(eq(mats.eventId, s.eventId)).all()).map(m => m.currentMatchId)).toEqual([null, null])
+
+    const switched = await call(app, 'PATCH', `/api/events/${s.eventId}`, { mode: 'live' }, adminToken)
+    expect(switched.status).toBe(200)
+    expect(switched.body.event.mode).toBe('live')
+    expect((await db.select().from(mats).where(eq(mats.eventId, s.eventId)).all()).map(m => m.currentMatchId)).toEqual(s.matchIds)
+    expect((await db.select().from(matches).where(eq(matches.eventId, s.eventId)).all()).map(m => m.status)).toEqual(['live', 'live'])
+  })
+
   it('counts the cached candidate pool on event detail', async () => {
     const { app, db, adminToken } = await createTestApp()
     const s = await seedEvent(db, { matches: 0 })
