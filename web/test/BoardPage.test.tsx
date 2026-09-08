@@ -32,7 +32,7 @@ function mat(id: number, over: Partial<MatView> = {}): MatView {
 }
 
 function event(status: EventStatus, mode: EventMode, matCount = 1): Snapshot['event'] {
-  return { id: 1, name: 'Fall Duels', date: '2026-10-03', status, mode, matCount, contact: null, certifiedAt: null }
+  return { id: 1, name: 'Fall Duels', date: '2026-10-03', status, mode, matCount, contact: null, certifiedAt: null, far: null }
 }
 
 // Which composition the board paints is the event's stored mode, so every board fixture

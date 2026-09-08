@@ -119,14 +119,8 @@ scoringRoutes.post('/mats/:matId/advance', requireAdmin, async c => {
       const current = await tx.select({ status: matches.status }).from(matches).where(eq(matches.id, mat.currentMatchId)).get()
       if (current?.status === 'live') throw new MatchStateError('This mat is already showing a match')
     }
-    const next = await advanceMat(tx, matId)
-    if (next) {
-      await recordAudit(tx, {
-        eventId: mat.eventId, matchId: next.id, actor: 'admin', action: 'advance',
-        detail: { matId, matNumber: mat.number },
-      })
-      await bumpVersion(tx, mat.eventId)
-    }
+    const next = await advanceMat(tx, matId, 'admin')
+    if (next) await bumpVersion(tx, mat.eventId)
     return next
   })
   return respondOptional(c, mat.eventId, advanced)
@@ -235,7 +229,7 @@ scoringRoutes.post('/matches/:matchId/end', requireMatOrAdmin(matIdFromMatch), v
           detail: { seq: ended.match.lastSeq, winnerAthleteId: ended.match.winnerAthleteId, winType: ended.match.winType },
         })
       }
-      if (ended.match.matId !== null) await advanceMat(tx, ended.match.matId)
+      if (ended.match.matId !== null) await advanceMat(tx, ended.match.matId, actor)
       await bumpVersion(tx, ended.match.eventId)
       return ended
     })

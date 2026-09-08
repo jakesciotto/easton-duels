@@ -95,7 +95,9 @@ export async function enterResult(db: DbLike, matchId: number, input: EntryInput
     const updated = await recompute(tx, matchId)
     if (updated.matId !== null) {
       const mat = await tx.select().from(mats).where(eq(mats.id, updated.matId)).get()
-      if (mat && mat.currentMatchId === matchId) await advanceMat(tx, mat.id)
+      // Both entry routes attribute their own writes to 'desk', so the mat this result frees
+      // up advances under the same actor.
+      if (mat && mat.currentMatchId === matchId) await advanceMat(tx, mat.id, 'desk')
     }
     return { duplicate: false, match: await loadMatch(tx, matchId), wasDone, before: match }
   })

@@ -39,7 +39,7 @@ export type AuditAction =
   | 'score' | 'terminal' | 'clock_start' | 'clock_pause' | 'clock_extend'
   | 'end' | 'undo' | 'skip' | 'reopen' | 'entry' | 'correction'
   | 'bind' | 'takeover' | 'unbind' | 'advance'
-  | 'create' | 'event_edit' | 'mode' | 'contact' | 'mat_count' | 'start' | 'finish' | 'delete'
+  | 'create' | 'event_edit' | 'mode' | 'contact' | 'mat_count' | 'far' | 'start' | 'finish' | 'delete'
   | 'certify' | 'uncertify'
   | 'team_edit'
   | 'roster_add' | 'roster_edit' | 'roster_assign' | 'roster_remove' | 'roster_sync'
@@ -100,7 +100,7 @@ export interface EventContact { name: string; phone: string }
 export interface Snapshot {
   version: number
   now: string
-  event: { id: number; name: string; date: string; status: EventStatus; mode: EventMode; matCount: number; contact: EventContact | null; certifiedAt: string | null }
+  event: { id: number; name: string; date: string; status: EventStatus; mode: EventMode; matCount: number; contact: EventContact | null; certifiedAt: string | null; far: number | null }
   teams: TeamView[]
   rulesets: RulesetView[]
   mats: MatView[]
@@ -182,3 +182,8 @@ export const DEFAULT_LENGTH_SEC = 300
 // control offers half a minute at the low end and five minutes at the high end.
 export const EXTEND_MIN_MS = 30_000
 export const EXTEND_MAX_MS = 300_000
+
+// The board's far correction on a win probability read, source 9.1. 1.0 is neutral; the
+// range is bounded so a mistyped value cannot invert or flatten the read.
+export const FAR_MIN = 0.85
+export const FAR_MAX = 1.2

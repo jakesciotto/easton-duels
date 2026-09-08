@@ -2,6 +2,8 @@ import { and, asc, eq, ne, sql } from 'drizzle-orm'
 import type { DbLike } from '../db/client.js'
 import { events, mats, matches, matchEvents, type MatchRow, type MatRow } from '../db/schema.js'
 import { loadMatch, recompute, MatchStateError } from './events.js'
+import { recordAudit } from '../audit/log.js'
+import type { AuditActor } from '../shared/types.js'
 
 async function loadMat(db: DbLike, matId: number): Promise<MatRow> {
   const row = await db.select().from(mats).where(eq(mats.id, matId)).get()
@@ -43,7 +45,7 @@ export async function startEvent(db: DbLike, eventId: number): Promise<void> {
     // Nothing scores those mats, so loading one would leave a match live all afternoon and
     // the desk's typed result would land on a second copy of the same pair.
     if (ev.mode !== 'live') return
-    for (const mat of await tx.select().from(mats).where(eq(mats.eventId, eventId)).all()) await advanceMat(tx, mat.id)
+    for (const mat of await tx.select().from(mats).where(eq(mats.eventId, eventId)).all()) await advanceMat(tx, mat.id, 'system')
   })
 }
 
@@ -58,8 +60,13 @@ export async function startEvent(db: DbLike, eventId: number): Promise<void> {
  * that is a switch to the desk taken mid-bout and the desk still has to type its result;
  * once that result settles, the next call releases the mat rather than naming a finished
  * pair for the rest of the afternoon.
+ *
+ * Every call that actually loads a match records its own `advance` row, so the actor is a
+ * required argument rather than something guessed here from context: only the caller knows
+ * whether Start, an admin, a desk entry, or the mat that just ended the previous bout is the
+ * one responsible for the mat moving on.
  */
-export async function advanceMat(db: DbLike, matId: number): Promise<MatchRow | null> {
+export async function advanceMat(db: DbLike, matId: number, actor: AuditActor): Promise<MatchRow | null> {
   return db.transaction(async tx => {
     const mat = await loadMat(tx, matId)
     const ev = await tx.select().from(events).where(eq(events.id, mat.eventId)).get()
@@ -83,6 +90,7 @@ export async function advanceMat(db: DbLike, matId: number): Promise<MatchRow | 
     }
     await tx.update(matches).set({ status: 'live' }).where(eq(matches.id, next.id)).run()
     await tx.update(mats).set({ currentMatchId: next.id }).where(eq(mats.id, matId)).run()
+    await recordAudit(tx, { eventId: mat.eventId, matchId: next.id, actor, action: 'advance', detail: { matId, matNumber: mat.number } })
     return loadMatch(tx, next.id)
   })
 }
@@ -124,7 +132,9 @@ export async function skipMatch(db: DbLike, matchId: number, id?: string): Promi
     await tx.update(matches).set({ status: 'pending', orderIndex: (max?.m ?? 0) + 1, lastSeq: seq }).where(eq(matches.id, match.id)).run()
     if (match.matId !== null) {
       const mat = await loadMat(tx, match.matId)
-      if (mat.currentMatchId === match.id) await advanceMat(tx, mat.id)
+      // Skip is admin-only (the only route that reaches it requires an admin token), so the
+      // mat it advances on the way out is attributed to the same actor as the skip itself.
+      if (mat.currentMatchId === match.id) await advanceMat(tx, mat.id, 'admin')
     }
     return { duplicate: false, match: await loadMatch(tx, match.id) }
   })

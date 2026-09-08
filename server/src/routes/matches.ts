@@ -76,7 +76,7 @@ matchRoutes.post('/events/:eventId/matches', requireAdmin, validate('json', crea
     // An idle mat has nothing to advance it, so on a live event scored on the mats the new
     // match starts there. advanceMat is a no-op in setup, in desk mode, and on a mat that
     // already has a live match.
-    if (matId !== null) await advanceMat(tx, matId)
+    if (matId !== null) await advanceMat(tx, matId, 'admin')
     await recordAudit(tx, {
       eventId, matchId: inserted.id, actor: 'admin', action: 'match_create',
       detail: { athleteAId: inserted.athleteAId, athleteBId: inserted.athleteBId, matId: inserted.matId, orderIndex: inserted.orderIndex },
@@ -114,7 +114,7 @@ matchRoutes.patch('/matches/:matchId', requireAdmin, validate('json', patchSchem
   }
   await db.transaction(async tx => {
     if (Object.keys(update).length > 0) await tx.update(matches).set(update).where(eq(matches.id, id)).run()
-    if (update.matId !== undefined && update.matId !== null) await advanceMat(tx, update.matId)
+    if (update.matId !== undefined && update.matId !== null) await advanceMat(tx, update.matId, 'admin')
     await recordAudit(tx, { eventId: existing.eventId, matchId: id, actor: 'admin', action: 'match_edit', detail: { fields: Object.keys(update), ...update } })
     await bumpVersion(tx, existing.eventId)
   })

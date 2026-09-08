@@ -2,6 +2,7 @@ import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import type { DbLike } from '../db/client.js'
 import { events, teams, athletes, rulesets, mats, matches, type AthleteRow } from '../db/schema.js'
 import { MatchStateError } from '../match/events.js'
+import { recordAudit } from '../audit/log.js'
 import { solveAssignment } from './hungarian.js'
 import { pairCost, EXCLUDED } from './cost.js'
 
@@ -40,10 +41,18 @@ export async function generateMatches(db: DbLike, eventId: number): Promise<Gene
     const max = await tx.select({ m: sql<number>`coalesce(max(${matches.orderIndex}), -1)` }).from(matches).where(eq(matches.eventId, eventId)).get()
     const start = (max?.m ?? -1) + 1
     for (const [i, p] of pairs.entries()) {
-      await tx.insert(matches).values({
-        eventId, matId: matRows.length ? matRows[i % matRows.length].id : null, orderIndex: start + i,
+      const matRow = matRows.length ? matRows[i % matRows.length] : undefined
+      const inserted = await tx.insert(matches).values({
+        eventId, matId: matRow?.id ?? null, orderIndex: start + i,
         rulesetId: ruleset.id, lengthSec: ruleset.defaultLengthSec, athleteAId: p.a.id, athleteBId: p.b.id, why: p.why,
-      }).run()
+      }).returning().get()
+      // One row per match beside the event level 'generate' row the route records, so a
+      // match's own history reads from the moment it existed rather than starting blank
+      // until its first score.
+      await recordAudit(tx, {
+        eventId, matchId: inserted.id, actor: 'admin', action: 'match_create',
+        detail: { athleteAId: inserted.athleteAId, athleteBId: inserted.athleteBId, matId: inserted.matId, matNumber: matRow?.number ?? null },
+      })
     }
     const pairedA = new Set(pairs.map(p => p.a.id))
     const pairedB = new Set(pairs.map(p => p.b.id))

@@ -4,7 +4,7 @@ import { solveAssignment } from '../src/matchmaker/hungarian.js'
 import { pairCost, beltDistance, EXCLUDED, type Matchable } from '../src/matchmaker/cost.js'
 import { generateMatches } from '../src/matchmaker/generate.js'
 import { freshDb, seedEvent } from './fixtures.js'
-import { events, matches, athletes } from '../src/db/schema.js'
+import { events, matches, athletes, auditLog } from '../src/db/schema.js'
 import { endMatch, loadMatch } from '../src/match/events.js'
 
 describe('solveAssignment', () => {
@@ -78,6 +78,18 @@ describe('generateMatches', () => {
     expect(r.created).toBe(1)
     expect(r.unpairedA).toEqual([s.a2])
     expect(r.unpairedB).toEqual([s.b2])
+  })
+
+  it('records one match_create row per match created, beside no event-level row of its own', async () => {
+    const db = await freshDb()
+    const s = await seedEvent(db, { matCount: 2, matches: 0 })
+    const r = await generateMatches(db, s.eventId)
+    const created = await db.select().from(matches).where(eq(matches.eventId, s.eventId)).orderBy(matches.orderIndex).all()
+    const audited = await db.select().from(auditLog).where(eq(auditLog.eventId, s.eventId)).orderBy(auditLog.id).all()
+    expect(audited).toHaveLength(r.created)
+    expect(audited.every(row => row.actor === 'admin' && row.action === 'match_create')).toBe(true)
+    expect(audited.map(row => row.matchId)).toEqual(created.map(m => m.id))
+    expect(audited[0].detail).toEqual({ athleteAId: created[0].athleteAId, athleteBId: created[0].athleteBId, matId: created[0].matId, matNumber: 1 })
   })
 
   it('replaces pending matches and keeps done ones', async () => {

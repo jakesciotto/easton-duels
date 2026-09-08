@@ -79,6 +79,28 @@ describe('events', () => {
     expect((await call(app, 'POST', '/api/events', { ...body, contactPhone: '5'.repeat(31) }, adminToken)).status).toBe(422)
   })
 
+  // G24: the far correction lives on the event so a second browser or a cleared cache
+  // reads the same number, rather than in a query string or localStorage.
+  it('carries the far correction on patch, detail, and the snapshot, and clears with null', async () => {
+    const { app, adminToken } = await createTestApp()
+
+    const created = await call(app, 'POST', '/api/events', body, adminToken)
+    expect(created.body.event.far).toBeNull()
+    const eventId = created.body.event.id
+
+    const set = await call(app, 'PATCH', `/api/events/${eventId}`, { far: 1.1 }, adminToken)
+    expect(set.status).toBe(200)
+    expect(set.body.event.far).toBe(1.1)
+    expect((await call(app, 'GET', `/api/events/${eventId}/snapshot`)).body.snapshot.event.far).toBe(1.1)
+    expect((await call(app, 'GET', `/api/events/${eventId}`, undefined, adminToken)).body.event.far).toBe(1.1)
+
+    const cleared = await call(app, 'PATCH', `/api/events/${eventId}`, { far: null }, adminToken)
+    expect(cleared.body.event.far).toBeNull()
+
+    expect((await call(app, 'PATCH', `/api/events/${eventId}`, { far: 0.84 }, adminToken)).status).toBe(422)
+    expect((await call(app, 'PATCH', `/api/events/${eventId}`, { far: 1.21 }, adminToken)).status).toBe(422)
+  })
+
   it('loads every idle mat when a running desk event switches to the mats', async () => {
     const { app, db, adminToken } = await createTestApp()
     const s = await seedEvent(db, { matCount: 2, mode: 'entry' })

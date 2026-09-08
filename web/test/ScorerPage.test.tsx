@@ -522,7 +522,7 @@ describe('ScorerPage', () => {
    */
   describe('after the desk finishes the event', () => {
     const finished = (over = {}) => sampleSnapshot({
-      event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'done', mode: 'live', matCount: 1, contact: null, certifiedAt: null, ...over },
+      event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'done', mode: 'live', matCount: 1, contact: null, certifiedAt: null, far: null, ...over },
     })
 
     it('states the fact, drops every scoring control, and offers the board and the desk', async () => {
@@ -597,7 +597,7 @@ describe('ScorerPage', () => {
       event: {
         id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'live', mode: 'live', matCount: 1,
         contact: { name: 'Dana Whitfield', phone: '555 0147' },
-        certifiedAt: null,
+        certifiedAt: null, far: null,
       },
     }))
     fakeFetch(url => feed.handle(url) ?? { json: {} })

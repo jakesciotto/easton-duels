@@ -15,7 +15,7 @@ import { MatchStateError, bumpVersion, endedAtByMatch } from '../match/events.js
 import { recordAudit, HISTORY_LIMIT } from '../audit/log.js'
 import { assertNotCertified } from '../audit/certify.js'
 import { eventContact } from '../live/snapshot.js'
-import { CORRECTION_REASON_MAX, DEFAULT_ACTIONS, DEFAULT_TERMINALS, DEFAULT_LENGTH_SEC, TEAM_COLOR_KEYS, type AuditAction, type AuditEntry, type TeamColor } from '../shared/types.js'
+import { CORRECTION_REASON_MAX, DEFAULT_ACTIONS, DEFAULT_TERMINALS, DEFAULT_LENGTH_SEC, FAR_MIN, FAR_MAX, TEAM_COLOR_KEYS, type AuditAction, type AuditEntry, type TeamColor } from '../shared/types.js'
 
 const colorSchema = z.enum(TEAM_COLOR_KEYS as [TeamColor, ...TeamColor[]])
 export const teamSchema = z.object({ name: z.string().trim().min(1).max(40), color: colorSchema })
@@ -45,6 +45,7 @@ const patchEventSchema = z.object({
   contactName: contactName.optional(),
   contactPhone: contactPhone.optional(),
   sameGender: sameGender.optional(),
+  far: z.number().min(FAR_MIN).max(FAR_MAX).nullable().optional(),
 })
 
 const blankToNull = (v: string | undefined) => v === undefined || v === '' ? null : v
@@ -127,7 +128,7 @@ eventRoutes.patch('/events/:eventId', requireAdmin, validate('json', patchEventS
   const ev = await db.select().from(events).where(eq(events.id, eventId)).get()
   if (!ev) return errorJson(c, 404, 'not_found', 'event not found')
   await assertNotCertified(db, eventId)
-  const { status, matCount, contactName: name, contactPhone: phone, mode, ...rest } = c.req.valid('json')
+  const { status, matCount, contactName: name, contactPhone: phone, mode, far, ...rest } = c.req.valid('json')
   // The console sends the whole form back, so most of `rest` usually repeats what is
   // already stored. Only the fields that differ belong in the history: a row saying an
   // event was edited when nothing about it moved is noise in the one place that has to be
@@ -139,6 +140,7 @@ eventRoutes.patch('/events/:eventId', requireAdmin, validate('json', patchEventS
   if (mode !== undefined) fields.mode = mode
   if (name !== undefined) fields.contactName = blankToNull(name)
   if (phone !== undefined) fields.contactPhone = blankToNull(phone)
+  if (far !== undefined) fields.far = far
   // One PATCH can carry several unrelated changes, and the history is read a line at a
   // time, so each concern the body actually changes gets its own row.
   await db.transaction(async tx => {
@@ -151,11 +153,12 @@ eventRoutes.patch('/events/:eventId', requireAdmin, validate('json', patchEventS
     if (Object.keys(changed).length > 0) await audit('event_edit', changed)
     if (mode !== undefined && mode !== ev.mode) await audit('mode', { from: ev.mode, to: mode })
     if (name !== undefined || phone !== undefined) await audit('contact', { name: fields.contactName ?? ev.contactName, phone: fields.contactPhone ?? ev.contactPhone })
+    if (far !== undefined && far !== ev.far) await audit('far', { far })
     // Start skips the mats in entry mode, so an event that switches to the mats halfway
     // through the afternoon has to load them here. Nothing else would: the mats advance
     // when a match ends, and none of them is holding one.
     if (mode === 'live' && ev.mode !== 'live' && ev.status === 'live') {
-      for (const mat of await tx.select({ id: mats.id }).from(mats).where(eq(mats.eventId, eventId)).all()) await advanceMat(tx, mat.id)
+      for (const mat of await tx.select({ id: mats.id }).from(mats).where(eq(mats.eventId, eventId)).all()) await advanceMat(tx, mat.id, 'admin')
     }
     if (status === 'live') {
       await startEvent(tx, eventId)

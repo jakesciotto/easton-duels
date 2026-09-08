@@ -25,6 +25,10 @@ export const events = sqliteTable('events', {
   // Set when an admin certifies the event and cleared when one unlocks it, so the board
   // and the console can print the time the record was signed off rather than only a status.
   certifiedAt: text('certified_at'),
+  // Referee bias correction, 0.85 to 1.2, applied to the board's win probability read.
+  // Null until an admin sets it, and the board falls back to 1.0. Written into the event
+  // so a second browser or a cleared cache sees the same number rather than reverting.
+  far: real('far'),
   createdAt: text('created_at').notNull(),
   version: integer('version').notNull().default(0),
 })

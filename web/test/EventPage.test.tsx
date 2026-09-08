@@ -57,7 +57,7 @@ function detailWith(matches: MatchRow[], athletes = ROSTER): EventDetail {
 const slowSnapshot = (over: Partial<Snapshot['event']> = {}) => sampleSnapshot({
   mats: [],
   matches: [],
-  event: { id: 7, name: 'Fall Duels', date: '2026-10-03', status: 'setup', mode: 'live', matCount: 1, contact: null, certifiedAt: null, ...over },
+  event: { id: 7, name: 'Fall Duels', date: '2026-10-03', status: 'setup', mode: 'live', matCount: 1, contact: null, certifiedAt: null, far: null, ...over },
 })
 const SLOW_SNAPSHOT = slowSnapshot()
 
@@ -264,7 +264,7 @@ describe('EventPage: how the event runs is one stored setting on the shell', () 
     let mode: EventMode = 'live'
     // One mat and no clock is the 3s rung, so the switch lands on the next tick.
     const idle = (m: EventMode) => sampleSnapshot({
-      event: { id: 7, name: 'Fall Duels', date: '2026-10-03', status: 'setup', mode: m, matCount: 1, contact: null, certifiedAt: null },
+      event: { id: 7, name: 'Fall Duels', date: '2026-10-03', status: 'setup', mode: m, matCount: 1, contact: null, certifiedAt: null, far: null },
       mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: false }],
       matches: [],
     })

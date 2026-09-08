@@ -4,7 +4,7 @@ import { freshDb, seedEvent } from './fixtures.js'
 import { startEvent, advanceMat, reopenMatch, skipMatch } from '../src/match/mats.js'
 import { appendMatchEvent, endMatch, loadMatch, loadEvents, MatchStateError } from '../src/match/events.js'
 import { enterResult } from '../src/match/entry.js'
-import { events, mats, matches } from '../src/db/schema.js'
+import { events, mats, matches, auditLog } from '../src/db/schema.js'
 
 describe('startEvent', () => {
   it('marks the event live and loads the first match on every mat', async () => {
@@ -15,6 +15,17 @@ describe('startEvent', () => {
     const rows = await db.select().from(mats).where(eq(mats.eventId, s.eventId)).all()
     expect(rows.map(m => m.currentMatchId)).toEqual([s.matchIds[0], s.matchIds[1]])
     expect((await loadMatch(db, s.matchIds[0])).status).toBe('live')
+  })
+
+  it('writes an advance row per mat it loads, attributed to system', async () => {
+    const db = await freshDb()
+    const s = await seedEvent(db, { matCount: 2 })
+    await startEvent(db, s.eventId)
+    const rows = await db.select().from(auditLog).where(eq(auditLog.eventId, s.eventId)).orderBy(auditLog.id).all()
+    expect(rows.map(r => [r.actor, r.action, r.matchId])).toEqual([
+      ['system', 'advance', s.matchIds[0]],
+      ['system', 'advance', s.matchIds[1]],
+    ])
   })
 
   it('leaves every mat idle in entry mode and still binds in live mode', async () => {
@@ -43,7 +54,7 @@ describe('advanceMat', () => {
     const s = await seedEvent(db, { matCount: 1, live: true })
     const [first, second] = s.matchIds
     await endMatch(db, { id: 'end1', matchId: first, lastSeq: 0, winnerAthleteId: s.a1 })
-    expect((await advanceMat(db, s.matIds[0]))?.id).toBe(second)
+    expect((await advanceMat(db, s.matIds[0], 'admin'))?.id).toBe(second)
     expect((await loadMatch(db, second)).status).toBe('live')
     expect((await db.select().from(mats).where(eq(mats.id, s.matIds[0])).get())?.currentMatchId).toBe(second)
   })
@@ -51,7 +62,7 @@ describe('advanceMat', () => {
   it('returns the current match while it is still live', async () => {
     const db = await freshDb()
     const s = await seedEvent(db, { matCount: 1, live: true })
-    expect((await advanceMat(db, s.matIds[0]))?.id).toBe(s.matchIds[0])
+    expect((await advanceMat(db, s.matIds[0], 'admin'))?.id).toBe(s.matchIds[0])
   })
 
   it('loads nothing in desk mode and releases the mat once the typed result settles', async () => {
@@ -59,7 +70,7 @@ describe('advanceMat', () => {
     const s = await seedEvent(db, { matCount: 1, live: true })
     await db.update(events).set({ mode: 'entry' }).where(eq(events.id, s.eventId)).run()
     const [first, second] = s.matchIds
-    expect(await advanceMat(db, s.matIds[0])).toBeNull()
+    expect(await advanceMat(db, s.matIds[0], 'admin')).toBeNull()
     expect((await db.select().from(mats).where(eq(mats.id, s.matIds[0])).get())?.currentMatchId).toBe(first)
 
     await enterResult(db, first, { entryId: 'entry-0002', pointsA: 4, pointsB: 2, winnerAthleteId: s.a1, winType: 'points' })
@@ -71,11 +82,11 @@ describe('advanceMat', () => {
     const db = await freshDb()
     const s = await seedEvent(db, { matCount: 1, live: true, matches: 1 })
     await endMatch(db, { id: 'end1', matchId: s.matchIds[0], lastSeq: 0, winnerAthleteId: s.a1 })
-    expect(await advanceMat(db, s.matIds[0])).toBeNull()
+    expect(await advanceMat(db, s.matIds[0], 'admin')).toBeNull()
     expect((await db.select().from(mats).where(eq(mats.id, s.matIds[0])).get())?.currentMatchId).toBeNull()
     const db2 = await freshDb()
     const s2 = await seedEvent(db2)
-    expect(await advanceMat(db2, s2.matIds[0])).toBeNull()
+    expect(await advanceMat(db2, s2.matIds[0], 'admin')).toBeNull()
     expect((await loadMatch(db2, s2.matchIds[0])).status).toBe('pending')
   })
 })
@@ -86,7 +97,7 @@ describe('reopenMatch', () => {
     const s = await seedEvent(db, { matCount: 1, live: true })
     const [first, second] = s.matchIds
     await endMatch(db, { id: 'end1', matchId: first, lastSeq: 0, winnerAthleteId: s.a1 })
-    await advanceMat(db, s.matIds[0])
+    await advanceMat(db, s.matIds[0], 'admin')
     const m = await reopenMatch(db, first)
     expect(m.status).toBe('live')
     expect(m.winnerAthleteId).toBeNull()
@@ -99,7 +110,7 @@ describe('reopenMatch', () => {
     const s = await seedEvent(db, { matCount: 1, live: true })
     const [first, second] = s.matchIds
     await endMatch(db, { id: 'end1', matchId: first, lastSeq: 0, winnerAthleteId: s.a1 })
-    await advanceMat(db, s.matIds[0])
+    await advanceMat(db, s.matIds[0], 'admin')
     await appendMatchEvent(db, { id: 'e1', matchId: second, type: 'score', athleteId: s.a2, actionKey: 'takedown', lastSeq: 0 })
     await expect(reopenMatch(db, first)).rejects.toThrow(/already started/)
   })

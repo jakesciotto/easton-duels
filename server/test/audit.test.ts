@@ -91,10 +91,14 @@ describe('audit log, scoring', () => {
     await call(app, 'POST', `/api/matches/${first}/clock/extend`, { id: 'add-0001', lastSeq: 0, addMs: 60_000 }, token)
     expect((await last(db, s.eventId)).detail).toEqual({ seq: 1, addMs: 60_000 })
     await call(app, 'POST', `/api/matches/${first}/end`, { id: 'end-0001', lastSeq: 1, winnerAthleteId: s.a1 }, token)
-    const ended = await last(db, s.eventId)
+    // Ending the match on mat 1 frees it, and the mat loads the next pending match in the
+    // same write, which is why the advance row that follows also carries mat 1's actor.
+    const all = await rows(db, s.eventId)
+    const [ended, advanced] = all.slice(-2)
     expect(ended.actor).toBe('mat:1')
     expect(ended.action).toBe('end')
     expect(ended.detail).toEqual({ seq: 2, winnerAthleteId: s.a1, winType: 'decision' })
+    expect(advanced).toMatchObject({ actor: 'mat:1', action: 'advance', matchId: second })
     await call(app, 'POST', `/api/matches/${first}/reopen`, undefined, adminToken)
     expect(await last(db, s.eventId)).toMatchObject({ actor: 'admin', action: 'reopen', matchId: first })
     await call(app, 'POST', `/api/matches/${second}/skip`, { id: 'skip-0001' }, adminToken)
@@ -203,6 +207,23 @@ describe('audit log, the event', () => {
 
     await call(app, 'PATCH', url, { name: 'Fall Duels 2026', date: '2026-10-03', sameGender: false }, adminToken)
     expect((await rows(db, s.eventId)).filter(r => r.action === 'event_edit')).toHaveLength(1)
+  })
+
+  it('records the far correction as its own row, not as event_edit, and only when it moves', async () => {
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db)
+    const url = `/api/events/${s.eventId}`
+
+    await call(app, 'PATCH', url, { far: 1.1 }, adminToken)
+    expect(await actions(db, s.eventId)).toEqual(['admin far'])
+    expect((await last(db, s.eventId)).detail).toEqual({ far: 1.1 })
+
+    // Repeating the same value is not a move, so a form posted back unchanged writes nothing.
+    await call(app, 'PATCH', url, { far: 1.1 }, adminToken)
+    expect((await rows(db, s.eventId)).filter(r => r.action === 'far')).toHaveLength(1)
+
+    await call(app, 'PATCH', url, { far: null }, adminToken)
+    expect(await last(db, s.eventId)).toMatchObject({ action: 'far', detail: { far: null } })
   })
 
   it('records start, finish, a team edit, and a delete that outlives its event', async () => {
@@ -333,7 +354,10 @@ describe('GET /api/matches/:matchId/history', () => {
     expect(r.body.map((row: { actor: string; action: string }) => `${row.actor} ${row.action}`)).toEqual(['mat:1 score', 'mat:1 undo', 'mat:1 end'])
     expect(Object.keys(r.body[0])).toEqual(['id', 'at', 'actor', 'action', 'detail'])
     expect(r.body[1].detail).toMatchObject({ seq: 1, type: 'score' })
-    expect((await call(app, 'GET', `/api/matches/${s.matchIds[1]}/history`, undefined, adminToken)).body).toEqual([])
+    // Ending the match on mat 1 also loads the second match onto it, so that match's own
+    // history carries the advance that put it there, and nothing else.
+    const second = await call(app, 'GET', `/api/matches/${s.matchIds[1]}/history`, undefined, adminToken)
+    expect(second.body).toMatchObject([{ actor: 'mat:1', action: 'advance' }])
   })
 
   it('serves the event-level rows a match history cannot, in reading order', async () => {
@@ -381,7 +405,7 @@ describe('GET /api/matches/:matchId/history', () => {
     expect((await call(app, 'POST', `/api/events/${eventId}/certify`, { pin: TEST_PIN }, adminToken)).status).toBe(200)
 
     const stored = await rows(db, eventId)
-    expect(stored.filter(r => r.matchId !== null).map(r => r.action)).toEqual(['match_create', 'score', 'undo', 'end'])
+    expect(stored.filter(r => r.matchId !== null).map(r => r.action)).toEqual(['match_create', 'advance', 'score', 'undo', 'end'])
 
     const r = await call(app, 'GET', `/api/events/${eventId}/history`, undefined, adminToken)
     expect(r.status).toBe(200)
