@@ -565,6 +565,18 @@ describe('EventPage: the three step setup', () => {
     expect(tab(/Matches/)).toHaveAttribute('aria-selected', 'true')
   })
 
+
+  // Escape and the header's X are the same close path the footer takes, so neither leaves a
+  // param behind that would reopen the step on the next reload.
+  it('clears the param when the step is dismissed with Escape', async () => {
+    const { router } = mount(route(), '/events/7?setup=matches')
+    const user = userEvent.setup()
+    await screen.findByText('Assign the matches')
+    await user.keyboard('{Escape}')
+    await vi.waitFor(() => expect(router.state.location.search).toBe(''))
+    expect(screen.queryByText('Assign the matches')).not.toBeInTheDocument()
+  })
+
   // Nothing about the step takes the tab rail away: a click still moves the panel.
   it('leaves a tab click working once no step is open', async () => {
     mount(route())
