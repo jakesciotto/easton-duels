@@ -315,6 +315,70 @@ describe('Board compositions', () => {
     expect(container.querySelectorAll('.b-next-line')).toHaveLength(0)
   })
 
+  /**
+   * G27. Both modes open on the setup composition, and in entry mode no mat runs anything,
+   * so "Mat 2 first up" heads an arrangement the room never sees. The head becomes one
+   * line over the whole band and the columns carry the event's own running order.
+   */
+  it('heads the desk event with the running order and no mat labels', () => {
+    const order = [1, 2, 3, 4, 5].map(i =>
+      pair(i, `Kai${i} Nakamura`, `Rosa${i} Oliveira`, { status: 'pending', orderIndex: 5 - i }))
+    const snapshot = sampleSnapshot({
+      event: event('setup', 'entry', 2),
+      mats: [mat(1), mat(2)],
+      matches: order,
+    })
+    const { container } = render(<Board snapshot={snapshot} connected />)
+
+    expect(safe(container)).toHaveAttribute('data-comp', 'setup')
+    expect(screen.getByText('Up next')).toBeInTheDocument()
+    expect(screen.queryByText('Mat 1 first up')).not.toBeInTheDocument()
+    expect(screen.queryByText('Mat 2 first up')).not.toBeInTheDocument()
+
+    // Two columns of three, filled down before across, and the order is the event's own
+    // rather than each mat's: orderIndex 0 leads column one and column two carries the
+    // tail, so reading the board down and then across is reading the running order.
+    const lines = Array.from(container.querySelectorAll('.b-next-line'))
+    expect(lines).toHaveLength(5)
+    expect(lines[0]).toHaveTextContent('Kai5')
+    expect(lines[2]).toHaveTextContent('Kai3')
+    expect(lines[3]).toHaveTextContent('Kai2')
+  })
+
+  it('never opens a column it has nothing to put in', () => {
+    const order = [pair(1, 'Kai1 Nakamura', 'Rosa1 Oliveira', { status: 'pending', orderIndex: 0 })]
+    const snapshot = sampleSnapshot({
+      event: event('setup', 'entry', 4),
+      mats: [mat(1), mat(2), mat(3), mat(4)],
+      matches: order,
+    })
+    const { container } = render(<Board snapshot={snapshot} connected />)
+    expect(container.querySelectorAll('.b-order > .b-panel')).toHaveLength(1)
+  })
+
+  it('says the desk event is not drawn yet rather than heading an empty band', () => {
+    const snapshot = sampleSnapshot({
+      event: event('setup', 'entry', 2),
+      mats: [mat(1), mat(2)],
+      matches: [],
+    })
+    render(<Board snapshot={snapshot} connected />)
+    expect(screen.getByText('Up next')).toBeInTheDocument()
+    expect(screen.getByText('Not drawn yet')).toBeInTheDocument()
+  })
+
+  it('keeps the mat heads on an event the mats score', () => {
+    const queue = [1, 2].map(i => pair(i, `Kai${i} Nakamura`, `Rosa${i} Oliveira`, { status: 'pending' }))
+    const snapshot = sampleSnapshot({
+      event: event('setup', 'live', 1),
+      mats: [mat(1, { onDeck: queue, bound: true })],
+      matches: queue,
+    })
+    render(<Board snapshot={snapshot} connected />)
+    expect(screen.getByText('Mat 1 first up')).toBeInTheDocument()
+    expect(screen.queryByText('Up next')).not.toBeInTheDocument()
+  })
+
   it('names are first name plus last initial at every mat count', () => {
     for (const count of [1, 2, 3, 4]) {
       const { unmount } = render(<Board snapshot={liveBoard(count)} connected />)

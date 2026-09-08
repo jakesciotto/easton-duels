@@ -626,6 +626,21 @@
   min-width: 0;
   height: 100%;
 }
+/* G27's desk composition. One head over the whole band rather than one per mat, and the
+   columns under it, so the head plus its gap costs the band the same b3 line the per mat
+   head used to and no budget arithmetic moves. */
+[data-comp='setup'] .b-band-order {
+  flex-direction: column;
+}
+.b-order {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: row;
+  gap: 2cqw;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .b-setup-head {
   flex: none;
   height: var(--b3);

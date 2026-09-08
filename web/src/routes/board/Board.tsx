@@ -7,7 +7,7 @@ import { useNow } from '@/lib/useClock'
 import { Hero, HeroSkeleton } from './Hero'
 import { MatBand } from './MatBand'
 import { ResultsBand } from './ResultsBand'
-import { SetupBand } from './SetupBand'
+import { OrderBand, SetupBand } from './SetupBand'
 import { DoneBand, winningTeam } from './DoneBand'
 import { boardPlan } from './plan'
 import { sortDoneMatches } from '@/lib/matchOrder'
@@ -134,7 +134,11 @@ export function Board({ snapshot, connected, lastSuccessAt = null, screenMaySlee
             ? <HeroSkeleton />
             : <Hero teams={snapshot.teams} winnerId={plan.comp === 'done' ? winner?.id ?? null : null} />}
 
-          {snapshot !== null && plan.comp === 'setup' && <SetupBand mats={snapshot.mats} firstUp={budget.queue} />}
+          {/* G27: on a desk event no mat runs anything, so the head names the running
+              order the room will actually see rather than an arrangement of mats. */}
+          {snapshot !== null && plan.comp === 'setup' && (snapshot.event.mode === 'entry'
+            ? <OrderBand mats={snapshot.mats} matches={snapshot.matches} firstUp={budget.queue} />
+            : <SetupBand mats={snapshot.mats} firstUp={budget.queue} />)}
           {snapshot !== null && plan.comp === 'mats' && (
             <MatBand
               mats={snapshot.mats.slice(0, budget.matsShown)}
