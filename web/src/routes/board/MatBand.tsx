@@ -34,6 +34,13 @@ function MatPanel({ mat, held, settled, serverNow, nextCount, withClock, lastSuc
         live={live}
         settled={finished && settled}
         upcoming={showing === null && upcoming !== null}
+        // 6.15 keeps the result on the board, so a finished row reads its tones off the
+        // recorded winner. By score a submission at 0 to 0 gave both sides the lead tone
+        // and the row showed no winner at all.
+        winnerAthleteId={finished ? showing.result?.winnerAthleteId ?? null : null}
+        // 7.10 / 7.3: nothing on the mat and nothing left to call is a sentence, not a
+        // blank. After a reload every finished mat was an empty row for the afternoon.
+        note={subject === null ? `Mat ${mat.number} complete` : null}
         withClock={withClock}
         clock={withClock && current !== null && !finished ? current.clock : null}
         serverNow={serverNow}

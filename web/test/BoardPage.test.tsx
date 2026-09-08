@@ -6,6 +6,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router'
 import type { EventMode, EventStatus, MatView, MatchView, Snapshot } from '@shared/types'
 import { routes } from '@/router'
 import { Board, FIRST_CONTACT_MS, NOTE_NO_CONTACT } from '@/routes/board/Board'
+import { RESULTS_EMPTY } from '@/routes/board/ResultsBand'
 import { POLL_CLOCK_RUNNING_MS, POLL_DEADLINE_MIN_MS } from '@/lib/pollInterval'
 import { FLOOR_NOTE_MATS, boardBudget } from '@/routes/board/budget'
 import { fakeFetch, snapshotFeed, sampleMatch, sampleSnapshot } from './fakes'
@@ -215,8 +216,36 @@ describe('Board compositions', () => {
       const { container, unmount } = render(<Board snapshot={snapshot} connected />)
       expect(safe(container), String(bound)).toHaveAttribute('data-comp', 'mats')
       expect(screen.getAllByRole('region', { name: /^Mat / })).toHaveLength(4)
+      // G05: and every one of those four rows says something. A mat with nothing on it
+      // and nothing left to call used to render the gutter and the numeral alone, so a
+      // reload left the room reading four blank rows for the rest of the afternoon.
+      for (const n of [1, 2, 3, 4]) {
+        expect(row(`Mat ${n}`), String(bound)).toHaveTextContent(`Mat ${n} complete`)
+      }
       unmount()
     }
+  })
+
+  /**
+   * G05. The note is the row's own, so a mat still holding a pair does not get it, and a
+   * mat with a queue behind it shows the pair rather than a completion it has not reached.
+   */
+  it('says complete only on the mat that has nothing left', () => {
+    const live = pair(10, 'Mateo Rivera', 'Lucas Ferreira', { clock: RUNNING })
+    const next = pair(11, 'Kai Nakamura', 'Rosa Oliveira', { status: 'pending' })
+    const snapshot = atMode(sampleSnapshot({
+      mats: [
+        mat(1, { current: live, bound: true }),
+        mat(2, { onDeck: [next] }),
+        mat(3, {}),
+      ],
+      matches: [live, next],
+    }), 'live')
+    render(<Board snapshot={snapshot} connected />)
+    expect(row('Mat 1')).not.toHaveTextContent('complete')
+    expect(row('Mat 2')).not.toHaveTextContent('complete')
+    expect(row('Mat 2')).toHaveTextContent('Kai')
+    expect(row('Mat 3')).toHaveTextContent('Mat 3 complete')
   })
 
   it('composes one snapshot two ways, because the mode belongs to the event', () => {
@@ -530,6 +559,129 @@ describe('Board first contact', () => {
     render(<Board snapshot={liveBoard(1)} connected />)
     act(() => { vi.advanceTimersByTime(FIRST_CONTACT_MS * 4) })
     expect(screen.queryByText(NOTE_NO_CONTACT)).not.toBeInTheDocument()
+  })
+})
+
+/**
+ * G16. A finished row read its tones off the scores, so `mine >= theirs` gave both sides
+ * the lead tone at equal scores and a submission at 0 to 0 showed no winner at all, which
+ * is the one thing a result row exists to say. It reads the recorded winner instead.
+ */
+describe('Board result tones', () => {
+  afterEach(() => vi.useRealTimers())
+
+  // Level at 0 to 0, which is exactly the case the score based tones could not read.
+  // Mateo is side a (athlete 100) and Lucas is side b (athlete 200).
+  const level = pair(10, 'Mateo Rivera', 'Lucas Ferreira', { clock: RUNNING })
+  const ended = (winnerAthleteId: number): MatchView => ({
+    ...level,
+    status: 'done',
+    clock: PAUSED,
+    endedAt: '2026-10-03T16:01:00.000Z',
+    result: { winnerAthleteId, winType: 'submission' },
+  })
+  const nameEl = (container: HTMLElement, first: string) =>
+    within(container).getByText(first).closest('.b-name') as HTMLElement
+  const scoreEl = (container: HTMLElement, cls: string) =>
+    container.querySelector(`.${cls}`) as HTMLElement
+
+  /**
+   * The settle timer treats every id already on the first snapshot as settled, so a
+   * reload does not flash old results. The bout therefore has to actually finish across
+   * two renders for the ten second hold to be the state under test.
+   */
+  const holding = (winnerAthleteId: number) => {
+    const finished = ended(winnerAthleteId)
+    const before = atMode(sampleSnapshot({ mats: [mat(1, { current: level, bound: true })], matches: [level] }), 'live')
+    const after = atMode(sampleSnapshot({ mats: [mat(1, { current: finished, bound: true })], matches: [finished] }), 'live')
+    const view = render(<Board snapshot={before} connected />)
+    view.rerender(<Board snapshot={after} connected />)
+    return { ...view, after }
+  }
+
+  it('names the winner at 0 to 0 before the row settles', () => {
+    vi.useFakeTimers()
+    holding(100)
+    const r = row('Mat 1')
+    expect(r).not.toHaveClass('b-row-settled')
+    expect(nameEl(r, 'Mateo')).toHaveClass('b-lead')
+    expect(nameEl(r, 'Lucas')).toHaveClass('b-trail')
+    expect(scoreEl(r, 'b-score-a')).toHaveClass('b-lead')
+    expect(scoreEl(r, 'b-score-b')).toHaveClass('b-trail')
+  })
+
+  it('follows the winner to the other side of the row', () => {
+    vi.useFakeTimers()
+    holding(200)
+    const r = row('Mat 1')
+    expect(nameEl(r, 'Mateo')).toHaveClass('b-trail')
+    expect(scoreEl(r, 'b-score-a')).toHaveClass('b-trail')
+    expect(nameEl(r, 'Lucas')).toHaveClass('b-lead')
+    expect(scoreEl(r, 'b-score-b')).toHaveClass('b-lead')
+  })
+
+  // 6.15 keeps the result on the board and 3.4 forbids anything below --gray-10, so the
+  // settled row stays quiet and still says who won: the loser takes one step down.
+  it('keeps the winner readable after the ten second settle, one step apart', () => {
+    vi.useFakeTimers()
+    const { rerender, after } = holding(100)
+    vi.advanceTimersByTime(11_000)
+    rerender(<Board snapshot={after} connected />)
+
+    const r = row('Mat 1')
+    expect(r).toHaveClass('b-row-settled')
+    // The winner carries no tone class and takes the settled row's own --gray-11.
+    expect(nameEl(r, 'Mateo').className).not.toMatch(/b-fade|b-lead|b-trail/)
+    expect(scoreEl(r, 'b-score-a').className).not.toMatch(/b-fade|b-lead|b-trail/)
+    expect(nameEl(r, 'Lucas')).toHaveClass('b-fade')
+    expect(scoreEl(r, 'b-score-b')).toHaveClass('b-fade')
+  })
+
+  it('reads a live row by score, not by a winner it does not have yet', () => {
+    const live = pair(10, 'Mateo Rivera', 'Lucas Ferreira', { clock: RUNNING })
+    const scored = { ...live, a: { ...live.a, score: 2 }, b: { ...live.b, score: 6 } }
+    render(<Board snapshot={atMode(sampleSnapshot({
+      mats: [mat(1, { current: scored, bound: true })],
+      matches: [scored],
+    }), 'live')} connected />)
+    const r = row('Mat 1')
+    expect(scoreEl(r, 'b-score-a')).toHaveClass('b-trail')
+    expect(scoreEl(r, 'b-score-b')).toHaveClass('b-lead')
+  })
+
+  // The desk board is the composition the pilot runs, and a reloaded one is settled from
+  // its first paint, so the loser stepping down is the only thing naming the winner there.
+  it('paints the same winner on the desk composition', () => {
+    render(<Board snapshot={atMode(sampleSnapshot({
+      mats: [mat(1)],
+      matches: [ended(200)],
+    }), 'entry')} connected />)
+    const r = screen.getByRole('region', { name: 'Result 1' }).querySelector('.b-row') as HTMLElement
+    expect(r).toHaveClass('b-row-settled')
+    expect(nameEl(r, 'Mateo')).toHaveClass('b-fade')
+    expect(nameEl(r, 'Lucas').className).not.toMatch(/b-fade/)
+  })
+})
+
+/**
+ * G26. Between Start and the first result the desk band held nothing at all, so a 55 inch
+ * screen in front of a full gym carried a hero, a zero, and an empty half.
+ */
+describe('Board data entry empty band', () => {
+  it('says what the room is waiting for until the first result lands', () => {
+    const { container } = render(<Board snapshot={atMode(sampleSnapshot({ mats: [mat(1)], matches: [] }), 'entry')} connected />)
+    expect(safe(container)).toHaveAttribute('data-comp', 'entry')
+    expect(screen.getByText(RESULTS_EMPTY)).toBeInTheDocument()
+    expect(screen.getByText(/Results entered:/)).toHaveTextContent('Results entered: 0')
+  })
+
+  it('drops the line the moment a result is on the board', () => {
+    const done = pair(1, 'Ava Park', 'Sofia Diaz', {
+      status: 'done', endedAt: '2026-10-03T16:01:00.000Z', result: { winnerAthleteId: 100, winType: 'submission' },
+    })
+    render(<Board snapshot={atMode(sampleSnapshot({ mats: [mat(1)], matches: [done] }), 'entry')} connected />)
+    expect(screen.queryByText(RESULTS_EMPTY)).not.toBeInTheDocument()
+    expect(screen.getAllByRole('region', { name: /^Result/ })).toHaveLength(1)
   })
 })
 

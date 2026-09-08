@@ -304,6 +304,61 @@ describe('the note', () => {
   })
 })
 
+/**
+ * G05 / G26 / 7.10. Two rows that used to be information-free blanks now carry a
+ * sentence, and both of them are read at 30 feet like everything else on the board.
+ */
+describe('the two lines that replace a blank', () => {
+  for (const selector of ['.b-row-note', '.b-row-empty']) {
+    it(`states ${selector} at the floor step, at the read floor colour`, () => {
+      const body = rule(selector)
+      expect(declIn(body, 'font-size')).toBe(selector === '.b-row-note' ? 'var(--b-name-step)' : 'var(--b3)')
+      expect(declIn(body, 'color')).toBe('var(--gray-10)')
+      expect(declIn(body, 'line-height')).toBe('1')
+    })
+  }
+
+  // The mat note lives inside the row it belongs to, so it costs the composition nothing
+  // and the mat numeral beside it keeps its own track.
+  it('lays the mat note across the name and score tracks and truncates', () => {
+    const body = rule('.b-row-note')
+    expect(declIn(body, 'grid-column')).toBe('3 / -1')
+    expect(declIn(body, 'text-overflow')).toBe('ellipsis')
+    expect(body).not.toMatch(/(?:^|[;{\n])\s*height\s*:/)
+  })
+
+  // The empty band line is one b3 row inside a band already sized for four result rows.
+  it('spends one b3 line on the empty data entry band', () => {
+    expect(px(decl('.b-row-empty', 'height'), boardVars(1))).toBeCloseTo(B3 * CQH, 6)
+    expect(decl('.b-row-empty', 'flex')).toBe('none')
+  })
+})
+
+/**
+ * G16. The settled row stays quiet and still says who won: the winner keeps the row's
+ * own --gray-11 and the loser drops exactly one step, to the --gray-10 floor.
+ */
+describe('the settled row still names a winner', () => {
+  it('steps the loser down one, and no further than the floor', () => {
+    expect(decl('.b-row-settled .b-fade', 'color')).toBe('var(--gray-10)')
+    expect(decl('.b-row-settled .b-name', 'color')).toBe('var(--gray-11)')
+    expect(decl('.b-row-settled .b-score', 'color')).toBe('var(--gray-11)')
+    // Source order settles the tie: both selectors weigh the same, so the fade has to
+    // come after the monotone rule or the loser would read as the winner.
+    expect(css.indexOf('.b-row-settled .b-fade')).toBeGreaterThan(css.indexOf('.b-row-settled .b-name'))
+  })
+
+  // A name carries its score's tone, so a finished pair reads off either half. The two
+  // rules that must still beat it are the settled row's and the upcoming row's.
+  it('lets a name take a figure tone, and keeps the row rules above it', () => {
+    expect(decl('.b-name.b-lead', 'color')).toBe('var(--fig-lead)')
+    expect(decl('.b-name.b-trail', 'color')).toBe('var(--fig-trail)')
+    expect(css.indexOf('.b-name.b-lead')).toBeGreaterThan(css.indexOf('.b-name {'))
+    expect(css.indexOf('.b-row-settled .b-name')).toBeGreaterThan(css.indexOf('.b-name.b-lead'))
+    expect(css.indexOf('.b-row-upcoming .b-name')).toBeGreaterThan(css.indexOf('.b-name.b-lead'))
+  })
+})
+
 describe('the change cue', () => {
   it('is a transition and not a keyframe animation', () => {
     // 4.3 collapses every animation to a single frame under Reduce Motion and keeps

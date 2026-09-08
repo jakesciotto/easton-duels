@@ -398,6 +398,27 @@
 .b-name-a {
   justify-content: flex-end;
 }
+/* A name carries the same tone as the score beside it, so who is ahead reads off either
+   half of the pair. Declared after .b-name so the tone wins, and before the settled and
+   upcoming rules so those still win over it. */
+.b-name.b-lead { color: var(--fig-lead); }
+.b-name.b-trail { color: var(--fig-trail); }
+
+/* 7.10: a mat with nothing on it and nothing left to call says so, in the name track, at
+   the floor step. Spanning to the end of the row rather than sitting in name A's own
+   track, because name A is right aligned and a sentence pushed against the centre of an
+   otherwise empty row reads as a fragment of a pair that is not there. */
+.b-row-note {
+  grid-column: 3 / -1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--b-name-step);
+  line-height: 1;
+  font-weight: 500;
+  color: var(--gray-10);
+}
 
 .b-score {
   font-size: var(--b-score-step);
@@ -441,6 +462,13 @@
 .b-row-settled .b-mat {
   color: var(--gray-11);
 }
+/* One step below the rest of the settled row, and no further: 3.4 puts the floor at
+   --gray-10 and 6.15 keeps the result on the board. The winner holds --gray-11, the
+   loser takes this, and a parent who walks in late can still read the result off a row
+   that is otherwise as quiet as a settled row is meant to be. */
+.b-row-settled .b-fade {
+  color: var(--gray-10);
+}
 .b-row-upcoming .b-name {
   color: var(--gray-10);
 }
@@ -467,6 +495,20 @@
   align-items: center;
   height: var(--b3);
   margin-top: 1cqh;
+  padding-left: var(--b-indent);
+  font-size: var(--b3);
+  line-height: 1;
+  color: var(--gray-10);
+}
+
+/* One b3 line inside a band that has nothing in it yet. It sits in the band's own space
+   rather than taking a track of its own, so the budget is unchanged: the band is already
+   sized for four result rows and this is one line inside that height. */
+.b-row-empty {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: var(--b3);
   padding-left: var(--b-indent);
   font-size: var(--b3);
   line-height: 1;
