@@ -71,7 +71,7 @@ export function Board({ snapshot, connected, lastSuccessAt = null, screenMaySlee
   lastSuccessAt?: number | null
   screenMaySleep?: boolean
 }) {
-  const far = useFar()
+  const far = useFar(snapshot)
   const held = useHeldResults(snapshot)
   const plan = boardPlan(snapshot)
   const pollIntervalMs = pollIntervalForSnapshot(snapshot)

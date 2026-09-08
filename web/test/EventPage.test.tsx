@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import type { EventMode, Snapshot } from '@shared/types'
-import EventPage from '@/routes/EventPage'
+import EventPage, { FAR_GROUP_LABEL } from '@/routes/EventPage'
 import { qk } from '@/lib/queries'
 import { ENGAGEMENT_RECHECK_MS } from '@/lib/operatorEngaged'
 import { CERTIFIED_REFUSAL, DESK_NOTE, MODE_GROUP_LABEL, MODE_LABEL, MODE_ORDER } from '@/lib/eventMode'
@@ -493,6 +493,51 @@ describe('EventPage: how the event runs is one stored setting on the shell', () 
  * one. The pair is settable from the event itself, because the New event dialog asks on
  * the morning nobody has decided who is running the desk yet.
  */
+/**
+ * G24. The far setting lived in one browser, so a second television, a cleared cache or a
+ * laptop somebody swapped in reverted to 1.00 in front of the room, and the only way to
+ * set it was a query string typed at the panel. It is a control on the event now.
+ */
+describe('EventPage: the board far setting on the shell', () => {
+  const withFar = (far: number | null) => {
+    const d = detailWith(IN_ORDER)
+    return { ...d, event: { ...d.event, ...(far === null ? {} : { far }) } }
+  }
+  const route = (far: number | null) => (url: string) =>
+    snapshotReply(url) ?? (url === '/api/events/7' ? { json: withFar(far) } : undefined)
+
+  it('writes the picked setting onto the event', async () => {
+    const { f } = mount(route(null))
+    const user = userEvent.setup()
+    const group = await screen.findByRole('radiogroup', { name: FAR_GROUP_LABEL })
+    // An event that carries none reads as no cell chosen, because that is the truth:
+    // every board is then following whatever its own browser has.
+    expect(within(group).getAllByRole('radio').map(r => r.getAttribute('aria-checked'))).toEqual(['false', 'false', 'false'])
+
+    await user.click(within(group).getByRole('radio', { name: '1.2' }))
+    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/events/7' && c.init?.method === 'PATCH')).toBe(true))
+    const patch = f.calls.find(c => c.url === '/api/events/7' && c.init?.method === 'PATCH')
+    expect(JSON.parse(String(patch?.init?.body))).toEqual({ far: 1.2 })
+  })
+
+  it('shows the setting the event already carries', async () => {
+    mount(route(0.85))
+    const group = await screen.findByRole('radiogroup', { name: FAR_GROUP_LABEL })
+    expect(within(group).getByRole('radio', { name: '0.85' })).toHaveAttribute('aria-checked', 'true')
+  })
+
+  // 6.8: certification refuses every write on the event, so the control is dead before
+  // it is pressed rather than accepted and answered with the server's bare refusal.
+  it('is dead once the results are certified', async () => {
+    const { f } = mount(url =>
+      snapshotReply(url, slowSnapshot({ status: 'certified' }))
+        ?? (url === '/api/events/7' ? { json: { ...withFar(1), event: { ...withFar(1).event, status: 'certified' } } } : undefined))
+    const group = await screen.findByRole('radiogroup', { name: FAR_GROUP_LABEL })
+    await userEvent.setup().click(within(group).getByRole('radio', { name: '1.2' }))
+    expect(f.calls.some(c => c.url === '/api/events/7' && c.init?.method === 'PATCH')).toBe(false)
+  })
+})
+
 describe('EventPage: the desk contact', () => {
   const withContact = (over: Partial<EventDetail['event']>) => {
     const d = detailWith(IN_ORDER)

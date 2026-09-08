@@ -13,6 +13,7 @@ import {
   MODE_GROUP_LABEL, MODE_LABEL, MODE_OPTIONS, deskSwitchConsequence, deskSwitchMidMatch,
   deskSwitchRefusal, modeOf, statusOf, toMode, writeErrorMessage, CERTIFIED_REFUSAL, type MidMatchMat,
 } from '@/lib/eventMode'
+import { FAR_STEPS, farOf } from './board/useFar'
 import { cn } from '@/lib/utils'
 import type { EventDetail } from '@/lib/types'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
@@ -41,6 +42,17 @@ const STATUS: Record<EventStatus, { label: string; variant: 'default' | 'live' |
 
 // 6.18: one column with 16px gutters below 640px. The panel gutter matches the shell's.
 const PANEL = 'px-4 pt-6 pb-10 sm:px-6'
+
+/**
+ * G24 / 3.4's knob, on the event rather than in one browser.
+ *
+ * It lived in localStorage, so a second television, a cleared cache or a laptop somebody
+ * swapped in reverted to 1.00 in front of the room, and the only way to set it was a
+ * query string typed at the panel. An event that carries none reads as no cell chosen,
+ * because that is the truth: every board is then following whatever its own browser has.
+ */
+export const FAR_GROUP_LABEL = 'Board far'
+const FAR_OPTIONS = FAR_STEPS.map(value => ({ value: String(value), label: String(value) }))
 
 /**
  * Ask rather than refuse, for the one case where the switch is legal and still costs
@@ -122,6 +134,11 @@ function EventMeta({ eventId, detail, mode, refusal, certified, snapshot }: {
   const [confirming, setConfirming] = useState<MidMatchMat[]>([])
   const [contactOpen, setContactOpen] = useState(false)
   const set = useAdminMutation(eventId, (m: EventMode) => adminApi(`/api/events/${eventId}`, { method: 'PATCH', body: { mode: m } }))
+  // Typed loosely on purpose: the column lands with the server work, and this control has
+  // to compile and behave on both sides of that merge.
+  const setFar = useAdminMutation(eventId, (far: number) => adminApi(`/api/events/${eventId}`, { method: 'PATCH', body: { far } }))
+  const storedFar = farOf(detail)
+  const shownFar = setFar.isPending && setFar.variables !== undefined ? setFar.variables : storedFar
   // The segment reports the write it is carrying, not the row it was rendered from: the
   // stream only catches up on the next poll, and a control that snaps back for a beat
   // reads as a refused change. A failed write drops back to the stored value.
@@ -150,7 +167,18 @@ function EventMeta({ eventId, detail, mode, refusal, certified, snapshot }: {
         >
           {contact === null ? 'Add a desk contact' : `Desk contact: ${contact.name}`}
         </Button>
-        <Field.Root disabled={refusal !== null} className={cn('ml-auto min-w-0', refusal !== null && 'opacity-50')}>
+        <span className="ml-auto flex min-w-0 items-center gap-2">
+          <span className="whitespace-nowrap">{FAR_GROUP_LABEL}</span>
+          <Field.Root disabled={certified} className={cn('min-w-0', certified && 'opacity-50')}>
+            <Segment
+              aria-label={FAR_GROUP_LABEL}
+              value={shownFar === null ? '' : String(shownFar)}
+              options={FAR_OPTIONS}
+              onValueChange={v => { if (!certified) setFar.mutate(Number(v)) }}
+            />
+          </Field.Root>
+        </span>
+        <Field.Root disabled={refusal !== null} className={cn('min-w-0', refusal !== null && 'opacity-50')}>
           <Segment
             aria-label={MODE_GROUP_LABEL}
             value={shown}
@@ -164,6 +192,12 @@ function EventMeta({ eventId, detail, mode, refusal, certified, snapshot }: {
         <Alert>
           <AlertTitle>How this event runs was not changed</AlertTitle>
           <AlertDescription>{writeErrorMessage(set.error)}</AlertDescription>
+        </Alert>
+      )}
+      {setFar.error && (
+        <Alert>
+          <AlertTitle>The board size was not changed</AlertTitle>
+          <AlertDescription>{writeErrorMessage(setFar.error)}</AlertDescription>
         </Alert>
       )}
       {/* The dialog stays up for the round trip and closes on success, so its own control
