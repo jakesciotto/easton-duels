@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from 'vitest'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { loadDotEnv } from '../src/lib/env.js'
+import { DEV_DB_PATH, applyDevDefaults, loadDotEnv } from '../src/lib/env.js'
 
 const dir = mkdtempSync(path.join(tmpdir(), 'duels-env-test-'))
 const file = path.join(dir, '.env')
