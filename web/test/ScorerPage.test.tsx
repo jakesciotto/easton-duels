@@ -537,6 +537,16 @@ describe('ScorerPage', () => {
       expect(screen.getByText('Questions at the desk: Dana Whitfield, 555 0147.')).toBeInTheDocument()
     })
 
+    // Certification only tightens the lock, so the tablet shows the screen it already has
+    // rather than a second one saying the same thing more strictly.
+    it('shows the same screen once the results are certified', async () => {
+      const feed = snapshotFeed(finished({ status: 'certified', certifiedAt: '2026-10-03T16:12:00.000Z' }))
+      fakeFetch(url => feed.handle(url) ?? { json: {} })
+      await mount()
+      expect(await screen.findByRole('heading', { name: EVENT_FINISHED })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Start' })).toBeNull()
+    })
+
     // The done screen depends on a poll landing, and the poll is the thing that may be a
     // few seconds late. A tab still showing controls has to refuse the tap rather than
     // send it and translate the answer.

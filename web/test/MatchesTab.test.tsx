@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { MatchView, Snapshot } from '@shared/types'
 import { MatchesTab } from '@/routes/event/MatchesTab'
 import { setAdminToken } from '@/lib/auth'
+import { CERTIFIED_REFUSAL } from '@/lib/eventMode'
 import { HISTORY_NOTE } from '@/routes/event/MatchHistorySheet'
 import type { EventDetail, MatchRow } from '@/lib/types'
 import { fakeFetch, sampleMatch, sampleSnapshot, snapshotFeed, type Reply } from './fakes'
@@ -459,5 +460,25 @@ describe('MatchesTab settled row actions', () => {
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByText('Edit result')).toBeInTheDocument()
     expect(within(dialog).getByLabelText('Ridgeline points')).toBeInTheDocument()
+  })
+
+  // Refuse rather than ask: a certified record cannot be corrected, so the control is
+  // disabled rather than accepted and answered with a 409 a second later.
+  it('refuses the correction on a certified event and keeps the history readable', async () => {
+    const certified = sampleSnapshot({ event: { ...sampleSnapshot().event, id: 7, status: 'certified' }, mats: [], matches: [] })
+    mountStreaming(certified, { ...detail, event: { ...detail.event, status: 'certified' } })
+    const user = userEvent.setup()
+    await openSettledMenu(user)
+    expect(await screen.findByRole('menuitem', { name: 'Edit result' })).toHaveAttribute('data-disabled')
+    expect(screen.getByRole('menuitem', { name: 'Match history' })).not.toHaveAttribute('data-disabled')
+  })
+
+  it('says what to do when the server refuses a write on a certified event', async () => {
+    mount(detail, url => (url.endsWith('/matches/1')
+      ? { status: 409, json: { error: { code: 'match_state', message: 'event is certified' } } }
+      : { json: {} }))
+    const user = userEvent.setup()
+    await user.click(within(pendingRows()[0]).getByRole('button', { name: `Delete ${M1}` }))
+    expect(await screen.findByText(CERTIFIED_REFUSAL)).toBeInTheDocument()
   })
 })

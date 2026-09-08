@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { ApiError } from '@/lib/api'
+import { CERTIFIED_REFUSAL } from '@/lib/eventMode'
 import { EXTEND_MAX_MS, EXTEND_MIN_MS } from '@shared/types'
 import {
   ADD_TIME_MS, applyClockExtend, applyClockPause, applyClockStart, applyScore, applyUndo,
@@ -129,6 +130,11 @@ describe('errorCopy', () => {
   it('separates a finished event from an ended match', () => {
     expect(errorCopy(new ApiError(409, 'match_state', 'event is done'))).toBe(EVENT_FINISHED)
     expect(errorCopy(new ApiError(409, 'match_state', 'event is done'))).not.toMatch(/Reopen it/)
+  })
+
+  it('says where a certified event is unlocked, which is not this tablet', () => {
+    expect(errorCopy(new ApiError(409, 'match_state', 'event is certified'))).toBe(CERTIFIED_REFUSAL)
+    expect(errorCopy(new ApiError(409, 'match_state', 'event is certified'))).not.toBe(EVENT_FINISHED)
   })
 
   it('keeps the server sentence when it is already an instruction', () => {
@@ -272,6 +278,13 @@ describe('refusals', () => {
    */
   it('refuses every control on a finished event, whatever the match says', () => {
     const refusals = scorerRefusals({ connected: true, eventStatus: 'done', match: live, last: null, expired: false })
+    for (const [name, reason] of Object.entries(refusals)) expect(reason, name).toBe(EVENT_DONE)
+  })
+
+  // Certification only tightens the lock, so the tablet says the same thing it says
+  // after Finish rather than inventing a second sentence for a stricter no.
+  it('refuses every control on a certified event too', () => {
+    const refusals = scorerRefusals({ connected: true, eventStatus: 'certified', match: live, last: null, expired: false })
     for (const [name, reason] of Object.entries(refusals)) expect(reason, name).toBe(EVENT_DONE)
   })
 

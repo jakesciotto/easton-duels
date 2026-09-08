@@ -21,6 +21,8 @@ export interface EventRow {
   contactName?: string | null
   contactPhone?: string | null
   contact?: EventContact | null
+  /** When an admin signed the record off. Null on every event that is not certified. */
+  certifiedAt?: string | null
 }
 export interface TeamRow { id: number; eventId: number; name: string; color: TeamColor; position: number }
 export interface AthleteRow {

@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ResultDialog } from '@/routes/event/ResultDialog'
 import { setAdminToken } from '@/lib/auth'
+import { CERTIFIED_REFUSAL } from '@/lib/eventMode'
 import type { EventDetail } from '@/lib/types'
 import { fakeFetch, sampleMatch } from './fakes'
 
@@ -70,5 +71,16 @@ describe('ResultDialog', () => {
     mount(sampleMatch({ id: 9, orderIndex: 0, matId: null, status: 'live', result: null }))
     expect(await screen.findByRole('button', { name: 'Save result' })).toBeDisabled()
     expect(screen.getByText(/no mat, 0 to 0, no result recorded/)).toBeInTheDocument()
+  })
+})
+
+describe('ResultDialog refusals', () => {
+  it('says what to do when the server refuses the correction on a certified event', async () => {
+    fakeFetch(() => ({ status: 409, json: { error: { code: 'match_state', message: 'event is certified' } } }))
+    mount()
+    const user = userEvent.setup()
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Save result' }))
+    expect(await within(dialog).findByText(CERTIFIED_REFUSAL)).toBeInTheDocument()
   })
 })

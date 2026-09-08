@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { EntryTab } from '@/routes/event/EntryTab'
 import { saveDraft } from '@/routes/event/entry-state'
 import { setAdminToken } from '@/lib/auth'
+import { CERTIFIED_ENTRY_LINE, CERTIFIED_REFUSAL_BODY, CERTIFIED_REFUSAL_TITLE, FINISHED_LINE } from '@/lib/eventMode'
 import { HISTORY_NOTE } from '@/routes/event/MatchHistorySheet'
 import { useEventDetail } from '@/lib/queries'
 import { SnapshotStreamContext, type StreamState } from '@/lib/useSnapshot'
@@ -645,22 +646,40 @@ describe('EntryTab', () => {
       matches: [match(1, { status: 'done', pointsA: 4, pointsB: 2, winnerAthleteId: 100, winType: 'points' })],
     }
 
-    it('takes the form, the save and the edits away and says why', () => {
+    it('takes the form and the save away and says why', () => {
       mount(finishedDetail)
-      expect(screen.getByText(/^This event is finished\./)).toBeInTheDocument()
+      expect(screen.getByText(FINISHED_LINE)).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: /^Sav/ })).not.toBeInTheDocument()
       expect(screen.queryByLabelText('Ridgeline points')).not.toBeInTheDocument()
       expect(screen.queryByRole('combobox', { name: 'Ridgeline competitor' })).not.toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: /^Edit/ })).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Finish event' })).not.toBeInTheDocument()
       // The record itself stays.
       const results = screen.getByRole('region', { name: 'Results' })
       expect(within(results).getByText('Mateo Rivera')).toBeInTheDocument()
     })
 
-    it('opens the match history from the ledger', async () => {
-      const f = fakeFetch(() => ({ json: [] }))
+    // Ruling A: the server takes a correction of a settled match on a done event, so the
+    // ledger keeps its Edit. The form is gone, so it opens the one correction dialog.
+    it('keeps the ledger Edit and hands the result to the one correction dialog', async () => {
       mount(finishedDetail)
+      const user = userEvent.setup()
+      await user.click(screen.getByRole('button', { name: /^Edit / }))
+      const dialog = await screen.findByRole('dialog')
+      expect(dialog).toHaveTextContent('Edit result')
+      expect(within(dialog).getByLabelText('Ridgeline points')).toBeInTheDocument()
+    })
+
+    it('takes the ledger Edit away once the event is certified, and says so', () => {
+      mount({ ...finishedDetail, event: { ...finishedDetail.event, status: 'certified' } })
+      expect(screen.getByText(CERTIFIED_ENTRY_LINE)).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /^Edit / })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /^Sav/ })).not.toBeInTheDocument()
+    })
+
+    // The trail is what certification protects, so reading it survives the lock.
+    it('opens the match history from the ledger in both finished states', async () => {
+      const f = fakeFetch(() => ({ json: [] }))
+      mount({ ...finishedDetail, event: { ...finishedDetail.event, status: 'certified' } })
       const user = userEvent.setup()
       await user.click(screen.getByRole('button', { name: /^History of / }))
       expect(await screen.findByRole('dialog')).toHaveTextContent(HISTORY_NOTE)
@@ -679,6 +698,19 @@ describe('EntryTab', () => {
       expect(await screen.findByText('This event is finished')).toBeInTheDocument()
       expect(screen.getByText('No result can be entered now, and the results here are the record.')).toBeInTheDocument()
       expect(screen.queryByText('This match already ended')).not.toBeInTheDocument()
+    })
+
+    it('maps a refused write on a certified event to the one sentence', async () => {
+      const f = fakeFetch(() => ({ status: 409, json: { error: { code: 'match_state', message: 'event is certified' } } }))
+      mount()
+      const user = userEvent.setup()
+      await pick(user, 'Ridgeline competitor', 'Ava Park')
+      await pick(user, 'Lakeside competitor', 'Noah Tran')
+      await user.type(screen.getByLabelText('Ridgeline points'), '5')
+      await user.click(saveButton())
+      await vi.waitFor(() => expect(f.calls.length).toBe(1))
+      expect(await screen.findByText(CERTIFIED_REFUSAL_TITLE)).toBeInTheDocument()
+      expect(screen.getByText(CERTIFIED_REFUSAL_BODY)).toBeInTheDocument()
     })
   })
 

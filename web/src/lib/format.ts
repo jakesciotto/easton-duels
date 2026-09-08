@@ -43,3 +43,17 @@ export function contactLine(contact: EventContact | null): string | null {
   if (!contact) return null
   return `Questions at the desk: ${contact.name}, ${contact.phone}.`
 }
+
+/**
+ * "3:41 pm". One formatter for every surface that stamps a time of day: the mat panel's
+ * last result, the Result dialog's statement of what is being corrected, and the board's
+ * certified note. An event never crosses noon and midnight both, so the hour needs no
+ * date beside it.
+ */
+export function timeOfDay(iso: string | null | undefined): string | null {
+  if (!iso) return null
+  const at = new Date(iso)
+  if (Number.isNaN(at.getTime())) return null
+  const hour = at.getHours() % 12 || 12
+  return `${hour}:${String(at.getMinutes()).padStart(2, '0')} ${at.getHours() < 12 ? 'am' : 'pm'}`
+}

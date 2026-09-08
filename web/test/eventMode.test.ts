@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import type { MatView, Snapshot } from '@shared/types'
 import {
-  DESK_BIND_REFUSAL, DESK_NOTE, DESK_NOTE_DETAIL, MODE_LABEL, MODE_OPTIONS, MODE_ORDER,
-  deskSwitchConsequence, deskSwitchMidMatch, deskSwitchRefusal, modeOf, toMode,
+  CERTIFIED_REFUSAL, DESK_BIND_REFUSAL, DESK_NOTE, DESK_NOTE_DETAIL, MODE_LABEL, MODE_OPTIONS, MODE_ORDER,
+  deskSwitchConsequence, deskSwitchMidMatch, deskSwitchRefusal, isCertifiedRefusal, isFinished, modeOf,
+  toMode, writeErrorMessage,
 } from '@/lib/eventMode'
+import { ApiError } from '@/lib/api'
 import { sampleMatch, sampleSnapshot } from './fakes'
 
 const mat = (over: Partial<MatView> & { id: number; number: number }): MatView =>
@@ -136,5 +138,41 @@ describe('deskSwitchConsequence', () => {
   it('turns plural on both halves together', () => {
     expect(deskSwitchConsequence([{ number: 1, pair: 'a vs b' }, { number: 3, pair: 'c vs d' }]))
       .toBe('Mats 1 and 3 are mid-match. Their results will have to be typed at the desk.')
+  })
+})
+
+/**
+ * Certified reads as done everywhere a layout is chosen. The two states differ only in
+ * what may still be changed, which every write surface asks separately.
+ */
+describe('isFinished', () => {
+  it('is true for both states the event stops taking new results in', () => {
+    expect(isFinished('done')).toBe(true)
+    expect(isFinished('certified')).toBe(true)
+  })
+
+  it('is false while the event can still be scored', () => {
+    expect(isFinished('setup')).toBe(false)
+    expect(isFinished('live')).toBe(false)
+  })
+})
+
+describe('the certified refusal', () => {
+  const refused = (message: string, code = 'match_state') => new ApiError(409, code, message)
+
+  it('recognises the server sentence every locked write answers with', () => {
+    expect(isCertifiedRefusal(refused('event is certified'))).toBe(true)
+  })
+
+  it('leaves the other match_state refusals alone, which say something else to do', () => {
+    expect(isCertifiedRefusal(refused('event is done'))).toBe(false)
+    expect(isCertifiedRefusal(refused('match is done'))).toBe(false)
+    expect(isCertifiedRefusal(refused('event is certified', 'validation'))).toBe(false)
+    expect(isCertifiedRefusal(new Error('event is certified'))).toBe(false)
+  })
+
+  it('maps the refusal to one sentence and keeps every other server message', () => {
+    expect(writeErrorMessage(refused('event is certified'))).toBe(CERTIFIED_REFUSAL)
+    expect(writeErrorMessage(refused('only a live event can finish'))).toBe('only a live event can finish')
   })
 })

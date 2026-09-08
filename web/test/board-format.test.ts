@@ -104,6 +104,10 @@ describe('boardPlan', () => {
 
       const done = sampleSnapshot({ event: event('done', mode) })
       expect(boardPlan(done).comp, mode).toBe('done')
+
+      // Certified is done with a signature on it, so it paints the same composition.
+      const certified = sampleSnapshot({ event: { ...event('certified', mode), certifiedAt: '2026-10-03T16:12:00.000Z' } })
+      expect(boardPlan(certified), mode).toEqual({ comp: 'done', mats: 1 })
     }
   })
 

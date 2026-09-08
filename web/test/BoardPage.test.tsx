@@ -374,6 +374,36 @@ describe('Board compositions', () => {
     expect(within(hero).getByText('5').closest('.b-fig')).toHaveClass('b-trail')
   })
 
+  // 6.15: one b3 line in the note slot the board already budgets. Before certification
+  // the line is absent; the board never says Final, uncertified.
+  describe('the certified line', () => {
+    const finished = (over: Partial<Snapshot['event']> = {}) => sampleSnapshot({
+      event: { ...event('done', 'live'), ...over },
+      teams: [
+        { id: 1, name: 'Ridgeline', color: 'red', position: 0, wins: 7, points: 41 },
+        { id: 2, name: 'Lakeside', color: 'blue', position: 1, wins: 5, points: 33 },
+      ],
+      matches: [pair(1, 'Ava Park', 'Sofia Diaz', { status: 'done' })],
+    })
+    const certifiedAt = new Date(2026, 9, 3, 16, 12).toISOString()
+
+    it('prints the signature and its time under the summary', () => {
+      const { container } = render(<Board snapshot={finished({ status: 'certified', certifiedAt })} connected lastSuccessAt={Date.now()} />)
+      expect(safe(container)).toHaveAttribute('data-comp', 'done')
+      expect(screen.getByText('Final, certified at 4:12 pm')).toBeInTheDocument()
+    })
+
+    it('says nothing at all before an admin certifies', () => {
+      render(<Board snapshot={finished()} connected lastSuccessAt={Date.now()} />)
+      expect(screen.queryByText(/certified/)).not.toBeInTheDocument()
+    })
+
+    it('leaves the line off every composition but the final one', () => {
+      render(<Board snapshot={{ ...liveBoard(1), event: { ...event('live', 'live'), certifiedAt } }} connected lastSuccessAt={Date.now()} />)
+      expect(screen.queryByText(/certified/)).not.toBeInTheDocument()
+    })
+  })
+
   it('raises the stale bar when the poll stops landing', () => {
     const { container, rerender } = render(<Board snapshot={liveBoard(1)} connected />)
     expect(container.querySelector('.b-stale')).toBeNull()

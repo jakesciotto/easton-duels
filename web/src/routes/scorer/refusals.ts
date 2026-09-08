@@ -1,4 +1,5 @@
 import type { EventStatus, MatchView } from '@shared/types'
+import { isFinished } from '@/lib/eventMode'
 import type { LocalAction } from './actions'
 
 /**
@@ -167,7 +168,7 @@ export function scorerRefusals(input: {
   expired: boolean
 }): ScorerRefusals {
   const { connected, eventStatus, match, last, expired } = input
-  const done = eventStatus === 'done' ? EVENT_DONE : null
+  const done = eventStatus !== null && isFinished(eventStatus) ? EVENT_DONE : null
   return {
     half: done ?? scoreRefusal(connected, match),
     clock: done ?? clockRefusal(connected, match, expired),

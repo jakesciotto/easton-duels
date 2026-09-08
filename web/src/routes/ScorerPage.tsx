@@ -7,6 +7,7 @@ import { matPickPath } from '@/lib/matBinding'
 import { useSnapshot } from '@/lib/useSnapshot'
 import { useClock } from '@/lib/useClock'
 import { useWakeLock } from '@/lib/useWakeLock'
+import { isFinished } from '@/lib/eventMode'
 import { pollIntervalForSnapshot } from '@/lib/pollInterval'
 import { playExpired, unlockAudio } from '@/lib/sounds'
 import { buttonVariants } from '@/components/ui/button'
@@ -145,7 +146,9 @@ function Scorer({ binding }: { binding: MatBinding }) {
     playExpired()
   }, [expired, m])
 
-  if (snapshot?.event.status === 'done') {
+  // Certified is finished with a signature on it, so the tablet shows the same screen:
+  // nothing more is scored on it either way.
+  if (snapshot !== null && isFinished(snapshot.event.status)) {
     return <EventFinished eventId={binding.eventId} contact={snapshot.event.contact} />
   }
 

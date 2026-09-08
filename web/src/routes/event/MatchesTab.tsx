@@ -7,7 +7,7 @@ import { GripVerticalIcon } from 'lucide-react'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import { useSnapshot } from '@/lib/useSnapshot'
 import { pollIntervalForSnapshot } from '@/lib/pollInterval'
-import { modeOf } from '@/lib/eventMode'
+import { modeOf, statusOf, writeErrorMessage } from '@/lib/eventMode'
 import type { EventDetail, MatchRow, TeamRow } from '@/lib/types'
 import { athleteName, winTypeLabel } from '@/lib/format'
 import { moveId } from '@/lib/reorder'
@@ -312,11 +312,13 @@ function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, d
   )
 }
 
-function SettledRow({ line, teams, name, highlight, onHover, onHistory, onEdit }: {
+function SettledRow({ line, teams, name, highlight, certified, onHover, onHistory, onEdit }: {
   line: MatchLine
   teams: TeamRow[]
   name: NameOf
   highlight: boolean
+  /** Refuse rather than ask (6.8): a certified record cannot be corrected from here. */
+  certified: boolean
   onHover: Hover
   onHistory: () => void
   onEdit: () => void
@@ -361,7 +363,7 @@ function SettledRow({ line, teams, name, highlight, onHover, onHistory, onEdit }
           label={`${matchLabel(line.position, name(m.athleteAId, teamA), name(m.athleteBId, teamB))} actions`}
           items={[
             { key: 'history', label: 'Match history', disabled: false, onSelect: onHistory },
-            { key: 'edit', label: 'Edit result', disabled: false, onSelect: onEdit },
+            { key: 'edit', label: 'Edit result', disabled: certified, onSelect: onEdit },
           ]}
         />
       </TableCell>
@@ -381,6 +383,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
   // organizer switches the event from a phone at the same desk and nothing invalidates
   // the cache when they do.
   const entryMode = modeOf(liveSnapshot, detail.event.mode) === 'entry'
+  const certified = statusOf(liveSnapshot, detail.event.status) === 'certified'
   const [pick, setPick] = useState<Pick | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -538,7 +541,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
       {failure && (
         <Alert>
           <AlertTitle>{failure.title}</AlertTitle>
-          <AlertDescription>{failure.error.message}</AlertDescription>
+          <AlertDescription>{writeErrorMessage(failure.error)}</AlertDescription>
         </Alert>
       )}
 
@@ -567,7 +570,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
             {generate.error && (
               <Alert>
                 <AlertTitle>The matchups did not generate</AlertTitle>
-                <AlertDescription>{generate.error.message}</AlertDescription>
+                <AlertDescription>{writeErrorMessage(generate.error)}</AlertDescription>
               </Alert>
             )}
           </DialogBody>
@@ -661,7 +664,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
                   {settled.map(l => (
                     <SettledRow
                       key={l.row.id} line={l} teams={detail.teams} name={nameOf}
-                      highlight={holds(l)} onHover={setHovered}
+                      highlight={holds(l)} certified={certified} onHover={setHovered}
                       onHistory={() => setHistory(matchHistorySource(viewOf(l), l.matNumber, detail))}
                       onEdit={() => setEditing(viewOf(l))}
                     />

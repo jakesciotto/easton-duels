@@ -1,5 +1,6 @@
 import type { MatchView } from '@shared/types'
 import { ApiError } from '@/lib/api'
+import { CERTIFIED_REFUSAL, isCertifiedRefusal } from '@/lib/eventMode'
 
 /**
  * What this tablet recorded. A snapshot carries the derived match and nothing else, so a
@@ -158,6 +159,7 @@ export function errorCopy(e: unknown): string {
   // The event and the match both refuse with `match_state` and both say "done", and the
   // instruction is opposite: a match can be reopened, a finished event cannot. This one is
   // tested first, because the match sentence matches its words too.
+  if (isCertifiedRefusal(e)) return CERTIFIED_REFUSAL
   if (e.code === 'match_state' && /\bevent is done\b/.test(e.message)) return EVENT_FINISHED
   if (e.code === 'match_state' && /\bdone\b/.test(e.message)) {
     return 'This match already ended. Reopen it from the Live tab to change the result.'

@@ -1,6 +1,6 @@
 import type { EventMode, EventStatus, MatView, MatchView } from '@shared/types'
 import { DESK_MID_MATCH_NOTE, DESK_MID_MATCH_WORD, DESK_PANEL_WORD, deskMatNote } from '@/lib/eventMode'
-import { winTypeLabel } from '@/lib/format'
+import { timeOfDay, winTypeLabel } from '@/lib/format'
 
 // 6.9 / 7.3. The Live tab is N permanent mat panels whose geometry never moves, so
 // everything that varies is a value in this model rather than a branch in the JSX.
@@ -184,14 +184,9 @@ export function resultScore(match: MatchView): string | null {
   return sides === null ? null : `${sides.winner.score}-${sides.loser.score}`
 }
 
-// 7.3 prints the settled time as "3:41 pm". An event never crosses noon and midnight
-// both, so the hour needs no date beside it.
+// 7.3 prints the settled time as "3:41 pm", in the one shared format.
 export function resultTime(endedAt: string | null | undefined): string | null {
-  if (!endedAt) return null
-  const at = new Date(endedAt)
-  if (Number.isNaN(at.getTime())) return null
-  const hour = at.getHours() % 12 || 12
-  return `${hour}:${String(at.getMinutes()).padStart(2, '0')} ${at.getHours() < 12 ? 'am' : 'pm'}`
+  return timeOfDay(endedAt)
 }
 
 // "Paused, 1 update waiting" reads wrong at every other count, and the count is the

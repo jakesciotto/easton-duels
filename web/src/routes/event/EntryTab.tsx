@@ -4,7 +4,7 @@ import { teamCode, type WinType } from '@shared/types'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import { focusWithoutEngaging } from '@/lib/operatorEngaged'
 import { sortDoneMatches } from '@/lib/matchOrder'
-import { MAT_NOTE, modeOf, statusOf } from '@/lib/eventMode'
+import { CERTIFIED_ENTRY_LINE, FINISHED_LINE, MAT_NOTE, isFinished, modeOf, statusOf } from '@/lib/eventMode'
 import { useSnapshot } from '@/lib/useSnapshot'
 import { newEventId } from '@/lib/ids'
 import type { AthleteRow, EventDetail, MatchRow, TeamRow } from '@/lib/types'
@@ -14,7 +14,7 @@ import { cn } from '@/lib/utils'
 import { defaultOutcome } from './entry-defaults'
 import {
   CUE_MS, LEDGER_LIMIT, RESTORED_NEW_ENTRY, SAVED_LABEL_MS, SAVE_TIMEOUT_MS,
-  EVENT_DONE_LINE, clearDraft, clockLabel, duplicateCopy, entryShape, isRepeatPair, ledgerTime, loadDraft, outcomeMatches,
+  clearDraft, clockLabel, duplicateCopy, entryShape, isRepeatPair, ledgerTime, loadDraft, outcomeMatches,
   pairKey, restoreDraft, restoredBannerCopy, saveDraft, saveErrorCopy, seedPairLog, serverRefused, storedOutcome, teamWins,
   type EntryDraft, type EntryMatch, type SaveErrorCopy,
 } from './entry-state'
@@ -29,6 +29,7 @@ import { TeamPlate } from '@/components/TeamPlate'
 import { FinishEventDialog } from './FinishEventDialog'
 import { MatchHistorySheet } from './MatchHistorySheet'
 import { matchHistorySource, type HistorySource } from './match-history'
+import { ResultDialog } from './ResultDialog'
 
 interface Form extends EntryDraft { touched: boolean }
 
@@ -101,6 +102,10 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   const [savedAt, setSavedAt] = useState<Record<number, number>>({})
   const [cue, setCue] = useState<{ id: number; on: boolean } | null>(null)
   const [history, setHistory] = useState<HistorySource | null>(null)
+  // 6.9 takes the form away once the event is finished, and ruling A keeps corrections
+  // open until certification, so the ledger's Edit hands a settled result to the one
+  // correction dialog rather than to a form that is no longer on the screen.
+  const [correcting, setCorrecting] = useState<MatchRow | null>(null)
   // Seeded from the ledger so a reload does not reopen the same-pair window on a result
   // the server already holds.
   const [seededPairs] = useState(() => seedPairLog(detail.matches))
@@ -376,13 +381,16 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   const startError = start.error
   // 6.9: a finished event stops taking results, so the form and every path back into it
   // go rather than sit there disabled. Nothing left on the screen says it can be scored.
-  const finished = eventStatus === 'done'
+  const finished = isFinished(eventStatus)
+  const certified = eventStatus === 'certified'
   const closeFinish = () => { setFinishOpen(false); finish.reset() }
-  const band = finished
-    ? EVENT_DONE_LINE
-    : eventStatus === 'setup'
-      ? 'The board shows this event as in progress once you start it.'
-      : 'The board switches to the final result when you finish the event.'
+  const band = certified
+    ? CERTIFIED_ENTRY_LINE
+    : finished
+      ? FINISHED_LINE
+      : eventStatus === 'setup'
+        ? 'The board shows this event as in progress once you start it.'
+        : 'The board switches to the final result when you finish the event.'
 
   return (
     <div className="grid gap-6">
@@ -549,13 +557,19 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
                 at={ledgerTime(m.endedAt, savedAt[m.id])}
                 cued={cue?.id === m.id && cue.on}
                 cueing={cue?.id === m.id}
-                onEdit={finished ? undefined : () => load(m)}
+                onEdit={certified ? undefined : finished ? () => setCorrecting(m) : () => load(m)}
                 onHistory={() => setHistory(matchHistorySource(matchViewOf(m, detail, stream), matNumberOf(m), detail))}
               />
             ))}
         </section>
       </div>
 
+      <ResultDialog
+        detail={detail}
+        match={correcting === null ? null : matchViewOf(correcting, detail, stream)}
+        open={correcting !== null}
+        onOpenChange={o => { if (!o) setCorrecting(null) }}
+      />
       <MatchHistorySheet source={history} open={history !== null} onOpenChange={o => { if (!o) setHistory(null) }} />
 
       <FinishEventDialog
@@ -704,7 +718,7 @@ function LedgerRow({ match, nameA, nameB, at, cued, cueing, onEdit, onHistory }:
   at: Date | null
   cued: boolean
   cueing: boolean
-  /** Absent once the event is finished: nothing on that screen may offer a way to score. */
+  /** Absent once the event is certified: nothing after that may offer a way to change it. */
   onEdit?: () => void
   /** Read only, so it survives certification: the trail is what certification protects. */
   onHistory: () => void

@@ -3,10 +3,11 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router'
-import type { EventMode, MatchView, Snapshot } from '@shared/types'
+import type { EventMode, EventStatus, MatchView, Snapshot } from '@shared/types'
+import { CORRECTION_REASON_MAX } from '@shared/types'
 import { LiveTab } from '@/routes/event/LiveTab'
 import { setAdminToken } from '@/lib/auth'
-import { DESK_NOTE, DESK_NOTE_DETAIL, DESK_PANEL_WORD, deskMatNote } from '@/lib/eventMode'
+import { CERTIFIED_REFUSAL, DESK_NOTE, DESK_NOTE_DETAIL, DESK_PANEL_WORD, FINISHED_LINE, deskMatNote } from '@/lib/eventMode'
 import type { EventDetail } from '@/lib/types'
 import { fakeFetch, snapshotFeed, type Reply, sampleMatch, sampleSnapshot } from './fakes'
 
@@ -483,8 +484,139 @@ describe('LiveTab', () => {
   })
 })
 
+// The PIN is six separate wells, so a code is typed one digit into one well at a time,
+// the same way PinGate's own suite does it.
+async function typeCode(user: ReturnType<typeof userEvent.setup>, host: HTMLElement, digits: string) {
+  // The six wells are the first textboxes in the dialog; the Reason field follows them.
+  const wells = within(host).getAllByRole('textbox').slice(0, digits.length)
+  for (let i = 0; i < digits.length; i++) {
+    await user.clear(wells[i])
+    await user.type(wells[i], digits[i])
+  }
+}
 
-describe('LiveTab match history', () => {
+describe('LiveTab certification', () => {
+  const certifiedAt = new Date(2026, 9, 3, 16, 12).toISOString()
+
+  const record = (status: EventStatus, over: Partial<Snapshot['event']> = {}) => snapshotFeed(sampleSnapshot({
+    now: SERVER_NOW,
+    event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status, mode: 'live', matCount: 1, contact: null, certifiedAt: null, ...over },
+    teams: [
+      { id: 1, name: 'Ridgeline', color: 'red', position: 0, wins: 7, points: 42 },
+      { id: 2, name: 'Lakeside', color: 'blue', position: 1, wins: 5, points: 31 },
+    ],
+    mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: false }],
+    matches: [settled],
+  }))
+
+  const finishedDetail = (status: EventStatus, over: Partial<EventDetail['event']> = {}): EventDetail =>
+    ({ ...detail, event: { ...detail.event, status, ...over } })
+
+  it('offers one primary control on a finished event, and says corrections are still open', async () => {
+    const feed = record('done')
+    mount(url => feed.handle(url) ?? connectOnly(url), finishedDetail('done'))
+    expect(await screen.findByRole('button', { name: 'Certify results' })).toBeInTheDocument()
+    expect(screen.getByText(FINISHED_LINE)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Certified event actions' })).not.toBeInTheDocument()
+  })
+
+  it('asks for the PIN again, and only enables the write at six digits', async () => {
+    const feed = record('done')
+    mount(url => feed.handle(url) ?? connectOnly(url), finishedDetail('done'))
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Certify results' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('Certify the results?')).toBeInTheDocument()
+    expect(within(dialog).getByText(/Every change on this event is refused/)).toBeInTheDocument()
+    expect(within(dialog).getByText(/a laptop left open at the desk cannot certify by itself/)).toBeInTheDocument()
+    const confirm = within(dialog).getByRole('button', { name: 'Certify results' })
+    expect(confirm).toBeDisabled()
+    await typeCode(user, dialog, '274193')
+    expect(confirm).toBeEnabled()
+  })
+
+  it('posts the PIN and repaints the toolbar from the write, not from the next poll', async () => {
+    const feed = record('done')
+    const f = mount(url => feed.handle(url) ?? (url.endsWith('/certify')
+      ? { json: { ...detail, event: { ...detail.event, status: 'certified', certifiedAt } } }
+      : connectOnly(url)), finishedDetail('done'))
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Certify results' }))
+    const dialog = await screen.findByRole('dialog')
+    await typeCode(user, dialog, '274193')
+    await user.click(within(dialog).getByRole('button', { name: 'Certify results' }))
+    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/events/1/certify')).toBe(true))
+    expect(f.body(f.calls.findIndex(c => c.url === '/api/events/1/certify'))).toEqual({ pin: '274193' })
+    expect(await screen.findByText(/^Certified/)).toBeInTheDocument()
+    expect(screen.getByText('4:12 pm')).toBeInTheDocument()
+  })
+
+  it('shows a wrong PIN inside the dialog it was asked for in', async () => {
+    const feed = record('done')
+    mount(url => feed.handle(url) ?? (url.endsWith('/certify')
+      ? { status: 401, json: { error: { code: 'bad_pin', message: 'wrong PIN' } } }
+      : connectOnly(url)), finishedDetail('done'))
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Certify results' }))
+    const dialog = await screen.findByRole('dialog')
+    await typeCode(user, dialog, '000000')
+    await user.click(within(dialog).getByRole('button', { name: 'Certify results' }))
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('wrong PIN')
+  })
+
+  it('prints the time of the signature and no primary control once certified', async () => {
+    const feed = record('certified', { certifiedAt })
+    mount(url => feed.handle(url) ?? connectOnly(url), finishedDetail('certified', { certifiedAt }))
+    expect(await screen.findByText('4:12 pm')).toBeInTheDocument()
+    expect(screen.getByText('This event is certified. The record lives at /board/1.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Certify results' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Finish event' })).not.toBeInTheDocument()
+  })
+
+  it('keeps unlocking in the overflow, beside the event history', async () => {
+    const feed = record('certified', { certifiedAt })
+    const f = mount(url => feed.handle(url) ?? (url.endsWith('/history') ? { json: [] } : connectOnly(url)), finishedDetail('certified', { certifiedAt }))
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Certified event actions' }))
+    expect(await screen.findByRole('menuitem', { name: 'Unlock the results' })).toBeInTheDocument()
+    await user.click(screen.getByRole('menuitem', { name: 'Event history' }))
+    expect(await screen.findByRole('dialog')).toHaveTextContent('Event history')
+    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/events/1/history')).toBe(true))
+  })
+
+  it('takes a PIN and a reason before it will unlock, and posts both', async () => {
+    const feed = record('certified', { certifiedAt })
+    const f = mount(url => feed.handle(url) ?? (url.endsWith('/uncertify')
+      ? { json: { ...detail, event: { ...detail.event, status: 'done', certifiedAt: null } } }
+      : connectOnly(url)), finishedDetail('certified', { certifiedAt }))
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Certified event actions' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Unlock the results' }))
+    const dialog = await screen.findByRole('dialog')
+    const confirm = within(dialog).getByRole('button', { name: 'Unlock the results' })
+    await typeCode(user, dialog, '274193')
+    // The PIN alone is not enough: an unlocked record has to say why it was.
+    expect(confirm).toBeDisabled()
+    await user.type(within(dialog).getByLabelText(/^Reason/), 'mat 2 typed the wrong winner')
+    expect(within(dialog).getByText(`28 / ${CORRECTION_REASON_MAX}`)).toBeInTheDocument()
+    expect(confirm).toBeEnabled()
+    await user.click(confirm)
+    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/events/1/uncertify')).toBe(true))
+    expect(f.body(f.calls.findIndex(c => c.url === '/api/events/1/uncertify')))
+      .toEqual({ pin: '274193', reason: 'mat 2 typed the wrong winner' })
+    expect(await screen.findByRole('button', { name: 'Certify results' })).toBeInTheDocument()
+  })
+
+  it('maps a refused write on a certified event to the one sentence', async () => {
+    const feed = snapshotFeed(oneMat({ current: null, onDeck: [onDeckMatch(20, 'Ivy Cole', 'Jonah Reed')] }))
+    mount(url => feed.handle(url) ?? (url.endsWith('/advance')
+      ? { status: 409, json: { error: { code: 'match_state', message: 'event is certified' } } }
+      : connectOnly(url)))
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Call the next match' }))
+    expect(await screen.findByText(CERTIFIED_REFUSAL)).toBeInTheDocument()
+  })
+
   it('opens the last result on a mat from the panel overflow', async () => {
     const feed = snapshotFeed(oneMat({ current: null }, [settled]))
     const f = mount(url => feed.handle(url) ?? (url.endsWith('/history') ? { json: [] } : connectOnly(url)))

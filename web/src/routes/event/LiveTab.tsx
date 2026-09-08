@@ -1,25 +1,27 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
-import type { EventMode, MatView, MatchSide, MatchView, Snapshot } from '@shared/types'
+import type { EventMode, EventStatus, MatView, MatchSide, MatchView, Snapshot } from '@shared/types'
+import { CORRECTION_REASON_MAX } from '@shared/types'
 import { formatClock, remainingMs } from '@shared/clock'
 import { ApiError } from '@/lib/api'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import { newEventId } from '@/lib/ids'
 import { useSnapshot } from '@/lib/useSnapshot'
-import { DESK_NOTE, DESK_NOTE_DETAIL, modeOf, statusOf } from '@/lib/eventMode'
+import { DESK_NOTE, DESK_NOTE_DETAIL, FINISHED_LINE, isFinished, modeOf, statusOf, writeErrorMessage } from '@/lib/eventMode'
 import { useClock } from '@/lib/useClock'
 import { pollIntervalForSnapshot } from '@/lib/pollInterval'
-import { teamStyle } from '@/lib/format'
+import { teamStyle, timeOfDay } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { EventDetail } from '@/lib/types'
 import { Clock } from '@/components/Clock'
+import { CodeField } from '@/components/CodeField'
 import { dialogBody, dialogFooter, dialogSurface } from '@/components/dialog-frame'
 import { Connecting } from '@/components/Connecting'
 import { OverflowMenu } from '@/components/OverflowMenu'
 import { QrCode } from '@/components/QrCode'
 import { TeamPlate } from '@/components/TeamPlate'
 import { MatchHistorySheet } from './MatchHistorySheet'
-import { matchHistorySource, type HistorySource } from './match-history'
+import { eventHistorySource, matchHistorySource, type HistorySource } from './match-history'
 import { ResultDialog } from './ResultDialog'
 import { FinishEventDialog } from './FinishEventDialog'
 import {
@@ -29,10 +31,21 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { FieldHead, FieldRow, FieldSet } from '@/components/ui/field-set'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Toggle } from '@/components/ui/toggle'
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 interface ConnectInfo { url: string; matCode: string }
+/** The event status plus the moment it was signed off, from one source at a time. */
+interface SignOff { status: EventStatus; certifiedAt: string | null }
+
+export const CERTIFY_TITLE = 'Certify the results?'
+export const CERTIFY_NOTE = 'The results become the record. Every change on this event is refused, on every screen, until an admin unlocks it.'
+export const CERTIFY_PIN_NOTE = 'The PIN is asked for again here, so a laptop left open at the desk cannot certify by itself.'
+export const UNLOCK_TITLE = 'Unlock the results?'
+export const UNLOCK_NOTE = 'Every write on this event opens again. The reason is written to the record beside the unlock.'
+
 interface EndTarget { match: MatchView; matNumber: number }
 
 // The rule is the panel's leading edge (7.3) and the word beside the mat number is the
@@ -57,7 +70,15 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
   const [editing, setEditing] = useState<MatchView | null>(null)
   const [ending, setEnding] = useState<EndTarget | null>(null)
   const [finishOpen, setFinishOpen] = useState(false)
+  const [certifyOpen, setCertifyOpen] = useState(false)
+  const [unlockOpen, setUnlockOpen] = useState(false)
   const [history, setHistory] = useState<HistorySource | null>(null)
+  // The write's own answer, held until the stream agrees with it. Certify bumps the
+  // version so the next poll carries it, but a finished event polls every few seconds and
+  // a toolbar that keeps saying Certify results for that long reads as a button that did
+  // nothing. Cleared once the stream catches up, so an unlock from a second device is not
+  // then hidden behind a stale local claim.
+  const [signed, setSigned] = useState<SignOff | null>(null)
   // One client event id per match end, held across retries so a resend the server has
   // already applied is deduped rather than ending the next match too.
   const endIds = useRef<Record<number, string>>({})
@@ -68,7 +89,16 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
   const entryMode = modeOf(live, detail.event.mode) === 'entry'
   // The status the same way: a Finish pressed on a second device, or a match a tablet just
   // ended, reaches this tab through the stream and never through the detail cache.
-  const eventStatus = statusOf(live, detail.event.status)
+  const streamStatus = statusOf(live, detail.event.status)
+  const streamRecord: SignOff = {
+    status: streamStatus,
+    certifiedAt: live?.event.certifiedAt ?? detail.event.certifiedAt ?? null,
+  }
+  const record = signed ?? streamRecord
+  const eventStatus = record.status
+  useEffect(() => {
+    setSigned(s => (s !== null && s.status === streamStatus ? null : s))
+  }, [streamStatus])
 
   useEffect(() => {
     if (entryMode) return
@@ -89,6 +119,20 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
   // refused for a press that worked. The control stays busy until the stream carries the
   // version the write returned.
   const [awaitingAdvance, setAwaitingAdvance] = useState<{ matId: number; version: number } | null>(null)
+  // Certification re-enters the PIN rather than trusting the token in this browser, so
+  // both writes carry it in the body and both answer with the event as it now stands.
+  const certify = useAdminMutation(eventId, (pin: string) =>
+    adminApi<EventDetail>(`/api/events/${eventId}/certify`, { method: 'POST', body: { pin } }))
+  const uncertify = useAdminMutation(eventId, (v: { pin: string; reason: string }) =>
+    adminApi<EventDetail>(`/api/events/${eventId}/uncertify`, { method: 'POST', body: v }))
+  const signOff = (d: EventDetail) => setSigned({ status: d.event.status, certifiedAt: d.event.certifiedAt ?? null })
+  const runCertify = (pin: string) => certify.mutate(pin, {
+    onSuccess: d => { signOff(d); setCertifyOpen(false); certify.reset() },
+  })
+  const runUnlock = (v: { pin: string; reason: string }) => uncertify.mutate(v, {
+    onSuccess: d => { signOff(d); setUnlockOpen(false); uncertify.reset() },
+  })
+
   const end = useAdminMutation(eventId, (v: { id: number; entryId: string; lastSeq: number; winnerAthleteId?: number }) =>
     adminApi(`/api/matches/${v.id}/end`, {
       method: 'POST',
@@ -159,7 +203,9 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
 
   const mats = [...(view?.mats ?? [])].sort((a, b) => a.number - b.number)
   const allBound = mats.length > 0 && mats.every(m => m.bound)
-  const done = eventStatus === 'done'
+  const done = isFinished(eventStatus)
+  const certified = eventStatus === 'certified'
+  const certifiedAt = timeOfDay(record.certifiedAt)
   const openMatchHistory = (match: MatchView, matNumber: number | null) =>
     setHistory(matchHistorySource(match, matNumber, detail))
 
@@ -187,20 +233,40 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
           {eventStatus === 'live' && (
             <Button size="sm" variant="destructive" onClick={() => setFinishOpen(true)} disabled={status.isPending}>Finish event</Button>
           )}
+          {/* 6.9's done state has one thing left to do with the event, so it is the one
+              primary control on the screen. Once it is done there is no primary at all:
+              unlocking is a destructive item in the overflow, never a button on the face. */}
+          {eventStatus === 'done' && (
+            <Button size="lg" onClick={() => { certify.reset(); setCertifyOpen(true) }} disabled={certify.isPending}>Certify results</Button>
+          )}
+          {certified && (
+            <>
+              <span className="t2 text-gray-11">
+                Certified{certifiedAt === null ? '' : <> at <span className="fig">{certifiedAt}</span></>}
+              </span>
+              <OverflowMenu
+                label="Certified event actions"
+                items={[
+                  { key: 'history', label: 'Event history', disabled: false, onSelect: () => setHistory(eventHistorySource(detail)) },
+                  { key: 'unlock', label: 'Unlock the results', disabled: uncertify.isPending, tone: 'destructive', onSelect: () => { uncertify.reset(); setUnlockOpen(true) } },
+                ]}
+              />
+            </>
+          )}
         </div>
       </div>
 
       {error && (
         <Alert>
           <AlertTitle>That did not go through</AlertTitle>
-          <AlertDescription>{error.message}</AlertDescription>
+          <AlertDescription>{writeErrorMessage(error)}</AlertDescription>
         </Alert>
       )}
 
       {done ? (
         // The record is never a paused picture, so it reads the live snapshot even if the
         // rack was frozen when the event finished.
-        <FinalResult view={live} eventId={eventId} />
+        <FinalResult view={live} eventId={eventId} certified={certified} />
       ) : (
         <>
           {entryMode
@@ -261,8 +327,112 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
       />
       <ResultDialog detail={detail} match={editing} open={editing !== null} onOpenChange={o => { if (!o) setEditing(null) }} />
 
+      <CertifyDialog
+        open={certifyOpen}
+        pending={certify.isPending}
+        error={certify.error}
+        onOpenChange={o => { if (o) setCertifyOpen(true); else { setCertifyOpen(false); certify.reset() } }}
+        onCertify={runCertify}
+      />
+      <UnlockDialog
+        open={unlockOpen}
+        pending={uncertify.isPending}
+        error={uncertify.error}
+        onOpenChange={o => { if (o) setUnlockOpen(true); else { setUnlockOpen(false); uncertify.reset() } }}
+        onUnlock={runUnlock}
+      />
       <MatchHistorySheet source={history} open={history !== null} onOpenChange={o => { if (!o) setHistory(null) }} />
     </div>
+  )
+}
+
+/**
+ * The organizer's signature. The PIN is typed again here rather than read off the token
+ * in the browser, because the console sits unlocked on a desk all afternoon and this is
+ * the one write nobody should be able to make by walking past it.
+ */
+function CertifyDialog({ open, pending, error, onOpenChange, onCertify }: {
+  open: boolean
+  pending: boolean
+  error: Error | null
+  onOpenChange: (o: boolean) => void
+  onCertify: (pin: string) => void
+}) {
+  const [pin, setPin] = useState('')
+  useEffect(() => { if (open) setPin('') }, [open])
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className={dialogSurface(512)}>
+        <DialogHeader><DialogTitle>{CERTIFY_TITLE}</DialogTitle></DialogHeader>
+        <DialogBody className={dialogBody}>
+          <p className="t3 text-gray-11">{CERTIFY_NOTE}</p>
+          <div className="grid gap-1.5">
+            <Label htmlFor="certify-pin">Admin PIN</Label>
+            <CodeField id="certify-pin" length={6} aria-label="Admin PIN" value={pin} onValueChange={setPin} autoFocus />
+          </div>
+          <p className="t2 text-gray-10">{CERTIFY_PIN_NOTE}</p>
+          {/* A wrong PIN is shown where it was asked for, never on the tab behind. */}
+          {error && <Alert><AlertTitle>The results were not certified</AlertTitle><AlertDescription>{error.message}</AlertDescription></Alert>}
+        </DialogBody>
+        <DialogFooter className={dialogFooter}>
+          <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>Keep editing</Button>
+          <Button type="button" disabled={pin.length !== 6 || pending} onClick={() => onCertify(pin)}>Certify results</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/** The mirror, and the reason is required: an unlocked record has to say why it was. */
+function UnlockDialog({ open, pending, error, onOpenChange, onUnlock }: {
+  open: boolean
+  pending: boolean
+  error: Error | null
+  onOpenChange: (o: boolean) => void
+  onUnlock: (v: { pin: string; reason: string }) => void
+}) {
+  const [pin, setPin] = useState('')
+  const [reason, setReason] = useState('')
+  useEffect(() => { if (open) { setPin(''); setReason('') } }, [open])
+  const trimmed = reason.trim()
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className={dialogSurface(512)}>
+        <DialogHeader><DialogTitle>{UNLOCK_TITLE}</DialogTitle></DialogHeader>
+        <DialogBody className={dialogBody}>
+          <p className="t3 text-gray-11">{UNLOCK_NOTE}</p>
+          <div className="grid gap-1.5">
+            <Label htmlFor="unlock-pin">Admin PIN</Label>
+            <CodeField id="unlock-pin" length={6} aria-label="Admin PIN" value={pin} onValueChange={setPin} autoFocus />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="unlock-reason">
+              Reason
+              <span className="ml-auto fig t1 text-gray-9">{reason.length} / {CORRECTION_REASON_MAX}</span>
+            </Label>
+            <Input
+              id="unlock-reason"
+              value={reason}
+              maxLength={CORRECTION_REASON_MAX}
+              autoComplete="off"
+              onChange={e => setReason(e.target.value)}
+            />
+          </div>
+          {error && <Alert><AlertTitle>The results were not unlocked</AlertTitle><AlertDescription>{error.message}</AlertDescription></Alert>}
+        </DialogBody>
+        <DialogFooter className={dialogFooter}>
+          <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>Keep it certified</Button>
+          <Button
+            type="button"
+            variant="destructive"
+            disabled={pin.length !== 6 || trimmed === '' || pending}
+            onClick={() => onUnlock({ pin, reason: trimmed })}
+          >
+            Unlock the results
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -494,7 +664,7 @@ function winnerTeamId(match: MatchView): number | null {
 
 // 6.9's done state. The rack has nothing left to report, so the composition changes
 // rather than emptying, and no control on it implies the event can still be scored.
-function FinalResult({ view, eventId }: { view: Snapshot | null; eventId: number }) {
+function FinalResult({ view, eventId, certified }: { view: Snapshot | null; eventId: number; certified: boolean }) {
   if (view === null) return <p className="t3 text-gray-10">Waiting for the first update from the server.</p>
   const played = (teamId: number) => view.matches.filter(m => m.status === 'done' && (m.a.teamId === teamId || m.b.teamId === teamId)).length
   // Finding 2: the head and each row were separate grid containers with `auto` numeric
@@ -525,8 +695,12 @@ function FinalResult({ view, eventId }: { view: Snapshot | null; eventId: number
         ))}
       </FieldSet>
       <div className="flex flex-wrap items-center gap-4">
-        <Link to={`/board/${eventId}`} target="_blank" className={buttonVariants({ size: 'lg' })}>Open board</Link>
-        <p className="t2 text-gray-10">This event is finished. The record lives at /board/{eventId}.</p>
+        {/* Not the primary any more: before certification that is Certify results, and
+            after it the screen has no action left at all. */}
+        <Link to={`/board/${eventId}`} target="_blank" className={buttonVariants({ variant: 'secondary', size: 'lg' })}>Open board</Link>
+        <p className="t2 text-gray-10">
+          {certified ? `This event is certified. The record lives at /board/${eventId}.` : FINISHED_LINE}
+        </p>
       </div>
     </div>
   )

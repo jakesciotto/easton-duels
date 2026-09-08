@@ -1,4 +1,5 @@
 import { ApiError } from '@/lib/api'
+import { CERTIFIED_REFUSAL_BODY, CERTIFIED_REFUSAL_TITLE, isCertifiedRefusal } from '@/lib/eventMode'
 import { athleteName, winTypeLabel } from '@/lib/format'
 import type { AthleteRow, MatchRow } from '@/lib/types'
 import type { WinType } from '@shared/types'
@@ -256,8 +257,14 @@ export function restoredBannerCopy(draft: EntryDraft, matches: MatchRow[], athle
 // that reports the server refusing one have to say the same thing, or the desk reads the
 // refusal as something that could be retried.
 const DONE_BODY = 'No result can be entered now, and the results here are the record.'
-export const EVENT_DONE_LINE = `This event is finished. ${DONE_BODY}`
 export const EVENT_DONE: SaveErrorCopy = { title: 'This event is finished', body: DONE_BODY }
+
+// Certification is the harder refusal: a finished event still takes a correction (the
+// server accepts one on a settled match), and a certified one takes nothing at all.
+export const EVENT_CERTIFIED: SaveErrorCopy = {
+  title: CERTIFIED_REFUSAL_TITLE,
+  body: CERTIFIED_REFUSAL_BODY,
+}
 
 // 7.12: every failure states what happened and what to do next, mapped from the
 // server's own codes. The unreachable-server case is the one gym wifi produces.
@@ -272,6 +279,7 @@ export function saveErrorCopy(error: unknown): SaveErrorCopy {
   if (error.code === 'sequence') return { title: 'Another device scored this mat first', body: 'The result on screen refreshes. Check it, then save again.' }
   // The server refuses every write once the event is finished, and it says which of the
   // two match_state refusals this is. Reopening a match cannot help with that one.
+  if (isCertifiedRefusal(error)) return EVENT_CERTIFIED
   if (error.code === 'match_state' && /event is done/i.test(error.message)) return EVENT_DONE
   if (error.code === 'match_state') return { title: 'This match already ended', body: 'Reopen it from the Live tab to change the result.' }
   if (error.status >= 500) return { title: 'The server had a problem', body: 'Press Save to try again.' }

@@ -1,4 +1,5 @@
 import type { Snapshot } from '@shared/types'
+import { isFinished } from '@/lib/eventMode'
 
 export type Composition = 'cold' | 'setup' | 'mats' | 'entry' | 'done'
 
@@ -30,7 +31,9 @@ export interface BoardPlan {
  */
 export function boardPlan(snapshot: Snapshot | null): BoardPlan {
   if (!snapshot || snapshot.teams.length < 2) return { comp: 'cold', mats: 1 }
-  if (snapshot.event.status === 'done') return { comp: 'done', mats: 1 }
+  // Certified is done with a signature on it, so it paints the same Final composition;
+  // the only thing it adds to the board is the note under the summary.
+  if (isFinished(snapshot.event.status)) return { comp: 'done', mats: 1 }
 
   const mats = Math.max(1, snapshot.mats.length)
   const results = snapshot.matches.some(m => m.status === 'done')

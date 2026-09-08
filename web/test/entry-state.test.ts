@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { ApiError } from '@/lib/api'
+import { CERTIFIED_REFUSAL_BODY, CERTIFIED_REFUSAL_TITLE } from '@/lib/eventMode'
 import {
   SAME_PAIR_WINDOW_MS, clearDraft, clockLabel, draftKey, isRepeatPair, ledgerTime, loadDraft, pairKey, restoreDraft,
   saveDraft, saveErrorCopy, seedPairLog, serverRefused, teamWins,
@@ -138,6 +139,11 @@ describe('save error copy', () => {
   it('maps the server codes to an instruction', () => {
     expect(saveErrorCopy(new ApiError(429, 'rate_limited', 'too many')).title).toBe('Too many attempts')
     expect(saveErrorCopy(new ApiError(409, 'match_state', 'already done')).body).toMatch(/Live tab/)
+    // A certified event refuses even the correction a finished one still takes, so the
+    // two match_state sentences must not collapse into one.
+    expect(saveErrorCopy(new ApiError(409, 'match_state', 'event is certified')).title).toBe(CERTIFIED_REFUSAL_TITLE)
+    expect(saveErrorCopy(new ApiError(409, 'match_state', 'event is certified')).body).toBe(CERTIFIED_REFUSAL_BODY)
+    expect(saveErrorCopy(new ApiError(409, 'match_state', 'event is done')).title).toBe('This event is finished')
     expect(saveErrorCopy(new ApiError(409, 'sequence', 'stale')).title).toMatch(/Another device/)
     expect(saveErrorCopy(new ApiError(422, 'validation', 'winner must be one of the two athletes')).body).toBe('winner must be one of the two athletes')
     expect(saveErrorCopy(new ApiError(500, 'internal', 'boom')).body).toBe('Press Save to try again.')

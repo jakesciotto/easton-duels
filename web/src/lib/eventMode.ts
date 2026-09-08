@@ -1,4 +1,5 @@
 import type { EventMode, EventStatus, Snapshot } from '@shared/types'
+import { ApiError } from '@/lib/api'
 import type { SegmentOption } from '@/components/ui/segment'
 
 /**
@@ -146,6 +147,43 @@ export const deskMatNote = (matNumber: number): string => `${DESK_LEAD}, so noth
  */
 export function statusOf(live: Snapshot | null, fallback: EventStatus): EventStatus {
   return live?.event.status ?? fallback
+}
+
+/**
+ * Certified reads as done everywhere a layout is chosen: the board paints its Final
+ * composition, the Live tab replaces the rack with the record, the Entry tab drops its
+ * form, and the scorer shows its finished screen. The two states differ only in what may
+ * still be changed, which is a separate question from what the screen looks like, so every
+ * layout switch asks this and only the write surfaces ask which of the two it is.
+ */
+export function isFinished(status: EventStatus): boolean {
+  return status === 'done' || status === 'certified'
+}
+
+/** 6.9's finished line, said in the same words by the Live tab and the Entry tab. */
+export const FINISHED_LINE = 'This event is finished. Results can still be corrected until an admin certifies them.'
+
+/** The Entry tab's certified line: the form is gone and so is the ledger's Edit. */
+export const CERTIFIED_ENTRY_LINE = 'This event is certified. No result can change until an admin unlocks it.'
+
+/**
+ * The one sentence a refused write gets after certification, on every surface.
+ *
+ * The server answers `409 match_state` with `event is certified` from every write route,
+ * and the raw message says what happened without saying what to do about it. Matching on
+ * the server's own words is the contract `CERTIFIED_MESSAGE` states on the other side.
+ */
+export const CERTIFIED_REFUSAL_TITLE = 'This event is certified'
+export const CERTIFIED_REFUSAL_BODY = 'Unlock it from the Live tab to change anything.'
+export const CERTIFIED_REFUSAL = `${CERTIFIED_REFUSAL_TITLE}. ${CERTIFIED_REFUSAL_BODY}`
+
+export function isCertifiedRefusal(error: unknown): boolean {
+  return error instanceof ApiError && error.code === 'match_state' && /event is certified/i.test(error.message)
+}
+
+/** The message a write surface prints, with the server's own sentence as the fallback. */
+export function writeErrorMessage(error: Error): string {
+  return isCertifiedRefusal(error) ? CERTIFIED_REFUSAL : error.message
 }
 
 /** The state word beside the mat number when the desk owns the results. */

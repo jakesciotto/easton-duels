@@ -2,7 +2,8 @@ import { useEffect, useState, type FormEvent } from 'react'
 import type { MatchView, WinType } from '@shared/types'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import { newEventId } from '@/lib/ids'
-import { winTypeLabel } from '@/lib/format'
+import { writeErrorMessage } from '@/lib/eventMode'
+import { timeOfDay, winTypeLabel } from '@/lib/format'
 import type { EventDetail, TeamRow } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { dialogBody, dialogFooter, dialogStack, dialogSurface } from '@/components/dialog-frame'
@@ -18,14 +19,6 @@ const WIN_TYPES: { value: WinType; word: string }[] = [
   { value: 'submission', word: 'Submission' },
   { value: 'decision', word: 'Decision' },
 ]
-
-function timeOfDay(iso: string | null): string | null {
-  if (!iso) return null
-  const at = new Date(iso)
-  if (Number.isNaN(at.getTime())) return null
-  const hour = at.getHours() % 12 || 12
-  return `${hour}:${String(at.getMinutes()).padStart(2, '0')} ${at.getHours() < 12 ? 'am' : 'pm'}`
-}
 
 /**
  * 6.13. The head states what is being corrected as one sentence: match, mat, time,
@@ -145,7 +138,7 @@ export function ResultDialog({ detail, match, open, onOpenChange }: { detail: Ev
             {save.error && (
               <Alert className="sm:col-span-2">
                 <AlertTitle>That correction was not saved</AlertTitle>
-                <AlertDescription>{save.error.message}</AlertDescription>
+                <AlertDescription>{writeErrorMessage(save.error)}</AlertDescription>
               </Alert>
             )}
           </DialogBody>

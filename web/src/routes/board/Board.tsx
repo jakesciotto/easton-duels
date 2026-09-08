@@ -1,6 +1,7 @@
 import { useRef, type CSSProperties } from 'react'
 import type { MatchView, Snapshot } from '@shared/types'
 import { ageSeconds, formatAge, isStale } from '@/lib/freshness'
+import { timeOfDay } from '@/lib/format'
 import { POLL_CLOCK_RUNNING_MS, POLL_DEADLINE_MIN_MS, pollIntervalForSnapshot } from '@/lib/pollInterval'
 import { useNow } from '@/lib/useClock'
 import { Hero, HeroSkeleton } from './Hero'
@@ -48,6 +49,9 @@ export const FIRST_CONTACT_MS = POLL_DEADLINE_MIN_MS * 2 + POLL_CLOCK_RUNNING_MS
  */
 export const NOTE_NO_CONTACT = 'Cannot reach the server'
 
+/** 6.15's certified line, with the time of the signature after it. */
+export const CERTIFIED_NOTE = 'Final, certified at'
+
 function settleIds(snapshot: Snapshot | null, held: ReadonlyMap<number, MatchView>, entry: MatchView[]): number[] {
   if (!snapshot) return []
   const ids = new Set<number>()
@@ -81,13 +85,20 @@ export function Board({ snapshot, connected, lastSuccessAt = null, screenMaySlee
   const ageSec = ageSeconds(lastSuccessAt, now)
   const unreachable = silent && now - openedAt.current >= FIRST_CONTACT_MS
 
+  // The signature on the record, in the note slot the board already budgets, so the
+  // summary steps down by its usual factor rather than anything clipping. Absent before
+  // certification: the board never says Final, uncertified.
+  const certifiedAt = plan.comp === 'done' ? timeOfDay(snapshot?.event.certifiedAt) : null
+
   // 4.3: an attention state is never carried by colour alone, and a 1.2cqh bar at the
   // edge of the stage is not a message. Each of these says what is wrong, in words, at
-  // b3, inside the safe area where the room reads.
+  // b3, inside the safe area where the room reads. A fault leads: the certified line is
+  // a statement about the record and everything above it is a thing gone wrong now.
   const reported = [
     unreachable ? NOTE_NO_CONTACT : null,
     stale && ageSec !== null ? `Not updating ${formatAge(ageSec)}` : null,
     screenMaySleep ? 'Screen may sleep' : null,
+    certifiedAt === null ? null : `${CERTIFIED_NOTE} ${certifiedAt}`,
   ].filter((note): note is string => note !== null)
 
   // The note takes a b3 line out of the composition rather than painting over one, so
