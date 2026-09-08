@@ -8,6 +8,7 @@ import { validate } from '../lib/validate.js'
 import { errorJson, requireAdmin } from '../auth/middleware.js'
 import { eventDetail } from './events.js'
 import { bumpVersion } from '../match/events.js'
+import { recordAudit } from '../audit/log.js'
 import { KIDS_BELTS } from '../shared/types.js'
 import type { RosterCandidate } from '../roster/types.js'
 
@@ -64,6 +65,7 @@ export async function upsertCandidates(db: DbLike, eventId: number, candidates: 
       if (existing.weightSource !== 'manual' && cand.weightLbs !== null) Object.assign(update, { weightLbs: cand.weightLbs, weightSource: 'leaderboard' })
       await tx.update(athletes).set(update).where(eq(athletes.id, existing.id)).run()
     }
+    await recordAudit(tx, { eventId, actor: 'admin', action: 'roster_add', detail: { kind: 'candidates', count: candidates.length, teamId } })
     await bumpVersion(tx, eventId)
   })
 }
@@ -85,6 +87,7 @@ athleteRoutes.post('/events/:eventId/athletes', requireAdmin, validate('json', a
         weightLbs: m.weightLbs ?? null, weightSource: m.weightLbs == null ? null : 'manual',
         belt: m.belt ?? null, gender: m.gender ?? null,
       }).run()
+      await recordAudit(tx, { eventId, actor: 'admin', action: 'roster_add', detail: { kind: 'manual', count: 1, name: `${m.firstName} ${m.lastName}` } })
       await bumpVersion(tx, eventId)
     })
   } else if ('bulk' in body) {
@@ -98,6 +101,7 @@ athleteRoutes.post('/events/:eventId/athletes', requireAdmin, validate('json', a
           belt: m.belt ?? null, gender: m.gender ?? null,
         }).run()
       }
+      await recordAudit(tx, { eventId, actor: 'admin', action: 'roster_add', detail: { kind: 'bulk', count: body.bulk.length } })
       await bumpVersion(tx, eventId)
     })
   } else {
@@ -124,6 +128,10 @@ athleteRoutes.patch('/athletes/:athleteId', requireAdmin, validate('json', patch
   if (p.weightLbs !== undefined) Object.assign(update, { weightLbs: p.weightLbs, weightSource: p.weightLbs === null ? null : 'manual' })
   await db.transaction(async tx => {
     if (Object.keys(update).length > 0) await tx.update(athletes).set(update).where(eq(athletes.id, id)).run()
+    await recordAudit(tx, {
+      eventId: existing.eventId, actor: 'admin', action: 'roster_edit',
+      detail: { athleteId: id, name: `${update.firstName ?? existing.firstName} ${update.lastName ?? existing.lastName}`, fields: Object.keys(update) },
+    })
     await bumpVersion(tx, existing.eventId)
   })
   return c.json(await db.select().from(athletes).where(eq(athletes.id, id)).get())
@@ -136,6 +144,7 @@ athleteRoutes.post('/events/:eventId/athletes/assign', requireAdmin, validate('j
   if (!await teamBelongs(db, eventId, teamId)) return errorJson(c, 422, 'validation', 'teamId is not on this event')
   await db.transaction(async tx => {
     await tx.update(athletes).set({ teamId }).where(and(eq(athletes.eventId, eventId), inArray(athletes.id, ids))).run()
+    await recordAudit(tx, { eventId, actor: 'admin', action: 'roster_assign', detail: { count: ids.length, teamId } })
     await bumpVersion(tx, eventId)
   })
   return c.json((await eventDetail(db, eventId))!.athletes)
@@ -150,6 +159,10 @@ athleteRoutes.delete('/athletes/:athleteId', requireAdmin, async c => {
   if (used) return errorJson(c, 409, 'match_state', 'athlete is in a match; delete the match first')
   await db.transaction(async tx => {
     await tx.delete(athletes).where(eq(athletes.id, id)).run()
+    await recordAudit(tx, {
+      eventId: existing.eventId, actor: 'admin', action: 'roster_remove',
+      detail: { athleteId: id, name: `${existing.firstName} ${existing.lastName}` },
+    })
     await bumpVersion(tx, existing.eventId)
   })
   return c.body(null, 204)

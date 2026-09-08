@@ -10,17 +10,25 @@ import { checkLimit, recordFailure } from '../auth/dbRateLimit.js'
 import { pinMatches } from '../auth/pin.js'
 import { signToken, tokenExpiry } from '../auth/tokens.js'
 import { appendMatchEvent, endMatch, extendClock, undoLastMatchEvent, loadMatch, latestEndedAt, bumpVersion, MatchStateError, SeqConflict } from '../match/events.js'
-import { advanceMat, reopenMatch, setResult, skipMatch } from '../match/mats.js'
+import { advanceMat, reopenMatch, skipMatch } from '../match/mats.js'
 import { expireOverdue } from '../match/lazyExpiry.js'
 import { toMatchView, buildSnapshot } from '../live/snapshot.js'
 import { bindMat, heartbeatMat, unbindMat } from '../live/bound.js'
-import { EXTEND_MAX_MS, EXTEND_MIN_MS } from '../shared/types.js'
+import { recordAudit, actorOf, matNumberOf, actorOfMatchEventId } from '../audit/log.js'
+import { EXTEND_MAX_MS, EXTEND_MIN_MS, type AuditActor } from '../shared/types.js'
 
 export const scoringRoutes = new Hono<Env>()
 
 const matIdFromMatch = async (c: Context<Env>): Promise<number | null> => {
   const row = await c.get('ctx').db.select({ matId: matches.matId }).from(matches).where(eq(matches.id, Number(c.req.param('matchId')))).get()
   return row?.matId ?? null
+}
+
+// These routes take either token, so the mat number is looked up once per write rather
+// than being carried in the token, which predates the audit log.
+async function actorFor(c: Context<Env>): Promise<AuditActor> {
+  const auth = c.get('auth')
+  return actorOf(auth, await matNumberOf(c.get('ctx').db, auth))
 }
 
 async function matchView(c: Context<Env>, match: MatchRow) {
@@ -80,13 +88,13 @@ scoringRoutes.post('/events/:eventId/mats/:matId/bind', validate('json', z.objec
     return errorJson(c, 409, 'desk_mode',
       'This event runs from the desk. Every result is typed on the Entry tab, so there is no mat for this iPad to score.')
   }
-  const epoch = await bindMat(ctx.db, matId, eventId, Date.now(), body.takeOver ?? false)
-  if (epoch === null) {
+  const bound = await bindMat(ctx.db, matId, eventId, Date.now(), body.takeOver ?? false)
+  if (bound === null) {
     return errorJson(c, 409, 'mat_bound',
       'This mat already has an iPad scoring it. Take it over to score from here instead.')
   }
   return c.json({
-    token: signToken({ role: 'mat', eventId, matId, epoch, exp: tokenExpiry() }, ctx.secret),
+    token: signToken({ role: 'mat', eventId, matId, epoch: bound.epoch, exp: tokenExpiry() }, ctx.secret),
     mat: { id: mat.id, number: mat.number },
     event: { id: ev.id, name: ev.name },
   })
@@ -106,7 +114,13 @@ scoringRoutes.post('/mats/:matId/advance', requireAdmin, async c => {
       if (current?.status === 'live') throw new MatchStateError('This mat is already showing a match')
     }
     const next = await advanceMat(tx, matId)
-    if (next) await bumpVersion(tx, mat.eventId)
+    if (next) {
+      await recordAudit(tx, {
+        eventId: mat.eventId, matchId: next.id, actor: 'admin', action: 'advance',
+        detail: { matId, matNumber: mat.number },
+      })
+      await bumpVersion(tx, mat.eventId)
+    }
     return next
   })
   return respondOptional(c, mat.eventId, advanced)
@@ -116,7 +130,7 @@ scoringRoutes.post('/mats/:matId/unbind', requireMatOrAdmin(c => Number(c.req.pa
   const { db } = c.get('ctx')
   const mat = await db.select().from(mats).where(eq(mats.id, Number(c.req.param('matId')))).get()
   if (!mat) return errorJson(c, 404, 'not_found', 'mat not found')
-  await unbindMat(db, mat.id, mat.eventId)
+  await unbindMat(db, mat.id, mat.eventId, await actorFor(c))
   return c.json({ ok: true })
 })
 
@@ -141,10 +155,18 @@ const eventBody = z.object({
 scoringRoutes.post('/matches/:matchId/events', requireMatOrAdmin(matIdFromMatch), validate('json', eventBody), async c => {
   const { db } = c.get('ctx')
   const matchId = Number(c.req.param('matchId'))
+  const body = c.req.valid('json')
+  const actor = await actorFor(c)
   try {
     const r = await db.transaction(async tx => {
-      const appended = await appendMatchEvent(tx, { ...c.req.valid('json'), matchId })
-      if (!appended.duplicate) await bumpVersion(tx, appended.match.eventId)
+      const appended = await appendMatchEvent(tx, { ...body, matchId })
+      if (!appended.duplicate) {
+        await recordAudit(tx, {
+          eventId: appended.match.eventId, matchId, actor, action: body.type,
+          detail: { seq: appended.match.lastSeq, athleteId: body.athleteId ?? null, actionKey: body.actionKey ?? null },
+        })
+        await bumpVersion(tx, appended.match.eventId)
+      }
       return appended
     })
     return await respondToScoringEvent(c, r.match)
@@ -157,9 +179,20 @@ scoringRoutes.post('/matches/:matchId/events', requireMatOrAdmin(matIdFromMatch)
 scoringRoutes.delete('/matches/:matchId/events/last', requireMatOrAdmin(matIdFromMatch), validate('json', z.object({ lastSeq: z.number().int().min(0) })), async c => {
   const { db } = c.get('ctx')
   const matchId = Number(c.req.param('matchId'))
+  const actor = await actorFor(c)
   try {
     const match = await db.transaction(async tx => {
-      const undone = await undoLastMatchEvent(tx, { matchId, lastSeq: c.req.valid('json').lastSeq })
+      const { match: undone, deleted } = await undoLastMatchEvent(tx, { matchId, lastSeq: c.req.valid('json').lastSeq })
+      // The deleted row is gone from the match log, so everything about it that a person
+      // would want to see afterwards has to live in this one detail.
+      await recordAudit(tx, {
+        eventId: undone.eventId, matchId, actor, action: 'undo',
+        detail: {
+          seq: deleted.seq, type: deleted.type, actor: actorOfMatchEventId(deleted.id, actor),
+          athleteId: deleted.athleteId, actionKey: deleted.actionKey, points: deleted.points,
+          payload: deleted.payload ?? null, at: deleted.at,
+        },
+      })
       await bumpVersion(tx, undone.eventId)
       return undone
     })
@@ -173,6 +206,7 @@ scoringRoutes.delete('/matches/:matchId/events/last', requireMatOrAdmin(matIdFro
 scoringRoutes.post('/matches/:matchId/end', requireMatOrAdmin(matIdFromMatch), validate('json', z.object({ id: clientEventId, lastSeq: z.number().int().min(0), winnerAthleteId: z.number().int().optional() })), async c => {
   const { db } = c.get('ctx')
   const matchId = Number(c.req.param('matchId'))
+  const actor = await actorFor(c)
   try {
     // advanceMat sits outside the idempotency guard so a retry whose advance never landed
     // still advances the mat. The bump is therefore unconditional: on a replay the advance
@@ -180,6 +214,12 @@ scoringRoutes.post('/matches/:matchId/end', requireMatOrAdmin(matIdFromMatch), v
     // every poller. A spurious bump costs one snapshot rebuild.
     const r = await db.transaction(async tx => {
       const ended = await endMatch(tx, { ...c.req.valid('json'), matchId })
+      if (!ended.duplicate) {
+        await recordAudit(tx, {
+          eventId: ended.match.eventId, matchId, actor, action: 'end',
+          detail: { seq: ended.match.lastSeq, winnerAthleteId: ended.match.winnerAthleteId, winType: ended.match.winType },
+        })
+      }
       if (ended.match.matId !== null) await advanceMat(tx, ended.match.matId)
       await bumpVersion(tx, ended.match.eventId)
       return ended
@@ -202,11 +242,19 @@ scoringRoutes.post('/matches/:matchId/clock/extend', requireMatOrAdmin(matIdFrom
 })), async c => {
   const { db } = c.get('ctx')
   const matchId = Number(c.req.param('matchId'))
+  const body = c.req.valid('json')
+  const actor = await actorFor(c)
   await expireOverdue(db, (await loadMatch(db, matchId)).eventId, Date.now())
   try {
     const r = await db.transaction(async tx => {
-      const extended = await extendClock(tx, { ...c.req.valid('json'), matchId })
-      if (!extended.duplicate) await bumpVersion(tx, extended.match.eventId)
+      const extended = await extendClock(tx, { ...body, matchId })
+      if (!extended.duplicate) {
+        await recordAudit(tx, {
+          eventId: extended.match.eventId, matchId, actor, action: 'clock_extend',
+          detail: { seq: extended.match.lastSeq, addMs: body.addMs },
+        })
+        await bumpVersion(tx, extended.match.eventId)
+      }
       return extended
     })
     return await respond(c, r.match)
@@ -220,6 +268,7 @@ scoringRoutes.post('/matches/:matchId/reopen', requireAdmin, async c => {
   const { db } = c.get('ctx')
   return respond(c, await db.transaction(async tx => {
     const match = await reopenMatch(tx, Number(c.req.param('matchId')))
+    await recordAudit(tx, { eventId: match.eventId, matchId: match.id, actor: 'admin', action: 'reopen', detail: { seq: match.lastSeq } })
     await bumpVersion(tx, match.eventId)
     return match
   }))
@@ -241,17 +290,10 @@ scoringRoutes.post('/matches/:matchId/skip', requireAdmin, async c => {
   if (body instanceof Response) return body
   return respond(c, await db.transaction(async tx => {
     const r = await skipMatch(tx, Number(c.req.param('matchId')), body.id)
-    if (!r.duplicate) await bumpVersion(tx, r.match.eventId)
-    return r.match
-  }))
-})
-
-scoringRoutes.post('/matches/:matchId/result', requireAdmin, validate('json', z.object({ id: clientEventId.optional(), winnerAthleteId: z.number().int(), winType: z.enum(['submission', 'points', 'decision']) })), async c => {
-  const { db } = c.get('ctx')
-  const { id, ...result } = c.req.valid('json')
-  return respond(c, await db.transaction(async tx => {
-    const r = await setResult(tx, Number(c.req.param('matchId')), result, id)
-    if (!r.duplicate) await bumpVersion(tx, r.match.eventId)
+    if (!r.duplicate) {
+      await recordAudit(tx, { eventId: r.match.eventId, matchId: r.match.id, actor: 'admin', action: 'skip', detail: { seq: r.match.lastSeq } })
+      await bumpVersion(tx, r.match.eventId)
+    }
     return r.match
   }))
 })

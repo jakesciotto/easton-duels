@@ -9,6 +9,7 @@ import { generateMatches } from '../matchmaker/generate.js'
 import { resolvePair, leastLoadedMat } from '../match/pairs.js'
 import { eventDetail } from './events.js'
 import { bumpVersion } from '../match/events.js'
+import { recordAudit } from '../audit/log.js'
 import { advanceMat } from '../match/mats.js'
 
 const createSchema = z.object({
@@ -27,6 +28,7 @@ matchRoutes.post('/events/:eventId/matches/generate', requireAdmin, async c => {
   const eventId = Number(c.req.param('eventId'))
   const result = await db.transaction(async tx => {
     const generated = await generateMatches(tx, eventId)
+    await recordAudit(tx, { eventId, actor: 'admin', action: 'generate', detail: { created: generated.created } })
     await bumpVersion(tx, eventId)
     return generated
   })
@@ -60,6 +62,10 @@ matchRoutes.post('/events/:eventId/matches', requireAdmin, validate('json', crea
     // match starts there. advanceMat is a no-op in setup, in desk mode, and on a mat that
     // already has a live match.
     if (matId !== null) await advanceMat(tx, matId)
+    await recordAudit(tx, {
+      eventId, matchId: inserted.id, actor: 'admin', action: 'match_create',
+      detail: { athleteAId: inserted.athleteAId, athleteBId: inserted.athleteBId, matId: inserted.matId, orderIndex: inserted.orderIndex },
+    })
     await bumpVersion(tx, eventId)
     return inserted
   })
@@ -93,6 +99,7 @@ matchRoutes.patch('/matches/:matchId', requireAdmin, validate('json', patchSchem
   await db.transaction(async tx => {
     if (Object.keys(update).length > 0) await tx.update(matches).set(update).where(eq(matches.id, id)).run()
     if (update.matId !== undefined && update.matId !== null) await advanceMat(tx, update.matId)
+    await recordAudit(tx, { eventId: existing.eventId, matchId: id, actor: 'admin', action: 'match_edit', detail: { fields: Object.keys(update), ...update } })
     await bumpVersion(tx, existing.eventId)
   })
   return c.json(await db.select().from(matches).where(eq(matches.id, id)).get())
@@ -107,6 +114,10 @@ matchRoutes.delete('/matches/:matchId', requireAdmin, async c => {
   await db.transaction(async tx => {
     await tx.update(mats).set({ currentMatchId: null }).where(eq(mats.currentMatchId, id)).run()
     await tx.delete(matches).where(eq(matches.id, id)).run()
+    await recordAudit(tx, {
+      eventId: existing.eventId, matchId: id, actor: 'admin', action: 'match_delete',
+      detail: { athleteAId: existing.athleteAId, athleteBId: existing.athleteBId, matId: existing.matId },
+    })
     await bumpVersion(tx, existing.eventId)
   })
   return c.body(null, 204)
@@ -121,6 +132,7 @@ matchRoutes.post('/events/:eventId/matches/reorder', requireAdmin, validate('jso
   if (!same) return errorJson(c, 422, 'validation', 'ids must be every match of the event exactly once')
   await db.transaction(async tx => {
     for (const [i, id] of ids.entries()) await tx.update(matches).set({ orderIndex: i }).where(eq(matches.id, id)).run()
+    await recordAudit(tx, { eventId, actor: 'admin', action: 'reorder', detail: { count: ids.length, ids } })
     await bumpVersion(tx, eventId)
   })
   return c.json((await eventDetail(db, eventId))!.matches)

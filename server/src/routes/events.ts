@@ -10,8 +10,9 @@ import { errorJson, requireAdmin } from '../auth/middleware.js'
 import { randomMatCode } from '../auth/pin.js'
 import { advanceMat, startEvent } from '../match/mats.js'
 import { MatchStateError, bumpVersion, endedAtByMatch } from '../match/events.js'
+import { recordAudit } from '../audit/log.js'
 import { eventContact } from '../live/snapshot.js'
-import { DEFAULT_ACTIONS, DEFAULT_TERMINALS, DEFAULT_LENGTH_SEC, TEAM_COLOR_KEYS, type TeamColor } from '../shared/types.js'
+import { DEFAULT_ACTIONS, DEFAULT_TERMINALS, DEFAULT_LENGTH_SEC, TEAM_COLOR_KEYS, type AuditAction, type TeamColor } from '../shared/types.js'
 
 const colorSchema = z.enum(TEAM_COLOR_KEYS as [TeamColor, ...TeamColor[]])
 export const teamSchema = z.object({ name: z.string().trim().min(1).max(40), color: colorSchema })
@@ -107,6 +108,10 @@ eventRoutes.post('/events', requireAdmin, validate('json', createEventSchema), a
     await tx.insert(teams).values(body.teams.map((t, i) => ({ eventId: ev.id, name: t.name, color: t.color, position: i }))).run()
     await tx.insert(mats).values(Array.from({ length: body.matCount }, (_, i) => ({ eventId: ev.id, number: i + 1 }))).run()
     await tx.insert(rulesets).values({ eventId: ev.id, name: 'Default', defaultLengthSec: DEFAULT_LENGTH_SEC, actions: DEFAULT_ACTIONS, terminals: DEFAULT_TERMINALS }).run()
+    await recordAudit(tx, {
+      eventId: ev.id, actor: 'admin', action: 'create',
+      detail: { name: ev.name, date: ev.date, matCount: ev.matCount, mode: ev.mode, teams: body.teams.map(t => t.name) },
+    })
     await bumpVersion(tx, ev.id)
     return eventDetail(tx, ev.id)
   })
@@ -124,23 +129,37 @@ eventRoutes.patch('/events/:eventId', requireAdmin, validate('json', patchEventS
   const eventId = Number(c.req.param('eventId'))
   const ev = await db.select().from(events).where(eq(events.id, eventId)).get()
   if (!ev) return errorJson(c, 404, 'not_found', 'event not found')
-  const { status, matCount, contactName: name, contactPhone: phone, ...rest } = c.req.valid('json')
+  const { status, matCount, contactName: name, contactPhone: phone, mode, ...rest } = c.req.valid('json')
   const fields: Partial<typeof events.$inferInsert> = { ...rest }
+  if (mode !== undefined) fields.mode = mode
   if (name !== undefined) fields.contactName = blankToNull(name)
   if (phone !== undefined) fields.contactPhone = blankToNull(phone)
+  // One PATCH can carry several unrelated changes, and the history is read a line at a
+  // time, so each concern the body actually changes gets its own row.
   await db.transaction(async tx => {
+    const audit = (action: AuditAction, detail: Record<string, unknown>) => recordAudit(tx, { eventId, actor: 'admin', action, detail })
     if (Object.keys(fields).length > 0) await tx.update(events).set(fields).where(eq(events.id, eventId)).run()
-    if (matCount !== undefined && matCount !== ev.matCount) await setMatCount(tx, eventId, matCount)
+    if (matCount !== undefined && matCount !== ev.matCount) {
+      await setMatCount(tx, eventId, matCount)
+      await audit('mat_count', { from: ev.matCount, to: matCount })
+    }
+    if (Object.keys(rest).length > 0) await audit('event_edit', { ...rest })
+    if (mode !== undefined && mode !== ev.mode) await audit('mode', { from: ev.mode, to: mode })
+    if (name !== undefined || phone !== undefined) await audit('contact', { name: fields.contactName ?? ev.contactName, phone: fields.contactPhone ?? ev.contactPhone })
     // Start skips the mats in entry mode, so an event that switches to the mats halfway
     // through the afternoon has to load them here. Nothing else would: the mats advance
     // when a match ends, and none of them is holding one.
-    if (rest.mode === 'live' && ev.mode !== 'live' && ev.status === 'live') {
+    if (mode === 'live' && ev.mode !== 'live' && ev.status === 'live') {
       for (const mat of await tx.select({ id: mats.id }).from(mats).where(eq(mats.eventId, eventId)).all()) await advanceMat(tx, mat.id)
     }
-    if (status === 'live') await startEvent(tx, eventId)
+    if (status === 'live') {
+      await startEvent(tx, eventId)
+      await audit('start', { mode: mode ?? ev.mode })
+    }
     if (status === 'done') {
       if (ev.status !== 'live') throw new MatchStateError('only a live event can finish')
       await tx.update(events).set({ status: 'done' }).where(eq(events.id, eventId)).run()
+      await audit('finish', {})
     }
     await bumpVersion(tx, eventId)
   })
@@ -153,7 +172,11 @@ eventRoutes.delete('/events/:eventId', requireAdmin, async c => {
   const ev = await db.select().from(events).where(eq(events.id, eventId)).get()
   if (!ev) return errorJson(c, 404, 'not_found', 'event not found')
   if (ev.status !== 'setup') return errorJson(c, 409, 'match_state', 'only an event in setup can be deleted')
-  await db.delete(events).where(eq(events.id, eventId)).run()
+  // The audit row outlives the event, which is the point of a table with no foreign keys.
+  await db.transaction(async tx => {
+    await tx.delete(events).where(eq(events.id, eventId)).run()
+    await recordAudit(tx, { eventId, actor: 'admin', action: 'delete', detail: { name: ev.name, date: ev.date } })
+  })
   return c.body(null, 204)
 })
 
@@ -166,6 +189,10 @@ eventRoutes.patch('/events/:eventId/teams/:teamId', requireAdmin, validate('json
   const fields = c.req.valid('json')
   await db.transaction(async tx => {
     if (Object.keys(fields).length > 0) await tx.update(teams).set(fields).where(eq(teams.id, teamId)).run()
+    await recordAudit(tx, {
+      eventId, actor: 'admin', action: 'team_edit',
+      detail: { teamId, before: { name: team.name, color: team.color }, after: { name: fields.name ?? team.name, color: fields.color ?? team.color } },
+    })
     await bumpVersion(tx, eventId)
   })
   return c.json(await eventDetail(db, eventId))

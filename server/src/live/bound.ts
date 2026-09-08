@@ -3,8 +3,12 @@ import type { DbLike } from '../db/client.js'
 import { mats } from '../db/schema.js'
 import { bumpVersion, MatchStateError } from '../match/events.js'
 import { isBusy } from '../match/expiry.js'
+import { recordAudit } from '../audit/log.js'
+import type { AuditActor } from '../shared/types.js'
 
 export const BOUND_WINDOW_MS = 60_000
+
+export interface BindResult { epoch: number; tookOver: boolean }
 
 export async function heartbeatMat(db: DbLike, matId: number, eventId: number, nowMs: number): Promise<void> {
   const row = await db.select({ bound: mats.bound }).from(mats).where(eq(mats.id, matId)).get()
@@ -26,7 +30,7 @@ export async function heartbeatMat(db: DbLike, matId: number, eventId: number, n
 // caller's token must carry, or null when a tablet is still on the mat and the caller did
 // not ask to take it over. Every successful bind mints the next epoch, so the token any
 // earlier tablet still holds stops working the moment this one starts.
-export async function bindMat(db: DbLike, matId: number, eventId: number, nowMs: number, takeOver: boolean): Promise<number | null> {
+export async function bindMat(db: DbLike, matId: number, eventId: number, nowMs: number, takeOver: boolean): Promise<BindResult | null> {
   return db.transaction(async tx => {
     const row = await tx.select().from(mats).where(eq(mats.id, matId)).get()
     if (!row) throw new MatchStateError('mat not found')
@@ -34,8 +38,12 @@ export async function bindMat(db: DbLike, matId: number, eventId: number, nowMs:
     if (held && !takeOver) return null
     const epoch = row.bindEpoch + 1
     await tx.update(mats).set({ bound: true, lastHeartbeatAt: new Date(nowMs).toISOString(), bindEpoch: epoch }).where(eq(mats.id, matId)).run()
+    await recordAudit(tx, {
+      eventId, actor: `mat:${row.number}`, action: held ? 'takeover' : 'bind',
+      detail: { matId, matNumber: row.number, epoch }, at: new Date(nowMs).toISOString(),
+    })
     await bumpVersion(tx, eventId)
-    return epoch
+    return { epoch, tookOver: held }
   })
 }
 
@@ -43,18 +51,19 @@ export async function bindMat(db: DbLike, matId: number, eventId: number, nowMs:
 // server's flag for the whole reap window, so the Live tab said "No scorer" a minute late
 // and the same tablet re-entering the code was refused with a sentence about another iPad.
 // The epoch moves so the token the tablet just dropped stops being accepted too.
-export async function unbindMat(db: DbLike, matId: number, eventId: number): Promise<void> {
+export async function unbindMat(db: DbLike, matId: number, eventId: number, actor: AuditActor): Promise<void> {
   await db.transaction(async tx => {
-    const row = await tx.select({ bindEpoch: mats.bindEpoch }).from(mats).where(eq(mats.id, matId)).get()
+    const row = await tx.select({ bindEpoch: mats.bindEpoch, number: mats.number }).from(mats).where(eq(mats.id, matId)).get()
     if (!row) throw new MatchStateError('mat not found')
     await tx.update(mats).set({ bound: false, lastHeartbeatAt: null, bindEpoch: row.bindEpoch + 1 }).where(eq(mats.id, matId)).run()
+    await recordAudit(tx, { eventId, actor, action: 'unbind', detail: { matId, matNumber: row.number } })
     await bumpVersion(tx, eventId)
   })
 }
 
 export async function reapBound(db: DbLike, eventId: number, nowMs: number): Promise<void> {
   const cutoff = new Date(nowMs - BOUND_WINDOW_MS).toISOString()
-  const stale = await db.select({ id: mats.id }).from(mats)
+  const stale = await db.select({ id: mats.id, number: mats.number }).from(mats)
     .where(and(eq(mats.eventId, eventId), eq(mats.bound, true), lt(mats.lastHeartbeatAt, cutoff))).all()
   if (stale.length === 0) return
   try {
@@ -64,7 +73,12 @@ export async function reapBound(db: DbLike, eventId: number, nowMs: number): Pro
       // won that race -- nothing changed, so nothing to bump.
       const r = await tx.update(mats).set({ bound: false })
         .where(and(inArray(mats.id, stale.map(m => m.id)), lt(mats.lastHeartbeatAt, cutoff))).run()
-      if (r.rowsAffected > 0) await bumpVersion(tx, eventId)
+      if (r.rowsAffected === 0) return
+      await recordAudit(tx, {
+        eventId, actor: 'system', action: 'unbind',
+        detail: { reaped: true, mats: stale.map(m => m.number) }, at: new Date(nowMs).toISOString(),
+      })
+      await bumpVersion(tx, eventId)
     })
   } catch (e) {
     // A concurrent poller holds the write lock, most likely expiring the same event's

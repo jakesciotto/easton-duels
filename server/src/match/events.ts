@@ -54,6 +54,7 @@ export interface ExtendInput {
 }
 
 export interface AppendResult { duplicate: boolean; match: MatchRow }
+export interface UndoResult { match: MatchRow; deleted: MatchEventRow }
 
 type Insert = typeof matchEvents.$inferInsert
 
@@ -223,7 +224,9 @@ export async function endMatch(db: DbLike, input: EndInput): Promise<AppendResul
   })
 }
 
-export async function undoLastMatchEvent(db: DbLike, input: { matchId: number; lastSeq: number }): Promise<MatchRow> {
+// Returns the row it removed as well as the recomputed match: the delete is the only
+// write that leaves nothing behind in the match log, so the audit row has to carry it.
+export async function undoLastMatchEvent(db: DbLike, input: { matchId: number; lastSeq: number }): Promise<UndoResult> {
   return db.transaction(async tx => {
     const match = await loadMatch(tx, input.matchId)
     await assertEventLive(tx, match.eventId)
@@ -234,6 +237,6 @@ export async function undoLastMatchEvent(db: DbLike, input: { matchId: number; l
     if (last.type === 'admin') throw new MatchStateError('cannot undo an admin event')
     if (last.type === 'clock_pause') throw new MatchStateError('press Start to resume the clock')
     await tx.delete(matchEvents).where(eq(matchEvents.id, last.id)).run()
-    return recompute(tx, match.id)
+    return { match: await recompute(tx, match.id), deleted: last }
   })
 }

@@ -6,6 +6,7 @@ import { events, rulesets, matches } from '../db/schema.js'
 import { validate } from '../lib/validate.js'
 import { errorJson, requireAdmin } from '../auth/middleware.js'
 import { bumpVersion } from '../match/events.js'
+import { recordAudit } from '../audit/log.js'
 
 const key = z.string().regex(/^[a-z0-9_]{1,20}$/)
 const label = z.string().trim().min(1).max(20)
@@ -32,6 +33,7 @@ rulesetRoutes.post('/events/:eventId/rulesets', requireAdmin, validate('json', r
   if (!await db.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get()) return errorJson(c, 404, 'not_found', 'event not found')
   const row = await db.transaction(async tx => {
     const inserted = await tx.insert(rulesets).values({ eventId, ...c.req.valid('json') }).returning().get()
+    await recordAudit(tx, { eventId, actor: 'admin', action: 'ruleset_create', detail: { rulesetId: inserted.id, name: inserted.name } })
     await bumpVersion(tx, eventId)
     return inserted
   })
@@ -46,6 +48,7 @@ rulesetRoutes.patch('/rulesets/:rulesetId', requireAdmin, validate('json', rules
   const fields = c.req.valid('json')
   await db.transaction(async tx => {
     if (Object.keys(fields).length > 0) await tx.update(rulesets).set(fields).where(eq(rulesets.id, id)).run()
+    await recordAudit(tx, { eventId: existing.eventId, actor: 'admin', action: 'ruleset_edit', detail: { rulesetId: id, name: fields.name ?? existing.name, fields: Object.keys(fields) } })
     await bumpVersion(tx, existing.eventId)
   })
   return c.json(await db.select().from(rulesets).where(eq(rulesets.id, id)).get())
@@ -61,6 +64,7 @@ rulesetRoutes.delete('/rulesets/:rulesetId', requireAdmin, async c => {
   if (count <= 1) return errorJson(c, 409, 'match_state', 'an event needs at least one ruleset')
   await db.transaction(async tx => {
     await tx.delete(rulesets).where(eq(rulesets.id, id)).run()
+    await recordAudit(tx, { eventId: existing.eventId, actor: 'admin', action: 'ruleset_delete', detail: { rulesetId: id, name: existing.name } })
     await bumpVersion(tx, existing.eventId)
   })
   return c.body(null, 204)

@@ -4,6 +4,7 @@ import { matches } from '../db/schema.js'
 import { bumpVersion } from './events.js'
 import { effectiveLengthMs } from './derive.js'
 import { expireClock, isBusy } from './expiry.js'
+import { recordAudit } from '../audit/log.js'
 
 // Live matches whose running clock has elapsed by nowMs still show 'live' in the
 // matches table until something checks. Snapshot polls and scoring writes both call
@@ -22,7 +23,13 @@ export async function expireOverdue(db: Db, eventId: number, nowMs: number): Pro
     await db.transaction(async tx => {
       let expired = false
       for (const m of overdue) {
-        if (await expireClock(tx, m.id, atIso)) expired = true
+        const closed = await expireClock(tx, m.id, atIso)
+        if (!closed) continue
+        expired = true
+        await recordAudit(tx, {
+          eventId, matchId: closed.id, actor: 'system', action: 'clock_pause',
+          detail: { seq: closed.lastSeq, expiry: true }, at: atIso,
+        })
       }
       if (expired) await bumpVersion(tx, eventId)
     })

@@ -21,7 +21,9 @@ export interface CreateEntryInput extends EntryInput {
   rulesetId?: number
 }
 
-export interface EntryResult { duplicate: boolean; match: MatchRow }
+// `created` is set only by createEntry, and says whether the pair had no open match and
+// one was made for it. The audit row for an entry carries it.
+export interface EntryResult { duplicate: boolean; match: MatchRow; created?: boolean }
 
 type Insert = typeof matchEvents.$inferInsert
 
@@ -115,6 +117,6 @@ export async function createEntry(db: DbLike, eventId: number, input: CreateEntr
         matId: null, orderIndex: (max?.m ?? -1) + 1, why: 'entered by hand',
       }).returning().get()).id
     }
-    return enterResult(tx, matchId, input)
+    return { ...await enterResult(tx, matchId, input), created: existing === undefined }
   })
 }

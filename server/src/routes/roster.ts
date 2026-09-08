@@ -8,6 +8,7 @@ import { errorJson, requireAdmin } from '../auth/middleware.js'
 import { fetchCompetitors } from '../roster/leaderboard.js'
 import { buildCandidates } from '../roster/join.js'
 import { WlRequestError } from '../roster/wl.js'
+import { recordAudit } from '../audit/log.js'
 import type { WlBeltRecord, LeaderboardCompetitor, RosterCandidate } from '../roster/types.js'
 
 export const rosterRoutes = new Hono<Env>()
@@ -70,6 +71,10 @@ rosterRoutes.post('/events/:eventId/roster/sync', requireAdmin, validate('json',
   await db.transaction(async tx => {
     await tx.delete(rosterCandidates).where(eq(rosterCandidates.eventId, eventId)).run()
     if (candidates.length > 0) await tx.insert(rosterCandidates).values(candidates.map(cand => ({ eventId, ...cand }))).run()
+    await recordAudit(tx, {
+      eventId, actor: 'admin', action: 'roster_sync',
+      detail: { locations: kBusinesses.length, candidates: candidates.length, warnings: warnings.length },
+    })
   })
   return c.json({ candidates, warnings })
 })

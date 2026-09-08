@@ -2,7 +2,6 @@ import { and, asc, eq, ne, sql } from 'drizzle-orm'
 import type { DbLike } from '../db/client.js'
 import { events, mats, matches, matchEvents, type MatchRow, type MatRow } from '../db/schema.js'
 import { loadMatch, recompute, MatchStateError } from './events.js'
-import type { WinType } from '../shared/types.js'
 
 async function loadMat(db: DbLike, matId: number): Promise<MatRow> {
   const row = await db.select().from(mats).where(eq(mats.id, matId)).get()
@@ -109,22 +108,6 @@ export async function reopenMatch(db: DbLike, matchId: number): Promise<MatchRow
     const seq = match.lastSeq + 1
     await tx.insert(matchEvents).values({ id: adminEventId(match.id, seq), matchId: match.id, seq, type: 'admin', payload: { kind: 'reopen' }, at: new Date().toISOString() }).run()
     return recompute(tx, match.id)
-  })
-}
-
-export async function setResult(db: DbLike, matchId: number, result: { winnerAthleteId: number; winType: WinType }, id?: string): Promise<AdminWriteResult> {
-  return db.transaction(async tx => {
-    const replay = await replayedAdmin(tx, id)
-    if (replay) return replay
-    const match = await loadMatch(tx, matchId)
-    if (match.status !== 'done') throw new MatchStateError('only a done match can have its result edited')
-    if (result.winnerAthleteId !== match.athleteAId && result.winnerAthleteId !== match.athleteBId) throw new MatchStateError('athlete not in match')
-    const seq = match.lastSeq + 1
-    await tx.insert(matchEvents).values({
-      id: id === undefined ? adminEventId(match.id, seq) : clientAdminEventId(id), matchId: match.id, seq, type: 'admin', athleteId: result.winnerAthleteId,
-      payload: { kind: 'edit_result', ...result }, at: new Date().toISOString(),
-    }).run()
-    return { duplicate: false, match: await recompute(tx, match.id) }
   })
 }
 

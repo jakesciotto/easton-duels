@@ -2,12 +2,13 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { eq } from 'drizzle-orm'
 import type { Env } from '../context.js'
-import { events, matches } from '../db/schema.js'
+import { events, matches, type MatchRow } from '../db/schema.js'
 import { validate } from '../lib/validate.js'
 import { errorJson, requireAdmin } from '../auth/middleware.js'
 import { enterResult, createEntry } from '../match/entry.js'
 import { bumpVersion } from '../match/events.js'
 import { resolvePair } from '../match/pairs.js'
+import { recordAudit } from '../audit/log.js'
 import { respond } from './scoring.js'
 
 const entrySchema = z.object({
@@ -24,6 +25,8 @@ const createSchema = entrySchema.extend({
   rulesetId: z.number().int().optional(),
 })
 
+const result = (m: MatchRow) => ({ pointsA: m.pointsA, pointsB: m.pointsB, winnerAthleteId: m.winnerAthleteId, winType: m.winType })
+
 export const entryRoutes = new Hono<Env>()
 
 entryRoutes.post('/matches/:matchId/entry', requireAdmin, validate('json', entrySchema), async c => {
@@ -33,9 +36,21 @@ entryRoutes.post('/matches/:matchId/entry', requireAdmin, validate('json', entry
   if (!match) return errorJson(c, 404, 'not_found', 'match not found')
   const body = c.req.valid('json')
   if (body.winnerAthleteId !== match.athleteAId && body.winnerAthleteId !== match.athleteBId) return errorJson(c, 422, 'validation', 'winner must be one of the two athletes')
+  // A settled match typed again is a correction, and the audit row carries both sides of
+  // it: what the board had been showing, and what it shows now.
+  const correcting = match.status === 'done'
   const { match: updated } = await db.transaction(async tx => {
     const r = await enterResult(tx, matchId, body)
-    if (!r.duplicate) await bumpVersion(tx, r.match.eventId)
+    if (!r.duplicate) {
+      await recordAudit(tx, {
+        eventId: r.match.eventId, matchId, actor: 'desk',
+        action: correcting ? 'correction' : 'entry',
+        detail: correcting
+          ? { before: result(match), after: result(r.match) }
+          : result(r.match),
+      })
+      await bumpVersion(tx, r.match.eventId)
+    }
     return r
   })
   return respond(c, updated)
@@ -51,7 +66,13 @@ entryRoutes.post('/events/:eventId/entries', requireAdmin, validate('json', crea
   if (body.winnerAthleteId !== pair.a && body.winnerAthleteId !== pair.b) return errorJson(c, 422, 'validation', 'winner must be one of the two athletes')
   const { duplicate, match } = await db.transaction(async tx => {
     const r = await createEntry(tx, eventId, body)
-    if (!r.duplicate) await bumpVersion(tx, eventId)
+    if (!r.duplicate) {
+      await recordAudit(tx, {
+        eventId, matchId: r.match.id, actor: 'desk', action: 'entry',
+        detail: { ...result(r.match), created: r.created === true },
+      })
+      await bumpVersion(tx, eventId)
+    }
     return r
   })
   const res = await respond(c, match)

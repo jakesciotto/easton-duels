@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { freshDb, seedEvent } from './fixtures.js'
-import { startEvent, advanceMat, reopenMatch, setResult, skipMatch } from '../src/match/mats.js'
+import { startEvent, advanceMat, reopenMatch, skipMatch } from '../src/match/mats.js'
 import { appendMatchEvent, endMatch, loadMatch, loadEvents, MatchStateError } from '../src/match/events.js'
 import { enterResult } from '../src/match/entry.js'
 import { events, mats, matches } from '../src/db/schema.js'
@@ -117,30 +117,6 @@ describe('reopenMatch', () => {
     const db = await freshDb()
     const s = await seedEvent(db, { live: true })
     await expect(reopenMatch(db, s.matchIds[0])).rejects.toThrow(MatchStateError)
-  })
-})
-
-describe('setResult', () => {
-  it('overrides the winner on a done match through an admin event', async () => {
-    const db = await freshDb()
-    const s = await seedEvent(db, { live: true })
-    await endMatch(db, { id: 'end1', matchId: s.matchIds[0], lastSeq: 0, winnerAthleteId: s.a1 })
-    const { match: m } = await setResult(db, s.matchIds[0], { winnerAthleteId: s.b1, winType: 'decision' })
-    expect(m.winnerAthleteId).toBe(s.b1)
-    expect(m.status).toBe('done')
-    expect(m.lastSeq).toBe(2)
-  })
-
-  it('replays a client id without appending a second admin event', async () => {
-    const db = await freshDb()
-    const s = await seedEvent(db, { live: true })
-    await endMatch(db, { id: 'end1', matchId: s.matchIds[0], lastSeq: 0, winnerAthleteId: s.a1 })
-    const first = await setResult(db, s.matchIds[0], { winnerAthleteId: s.b1, winType: 'decision' }, 'result-0001')
-    const replay = await setResult(db, s.matchIds[0], { winnerAthleteId: s.b1, winType: 'decision' }, 'result-0001')
-    expect(first.duplicate).toBe(false)
-    expect(replay.duplicate).toBe(true)
-    expect(replay.match.lastSeq).toBe(first.match.lastSeq)
-    expect(await loadEvents(db, s.matchIds[0])).toHaveLength(2)
   })
 })
 
