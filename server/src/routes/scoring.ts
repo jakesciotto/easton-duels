@@ -175,7 +175,7 @@ scoringRoutes.post('/matches/:matchId/events', requireMatOrAdmin(matIdFromMatch)
           eventId: appended.match.eventId, matchId, actor, action: body.type,
           detail: {
             seq: appended.match.lastSeq, athleteId: body.athleteId ?? null, actionKey: body.actionKey ?? null,
-            ...(appended.scored ?? {}),
+            ...appended.scored,
           },
         })
         await bumpVersion(tx, appended.match.eventId)

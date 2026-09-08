@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState, type FormEvent, type UIEvent } from 'react'
 import { KIDS_BELTS } from '@shared/types'
+import { writeErrorMessage } from '@/lib/eventMode'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import { ApiError } from '@/lib/api'
 import type { EventDetail, ManualKid, RosterCandidate } from '@/lib/types'
@@ -233,7 +234,7 @@ export function AddKidDialog({ detail, open, onOpenChange, onRefresh }: {
               {addCandidates.error && (
                 <Alert>
                   <AlertTitle>Those competitors were not added</AlertTitle>
-                  <AlertDescription>{addCandidates.error.message}</AlertDescription>
+                  <AlertDescription>{writeErrorMessage(addCandidates.error)}</AlertDescription>
                 </Alert>
               )}
             </TabsContent>
@@ -299,7 +300,7 @@ export function AddKidDialog({ detail, open, onOpenChange, onRefresh }: {
                 {addManual.error && (
                   <Alert>
                     <AlertTitle>That competitor was not added</AlertTitle>
-                    <AlertDescription>{addManual.error.message}</AlertDescription>
+                    <AlertDescription>{writeErrorMessage(addManual.error)}</AlertDescription>
                   </Alert>
                 )}
               </form>

@@ -7,7 +7,7 @@ import type { EventMode, Snapshot } from '@shared/types'
 import EventPage from '@/routes/EventPage'
 import { qk } from '@/lib/queries'
 import { ENGAGEMENT_RECHECK_MS } from '@/lib/operatorEngaged'
-import { DESK_NOTE, MODE_GROUP_LABEL, MODE_LABEL, MODE_ORDER } from '@/lib/eventMode'
+import { CERTIFIED_REFUSAL, DESK_NOTE, MODE_GROUP_LABEL, MODE_LABEL, MODE_ORDER } from '@/lib/eventMode'
 import { setAdminToken } from '@/lib/auth'
 import type { EventDetail, MatchRow } from '@/lib/types'
 import { fakeFetch, sampleMatch, sampleSnapshot, type Reply } from './fakes'
@@ -211,6 +211,33 @@ describe('EventPage: how the event runs is one stored setting on the shell', () 
     f.calls.findIndex(c => c.url === '/api/events/7' && c.init?.method === 'PATCH')
   const deskOption = () => screen.getByRole('radio', { name: MODE_LABEL.entry })
   const matsOption = () => screen.getByRole('radio', { name: MODE_LABEL.live })
+
+  /**
+   * 6.8 on the shell. Certification refuses every write on the event, so the two controls
+   * the strip carries are dead before they are pressed and the strip prints why, rather
+   * than each one being accepted and answered with the server's bare "event is certified".
+   */
+  it('kills the mode segment and the desk contact once the event is certified', async () => {
+    const { f } = mount(detailRoute({ status: 'certified' }, slowSnapshot({ status: 'certified' })))
+    await screen.findByRole('radiogroup', { name: MODE_GROUP_LABEL })
+    await vi.waitFor(() => expect(deskOption()).toHaveAttribute('aria-disabled', 'true'))
+    expect(matsOption()).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByText(CERTIFIED_REFUSAL)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Add a desk contact' })).toBeDisabled()
+
+    // A disabled control still leaves a programmatic change able to fire.
+    fireEvent.click(deskOption())
+    await act(async () => { await Promise.resolve() })
+    expect(patchIndex(f)).toBe(-1)
+  })
+
+  it('leaves both alive on an event that is only finished', async () => {
+    mount(detailRoute({ status: 'done' }, slowSnapshot({ status: 'done' })))
+    await screen.findByRole('radiogroup', { name: MODE_GROUP_LABEL })
+    await vi.waitFor(() => expect(deskOption()).not.toHaveAttribute('aria-disabled'))
+    expect(screen.getByRole('button', { name: 'Add a desk contact' })).toBeEnabled()
+    expect(screen.queryByText(CERTIFIED_REFUSAL)).not.toBeInTheDocument()
+  })
 
   it('lands on the Roster tab in live mode', async () => {
     mount(detailRoute())
@@ -484,6 +511,24 @@ describe('EventPage: the desk contact', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Save contact' }))
     await vi.waitFor(() => expect(patched(f)).toBeGreaterThan(-1))
     expect(f.body(patched(f))).toEqual({ contactName: 'Sam', contactPhone: '555-0142' })
+  })
+
+  // The dialog can still be open when another desk certifies, so its refusal has to say
+  // what to do rather than repeat the server's bare "event is certified".
+  it('says what to do when the server refuses the save on a certified event', async () => {
+    const stored = withContact({ contact: { name: 'Sam', phone: '555-0142' } })
+    mount((url, init) => {
+      if (url === '/api/events/7' && init?.method === 'PATCH') {
+        return { status: 409, json: { error: { code: 'match_state', message: 'event is certified' } } }
+      }
+      return snapshotReply(url) ?? (url === '/api/events/7' ? { json: stored } : undefined)
+    })
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Desk contact: Sam' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Save contact' }))
+    expect(await within(dialog).findByText(CERTIFIED_REFUSAL)).toBeInTheDocument()
+    expect(within(dialog).queryByText('event is certified')).not.toBeInTheDocument()
   })
 
   it('opens on the stored pair, so changing one half does not clear the other', async () => {

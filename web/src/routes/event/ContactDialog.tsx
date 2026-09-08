@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
+import { writeErrorMessage } from '@/lib/eventMode'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import type { EventDetail } from '@/lib/types'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -77,7 +78,7 @@ export function ContactDialog({ open, onOpenChange, detail }: {
               {save.error && (
                 <Alert>
                   <AlertTitle>The contact was not saved</AlertTitle>
-                  <AlertDescription>{save.error.message}</AlertDescription>
+                  <AlertDescription>{writeErrorMessage(save.error)}</AlertDescription>
                 </Alert>
               )}
             </div>

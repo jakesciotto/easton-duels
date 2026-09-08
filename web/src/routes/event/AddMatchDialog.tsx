@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { formatClock } from '@shared/clock'
+import { writeErrorMessage } from '@/lib/eventMode'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import type { AthleteRow, EventDetail, TeamRow } from '@/lib/types'
 import { athleteName } from '@/lib/format'
@@ -140,7 +141,7 @@ export function AddMatchDialog({ detail, open, onOpenChange }: { detail: EventDe
             {create.error && (
               <Alert className="sm:col-span-2">
                 <AlertTitle>That match was not added</AlertTitle>
-                <AlertDescription>{create.error.message}</AlertDescription>
+                <AlertDescription>{writeErrorMessage(create.error)}</AlertDescription>
               </Alert>
             )}
           </DialogBody>

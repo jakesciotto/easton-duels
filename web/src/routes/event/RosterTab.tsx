@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
+import { writeErrorMessage } from '@/lib/eventMode'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import type { AthleteRow, EventDetail } from '@/lib/types'
 import { athleteName } from '@/lib/format'
@@ -131,8 +132,8 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
   // wrong action. submittedAt is the moment each failing run started, so the newer failure
   // wins and the title always names the action that actually failed.
   const failure = [
-    assign.error ? { title: 'The move failed', message: assign.error.message, at: assign.submittedAt } : null,
-    patch.error ? { title: 'The edit was not saved', message: patch.error.message, at: patch.submittedAt } : null,
+    assign.error ? { title: 'The move failed', message: writeErrorMessage(assign.error), at: assign.submittedAt } : null,
+    patch.error ? { title: 'The edit was not saved', message: writeErrorMessage(patch.error), at: patch.submittedAt } : null,
   ].filter((f): f is { title: string; message: string; at: number } => f !== null)
     .sort((x, y) => y.at - x.at)[0] ?? null
   // 7.12: one polite region per screen, phrased as a sentence, present and empty from
@@ -197,7 +198,7 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
               {remove.error && (
                 <Alert>
                   <AlertTitle>{stoppedOn ?? 'The competitor'} was not removed</AlertTitle>
-                  <AlertDescription>{remove.error.message}</AlertDescription>
+                  <AlertDescription>{writeErrorMessage(remove.error)}</AlertDescription>
                 </Alert>
               )}
             </DialogBody>

@@ -11,7 +11,7 @@ import { pollIntervalForSnapshot } from '@/lib/pollInterval'
 import { SETUP_PARAM, setupStepOf, type SetupStep } from '@/lib/setupFlow'
 import {
   MODE_GROUP_LABEL, MODE_LABEL, MODE_OPTIONS, deskSwitchConsequence, deskSwitchMidMatch,
-  deskSwitchRefusal, modeOf, toMode, type MidMatchMat,
+  deskSwitchRefusal, modeOf, statusOf, toMode, writeErrorMessage, CERTIFIED_REFUSAL, type MidMatchMat,
 } from '@/lib/eventMode'
 import { cn } from '@/lib/utils'
 import type { EventDetail } from '@/lib/types'
@@ -78,7 +78,7 @@ function DeskSwitchDialog({ mats, pending, error, onCancel, onConfirm }: {
             {error && (
               <Alert>
                 <AlertTitle>How this event runs was not changed</AlertTitle>
-                <AlertDescription>{error.message}</AlertDescription>
+                <AlertDescription>{writeErrorMessage(error)}</AlertDescription>
               </Alert>
             )}
           </div>
@@ -108,13 +108,15 @@ function DeskSwitchDialog({ mats, pending, error, onCancel, onConfirm }: {
  * held. The handler refuses too, since a programmatic change can still reach it.
  *
  * The strip also carries the escalation contact (6.4), because the only version of that
- * field anybody fills in is the one reachable from the event itself.
+ * field anybody fills in is the one reachable from the event itself. Certification refuses
+ * a write to the contact as much as to the mode, so it takes the contact button too.
  */
-function EventMeta({ eventId, detail, mode, refusal, snapshot }: {
+function EventMeta({ eventId, detail, mode, refusal, certified, snapshot }: {
   eventId: number
   detail: EventDetail
   mode: EventMode
   refusal: string | null
+  certified: boolean
   snapshot: Snapshot | null
 }) {
   const [confirming, setConfirming] = useState<MidMatchMat[]>([])
@@ -141,7 +143,11 @@ function EventMeta({ eventId, detail, mode, refusal, snapshot }: {
         <span className="fig">{detail.event.date}</span>
         <span><span className="fig">{detail.athletes.length}</span> competitors</span>
         <span><span className="fig">{detail.matches.length}</span> matches</span>
-        <Button variant="ghost" size="sm" onClick={() => setContactOpen(true)}>
+        <Button
+          variant="ghost" size="sm" disabled={certified}
+          title={certified ? CERTIFIED_REFUSAL : undefined}
+          onClick={() => setContactOpen(true)}
+        >
           {contact === null ? 'Add a desk contact' : `Desk contact: ${contact.name}`}
         </Button>
         <Field.Root disabled={refusal !== null} className={cn('ml-auto min-w-0', refusal !== null && 'opacity-50')}>
@@ -157,7 +163,7 @@ function EventMeta({ eventId, detail, mode, refusal, snapshot }: {
       {set.error && confirming.length === 0 && (
         <Alert>
           <AlertTitle>How this event runs was not changed</AlertTitle>
-          <AlertDescription>{set.error.message}</AlertDescription>
+          <AlertDescription>{writeErrorMessage(set.error)}</AlertDescription>
         </Alert>
       )}
       {/* The dialog stays up for the round trip and closes on success, so its own control
@@ -205,7 +211,10 @@ function EventBody({ eventId }: { eventId: number }) {
   // rack and not the event's own configuration, and because the guard below is a statement
   // about the room rather than about the picture.
   const mode = modeOf(stream.live, detail.event.mode)
-  const refusal = mode === 'live' ? deskSwitchRefusal(stream.live) : null
+  // Certification outranks the mid-bout guard: it refuses every write on the event, so it
+  // is the reason the strip prints and the reason its controls are dead (6.8).
+  const certified = statusOf(stream.live, detail.event.status) === 'certified'
+  const refusal = certified ? CERTIFIED_REFUSAL : mode === 'live' ? deskSwitchRefusal(stream.live) : null
   // Leaving a step keeps the operator on the tab that step was standing over: Open the
   // event lands on the running order it just generated, not back on the roster.
   const leave = (next: SetupStep | null) => {
@@ -236,7 +245,7 @@ function EventBody({ eventId }: { eventId: number }) {
         paused: stream.paused,
         waiting: stream.waiting,
       }}
-      meta={<EventMeta eventId={eventId} detail={detail} mode={mode} refusal={refusal} snapshot={stream.live} />}
+      meta={<EventMeta eventId={eventId} detail={detail} mode={mode} refusal={refusal} certified={certified} snapshot={stream.live} />}
       footer={contactFooter(detail)}
     >
       <SnapshotStreamContext value={shared}>

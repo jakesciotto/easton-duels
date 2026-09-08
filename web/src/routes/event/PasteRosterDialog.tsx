@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { writeErrorMessage } from '@/lib/eventMode'
 import { parseRosterPaste } from '@/lib/roster-paste'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import type { EventDetail, ManualKid } from '@/lib/types'
@@ -127,7 +128,7 @@ export function PasteRosterDialog({ detail, open, onOpenChange }: { detail: Even
           {add.error && (
             <Alert>
               <AlertTitle>That roster was not added</AlertTitle>
-              <AlertDescription>{add.error.message}</AlertDescription>
+              <AlertDescription>{writeErrorMessage(add.error)}</AlertDescription>
             </Alert>
           )}
         </DialogBody>

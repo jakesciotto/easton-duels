@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RulesetDialog } from '@/routes/event/RulesetDialog'
 import { setAdminToken } from '@/lib/auth'
 import type { EventDetail, MatchRow, RulesetRow } from '@/lib/types'
+import { CERTIFIED_REFUSAL } from '@/lib/eventMode'
 import { fakeFetch } from './fakes'
 
 beforeEach(() => { localStorage.clear(); setAdminToken('tok') })
@@ -44,6 +45,18 @@ describe('RulesetDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Save ruleset' }))
     await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/rulesets/3')).toBe(true))
     expect(f.body(f.calls.findIndex(c => c.url === '/api/rulesets/3')).defaultLengthSec).toBe(180)
+  })
+
+  // The server answers every refused write with the same bare "event is certified", which
+  // says what happened and not what to do about it. Every write surface prints the one
+  // sentence that does.
+  it('says what to do when the server refuses the save on a certified event', async () => {
+    fakeFetch(() => ({ status: 409, json: { error: { code: 'match_state', message: 'event is certified' } } }))
+    mount()
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Save ruleset' }))
+    expect(await screen.findByText(CERTIFIED_REFUSAL)).toBeInTheDocument()
+    expect(screen.queryByText('event is certified')).not.toBeInTheDocument()
   })
 
   it('will not commit a length the server would reject', async () => {

@@ -3,7 +3,7 @@ import { formatClock } from '@shared/clock'
 import type { RulesetAction, RulesetTerminal } from '@shared/types'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import { useSnapshot } from '@/lib/useSnapshot'
-import { DESK_RULESET_NOTE, modeOf } from '@/lib/eventMode'
+import { DESK_RULESET_NOTE, modeOf, writeErrorMessage } from '@/lib/eventMode'
 import type { EventDetail, RulesetRow } from '@/lib/types'
 import { RulesetDialog } from './RulesetDialog'
 import { Button } from '@/components/ui/button'
@@ -105,7 +105,7 @@ export function RulesetsTab({ detail }: { detail: EventDetail }) {
         <Button size="sm" onClick={() => { setEditing(undefined); setOpen(true) }}>New ruleset</Button>
         {remove.error && (
           <Alert className="w-fit">
-            <AlertDescription>{remove.error.message}</AlertDescription>
+            <AlertDescription>{writeErrorMessage(remove.error)}</AlertDescription>
           </Alert>
         )}
       </div>

@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { XIcon } from 'lucide-react'
 import { formatClock } from '@shared/clock'
 import { DEFAULT_LENGTH_SEC, type RulesetAction, type RulesetTerminal, type WinType } from '@shared/types'
+import { writeErrorMessage } from '@/lib/eventMode'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import type { EventDetail, RulesetRow } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -255,7 +256,7 @@ export function RulesetDialog({ detail, open, onOpenChange, ruleset }: { detail:
             {save.error && (
               <Alert>
                 <AlertTitle>That ruleset was not saved</AlertTitle>
-                <AlertDescription>{save.error.message}</AlertDescription>
+                <AlertDescription>{writeErrorMessage(save.error)}</AlertDescription>
               </Alert>
             )}
           </DialogBody>

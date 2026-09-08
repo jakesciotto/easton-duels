@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { formatClock } from '@shared/clock'
+import { writeErrorMessage } from '@/lib/eventMode'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import { ApiError } from '@/lib/api'
 import type { EventDetail, RosterCandidate } from '@/lib/types'
@@ -234,7 +235,7 @@ export function SyncRosterDialog({ detail, open, onOpenChange }: { detail: Event
           {add.error && (
             <Alert>
               <AlertTitle>Those competitors were not added</AlertTitle>
-              <AlertDescription>{add.error.message}</AlertDescription>
+              <AlertDescription>{writeErrorMessage(add.error)}</AlertDescription>
             </Alert>
           )}
         </DialogBody>
