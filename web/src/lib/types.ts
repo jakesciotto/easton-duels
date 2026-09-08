@@ -1,4 +1,4 @@
-import type { EventMode, EventStatus, MatchStatus, RulesetAction, RulesetTerminal, TeamColor, WinType } from '@shared/types'
+import type { EventContact, EventMode, EventStatus, MatchStatus, RulesetAction, RulesetTerminal, TeamColor, WinType } from '@shared/types'
 
 export interface EventRow {
   id: number
@@ -12,6 +12,15 @@ export interface EventRow {
   maxWeightGap: number
   sameGender: boolean
   createdAt: string
+  /**
+   * 6.4's escalation contact. Optional because the two endpoints that serve an event row
+   * carry different halves of it: the list serves the raw columns and the detail adds the
+   * joined `contact`, which is null unless both halves are filled. A caller reads whichever
+   * one it has and prints nothing when it has neither.
+   */
+  contactName?: string | null
+  contactPhone?: string | null
+  contact?: EventContact | null
 }
 export interface TeamRow { id: number; eventId: number; name: string; color: TeamColor; position: number }
 export interface AthleteRow {

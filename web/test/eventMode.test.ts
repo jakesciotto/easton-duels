@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import type { MatView, Snapshot } from '@shared/types'
 import {
   DESK_BIND_REFUSAL, DESK_NOTE, DESK_NOTE_DETAIL, MODE_LABEL, MODE_OPTIONS, MODE_ORDER,
-  deskSwitchRefusal, modeOf, toMode,
+  deskSwitchConsequence, deskSwitchMidMatch, deskSwitchRefusal, modeOf, toMode,
 } from '@/lib/eventMode'
 import { sampleMatch, sampleSnapshot } from './fakes'
 
@@ -46,39 +46,95 @@ describe('modeOf', () => {
   })
 })
 
+const RUNNING = { elapsedMs: 0, startedAt: '2026-10-03T16:00:00.000Z', lengthMs: 300_000 }
+const STOPPED = { elapsedMs: 40_000, startedAt: null, lengthMs: 300_000 }
+
+/**
+ * The guard only ever refuses for a running clock now.
+ *
+ * The old one also refused for a bound mat and for any mat carrying a match, and once an
+ * idle mat calls the next match the instant one ends, every mat carries one for the whole
+ * afternoon: the control was disabled all event and the desk fallback the setting exists
+ * to reach was unreachable.
+ */
 describe('deskSwitchRefusal', () => {
-  it('lets the switch through when no mat is bound and no mat is carrying a match', () => {
+  it('lets the switch through when no clock is running', () => {
     expect(deskSwitchRefusal(withMats([mat({ id: 1, number: 1 }), mat({ id: 2, number: 2 })]))).toBeNull()
   })
 
-  it('names the bound mat and says what the board would do', () => {
-    const refusal = deskSwitchRefusal(withMats([mat({ id: 1, number: 1, bound: true }), mat({ id: 2, number: 2 })]))
-    expect(refusal).toBe('Mat 1 has an iPad connected. The board drops the mat rack as soon as the desk takes over.')
+  it('lets a bound mat with nothing on it through', () => {
+    expect(deskSwitchRefusal(withMats([mat({ id: 1, number: 1, bound: true })]))).toBeNull()
   })
 
-  it('names a mat that is carrying a match even with no tablet on it', () => {
-    const running = sampleMatch({ id: 10 })
-    const refusal = deskSwitchRefusal(withMats([mat({ id: 3, number: 3, current: running })]))
-    expect(refusal).toBe('Mat 3 is on a match. The board drops the mat rack as soon as the desk takes over.')
+  it('lets a mat holding a stopped match through, because that is the confirm case', () => {
+    const paused = sampleMatch({ id: 10, clock: STOPPED })
+    expect(deskSwitchRefusal(withMats([mat({ id: 1, number: 1, current: paused, bound: true })]))).toBeNull()
   })
 
-  it('agrees with itself in the plural and starts every clause as a sentence', () => {
-    const running = sampleMatch({ id: 10 })
+  it('names the mat whose clock is running and says what the board would do', () => {
+    const running = sampleMatch({ id: 10, clock: RUNNING })
+    const refusal = deskSwitchRefusal(withMats([mat({ id: 1, number: 1, current: running }), mat({ id: 2, number: 2 })]))
+    expect(refusal).toBe('Mat 1 has a clock running. The board drops the mat rack as soon as the desk takes over.')
+  })
+
+  it('agrees with itself in the plural and starts the clause as a sentence', () => {
+    const running = (id: number) => sampleMatch({ id, clock: RUNNING })
     const refusal = deskSwitchRefusal(withMats([
-      mat({ id: 1, number: 1, bound: true }),
-      mat({ id: 2, number: 2, bound: true }),
-      mat({ id: 3, number: 3, current: running }),
+      mat({ id: 1, number: 1, current: running(10) }),
+      mat({ id: 2, number: 2, current: running(11) }),
+      mat({ id: 3, number: 3, current: running(12) }),
       mat({ id: 4, number: 4 }),
     ]))
     expect(refusal).toBe(
-      'Mats 1 and 2 have an iPad connected. Mat 3 is on a match. '
-      + 'The board drops the mat rack as soon as the desk takes over.',
+      'Mats 1, 2 and 3 have a clock running. The board drops the mat rack as soon as the desk takes over.',
     )
   })
 
   // The guard cannot see the mats yet, and no fallback it has says which of them hold a
-  // tablet, so it refuses in the words the Live tab already prints for the same silence.
+  // clock, so it refuses in the words the Live tab already prints for the same silence.
   it('refuses while nothing has arrived from the server', () => {
     expect(deskSwitchRefusal(null)).toBe('Waiting for the first update from the server.')
+  })
+})
+
+describe('deskSwitchMidMatch', () => {
+  it('finds the mats holding a stopped match, in mat order, with both names', () => {
+    const paused = sampleMatch({ id: 10, clock: STOPPED })
+    const notStarted = sampleMatch({ id: 11 })
+    const mats = deskSwitchMidMatch(withMats([
+      mat({ id: 2, number: 2, current: notStarted, bound: true }),
+      mat({ id: 1, number: 1, current: paused, bound: true }),
+    ]))
+    expect(mats).toEqual([
+      { number: 1, pair: 'Mateo Rivera vs Olivia Kim' },
+      { number: 2, pair: 'Mateo Rivera vs Olivia Kim' },
+    ])
+  })
+
+  it('leaves out a running clock, a finished match and an idle mat', () => {
+    const running = sampleMatch({ id: 10, clock: RUNNING })
+    const done = sampleMatch({ id: 11, status: 'done', clock: STOPPED })
+    expect(deskSwitchMidMatch(withMats([
+      mat({ id: 1, number: 1, current: running }),
+      mat({ id: 2, number: 2, current: done }),
+      mat({ id: 3, number: 3, bound: true }),
+    ]))).toEqual([])
+  })
+
+  it('says nothing while there is no snapshot', () => {
+    expect(deskSwitchMidMatch(null)).toEqual([])
+  })
+})
+
+// Stated once for the whole set rather than repeated per mat, and it agrees with itself.
+describe('deskSwitchConsequence', () => {
+  it('names the one mat and its one result', () => {
+    expect(deskSwitchConsequence([{ number: 2, pair: 'a vs b' }]))
+      .toBe('Mat 2 is mid-match. Its result will have to be typed at the desk.')
+  })
+
+  it('turns plural on both halves together', () => {
+    expect(deskSwitchConsequence([{ number: 1, pair: 'a vs b' }, { number: 3, pair: 'c vs d' }]))
+      .toBe('Mats 1 and 3 are mid-match. Their results will have to be typed at the desk.')
   })
 })

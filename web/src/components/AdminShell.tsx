@@ -92,10 +92,10 @@ export function AdminShell({ title, status, actions, meta, freshness, footer, ch
   actions?: ReactNode
   meta?: ReactNode
   freshness?: ShellFreshness
-  // 6.4: "one line: Questions at the desk: [organizer first name], [phone]." An owner-set
-  // field on the event drives this; no such field exists on the event row yet (server
-  // schema, out of this file's scope), so the band renders only when a caller has one to
-  // pass, never a fabricated line.
+  // 6.4: "one line: Questions at the desk: [organizer first name], [phone]." The event
+  // shell passes it from the event's own contact columns and passes nothing when either
+  // half is empty, so the band renders only where there is a real person to call and
+  // never a fabricated line.
   footer?: ReactNode
   children: ReactNode
 }) {

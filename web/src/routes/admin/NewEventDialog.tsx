@@ -164,6 +164,8 @@ export function NewEventDialog({ open, onOpenChange, onCreated }: { open: boolea
   const [maxAgeGap, setMaxAgeGap] = useState('1')
   const [maxWeightGap, setMaxWeightGap] = useState('10')
   const [sameGender, setSameGender] = useState(false)
+  const [contactName, setContactName] = useState('')
+  const [contactPhone, setContactPhone] = useState('')
   const create = useAdminMutation(null, (body: unknown) => adminApi<EventDetail>('/api/events', { method: 'POST', body }))
 
   // Opening the dialog is the only thing that resets the form, so the deps stay at [open]:
@@ -179,6 +181,8 @@ export function NewEventDialog({ open, onOpenChange, onCreated }: { open: boolea
     setMaxAgeGap('1')
     setMaxWeightGap('10')
     setSameGender(false)
+    setContactName('')
+    setContactPhone('')
     create.reset()
   }, [open])
 
@@ -190,7 +194,11 @@ export function NewEventDialog({ open, onOpenChange, onCreated }: { open: boolea
   const submit = (e: FormEvent) => {
     e.preventDefault()
     if (!counts) return
-    create.mutate({ name, date, mode, matCount: mats, teams: [teamA, teamB], maxAgeGap: ageGap, maxWeightGap: weightGap, sameGender }, {
+    create.mutate({
+      name, date, mode, matCount: mats, teams: [teamA, teamB],
+      maxAgeGap: ageGap, maxWeightGap: weightGap, sameGender,
+      contactName: contactName.trim(), contactPhone: contactPhone.trim(),
+    }, {
       onSuccess: detail => {
         onOpenChange(false)
         onCreated(detail)
@@ -238,6 +246,29 @@ export function NewEventDialog({ open, onOpenChange, onCreated }: { open: boolea
             <div className="flex items-center gap-2">
               <Checkbox id="same-gender" checked={sameGender} onCheckedChange={v => setSameGender(v)} />
               <Label htmlFor="same-gender" className="text-gray-11">Pair only competitors of the same gender</Label>
+            </div>
+
+            {/* 6.4's escalation contact. Optional here on purpose: on the morning an
+                event is created nobody has decided who is running the desk, so the pair
+                is also settable from the event shell. Both halves or neither: a name
+                with no number gives a volunteer nothing to act on. */}
+            <div className="grid gap-4 sm:grid-cols-[1fr_170px]">
+              <div className="grid gap-2">
+                <Label htmlFor="ev-contact-name">Desk contact (optional)</Label>
+                <Input id="ev-contact-name" value={contactName} maxLength={60} autoComplete="off" onChange={e => setContactName(e.target.value)} />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="ev-contact-phone">Phone</Label>
+                <Input
+                  id="ev-contact-phone"
+                  value={contactPhone}
+                  maxLength={30}
+                  inputMode="tel"
+                  autoComplete="off"
+                  onChange={e => setContactPhone(e.target.value)}
+                  className="fig"
+                />
+              </div>
             </div>
 
             {create.error && (

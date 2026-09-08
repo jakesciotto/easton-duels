@@ -94,6 +94,43 @@ describe('NewEventDialog', () => {
     expect(body.mode).toBe('entry')
   })
 
+  /**
+   * G09 / 6.4. Event-night volunteer practice requires every volunteer to have a named
+   * person to escalate to, and no screen in the product named one. The pair is optional
+   * here because on the morning an event is created nobody has decided who is running the
+   * desk yet, so the event shell can set it later; what matters is that an organizer who
+   * does know is asked once, at the one moment they are filling the event in.
+   */
+  it('carries an optional desk contact into the create body', async () => {
+    const f = fakeFetch((url, init) => (url === '/api/events' && init?.method === 'POST' ? { status: 201, json: {} } : { json: {} }))
+    mount()
+    const user = userEvent.setup()
+    await screen.findByRole('dialog')
+    await user.type(screen.getByLabelText('Event name'), 'Fall Duels')
+    await user.type(screen.getByLabelText('Team A name'), 'Ridgeline')
+    await user.type(screen.getByLabelText('Team B name'), 'Lakeside')
+    await user.type(screen.getByLabelText('Desk contact (optional)'), 'Sam Whitfield')
+    await user.type(screen.getByLabelText('Phone'), '555-0142')
+    await user.click(screen.getByRole('button', { name: 'Create event' }))
+    await vi.waitFor(() => expect(f.calls.some(c => c.init?.method === 'POST')).toBe(true))
+    expect(f.body(f.calls.findIndex(c => c.init?.method === 'POST')))
+      .toMatchObject({ contactName: 'Sam Whitfield', contactPhone: '555-0142' })
+  })
+
+  it('sends the pair as empty when nobody filled it in, which the server reads as none', async () => {
+    const f = fakeFetch((url, init) => (url === '/api/events' && init?.method === 'POST' ? { status: 201, json: {} } : { json: {} }))
+    mount()
+    const user = userEvent.setup()
+    await screen.findByRole('dialog')
+    await user.type(screen.getByLabelText('Event name'), 'Fall Duels')
+    await user.type(screen.getByLabelText('Team A name'), 'Ridgeline')
+    await user.type(screen.getByLabelText('Team B name'), 'Lakeside')
+    await user.click(screen.getByRole('button', { name: 'Create event' }))
+    await vi.waitFor(() => expect(f.calls.some(c => c.init?.method === 'POST')).toBe(true))
+    expect(f.body(f.calls.findIndex(c => c.init?.method === 'POST')))
+      .toMatchObject({ contactName: '', contactPhone: '' })
+  })
+
   it('refuses to submit a count outside the range the server accepts', async () => {
     fakeFetch(() => ({ json: {} }))
     mount()

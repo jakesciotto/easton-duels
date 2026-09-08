@@ -283,46 +283,89 @@ describe('EventPage: how the event runs is one stored setting on the shell', () 
   })
 
   /**
-   * Refuse rather than ask (6.8). Switching to the desk repaints the television as the
-   * Final Score panel within one poll, so a mat with a scorer on it would go on being
-   * scored by a room that can no longer see it.
+   * G07. A bound mat with nothing on it is no longer a refusal. Once an idle mat calls
+   * the next match the instant one ends, every mat carries one and every mat that ran a
+   * bout stays bound, so the old guard disabled the control for the whole afternoon and
+   * the desk fallback the setting exists to reach was unreachable.
    */
-  it('refuses the switch to the desk while a mat is bound, and prints which mat', async () => {
+  it('lets the switch through while a mat is merely bound', async () => {
     const bound = slowSnapshot()
     const { f } = mount(url => snapshotReply(url, {
       ...bound,
       mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: true }],
     }) ?? (url === '/api/events/7' ? { json: detailWith(IN_ORDER) } : undefined))
+    const user = userEvent.setup()
+
+    await screen.findByRole('radiogroup', { name: MODE_GROUP_LABEL })
+    await vi.waitFor(() => expect(deskOption()).not.toHaveAttribute('aria-disabled'))
+    await user.click(deskOption())
+    await vi.waitFor(() => expect(patchIndex(f)).toBeGreaterThan(-1))
+    expect(f.body(patchIndex(f))).toEqual({ mode: 'entry' })
+  })
+
+  /**
+   * Refuse rather than ask (6.8), for the one state where the switch would strand a
+   * referee mid bout: the television repaints as the Final Score panel within one poll,
+   * so a running clock would go on being scored by a room that can no longer see it.
+   */
+  it('refuses while a clock is running, and lets go once it stops', async () => {
+    const base = slowSnapshot({ status: 'live' })
+    // A running clock is also the fastest poll rung, so the release below lands on the
+    // next tick rather than three seconds later.
+    const running = sampleMatch({ id: 10, clock: { elapsedMs: 0, startedAt: base.now, lengthMs: 300_000 } })
+    let mats: Snapshot['mats'] = [{ id: 1, number: 1, current: running, onDeck: [], bound: false }]
+    const { f } = mount(url => snapshotReply(url, { ...base, mats }) ?? (url === '/api/events/7' ? { json: detailWith(IN_ORDER) } : undefined))
 
     await screen.findByRole('radiogroup', { name: MODE_GROUP_LABEL })
     // A segment cell is a span with role=radio, so "disabled" here is the ARIA state the
     // primitive sets, and base-ui refuses the selection itself on top of the guard below.
     await vi.waitFor(() => expect(deskOption()).toHaveAttribute('aria-disabled', 'true'))
     // The reason is printed as text, not left to a tooltip or a silent no-op.
-    expect(screen.getByText(/^Mat 1 has an iPad connected\./)).toBeInTheDocument()
+    expect(screen.getByText(/^Mat 1 has a clock running\./)).toBeInTheDocument()
 
     // A disabled control still leaves a programmatic change able to fire, so the refusal
     // has to hold at the handler too.
     fireEvent.click(deskOption())
     await act(async () => { await Promise.resolve() })
     expect(patchIndex(f)).toBe(-1)
-  })
-
-  it('refuses while a mat is carrying a match, and lets go once the rack is clear', async () => {
-    const base = slowSnapshot({ status: 'live' })
-    // A running clock, which is both the failure story's own mat and the fastest poll
-    // rung, so the release below lands on the next tick rather than three seconds later.
-    const running = sampleMatch({ id: 10, clock: { elapsedMs: 0, startedAt: base.now, lengthMs: 300_000 } })
-    let mats: Snapshot['mats'] = [{ id: 1, number: 1, current: running, onDeck: [], bound: false }]
-    mount(url => snapshotReply(url, { ...base, mats }) ?? (url === '/api/events/7' ? { json: detailWith(IN_ORDER) } : undefined))
-
-    await screen.findByRole('radiogroup', { name: MODE_GROUP_LABEL })
-    await vi.waitFor(() => expect(deskOption()).toHaveAttribute('aria-disabled', 'true'))
-    expect(screen.getByText(/^Mat 1 is on a match\./)).toBeInTheDocument()
 
     mats = [{ id: 1, number: 1, current: null, onDeck: [], bound: false }]
     await vi.waitFor(() => expect(deskOption()).not.toHaveAttribute('aria-disabled'), { timeout: 4000 })
-    expect(screen.queryByText(/is on a match\./)).not.toBeInTheDocument()
+    expect(screen.queryByText(/has a clock running\./)).not.toBeInTheDocument()
+  })
+
+  /**
+   * G07's other half. A mat holding a paused or not yet started match is legal to switch
+   * away from and still costs somebody something, so the shell asks once rather than
+   * refusing for the rest of the event.
+   */
+  it('asks before switching away from a mat that is mid-match, and states the consequence once', async () => {
+    const base = slowSnapshot({ status: 'live' })
+    const paused = sampleMatch({ id: 10, clock: { elapsedMs: 40_000, startedAt: null, lengthMs: 300_000 } })
+    const { f } = mount(url => snapshotReply(url, {
+      ...base,
+      mats: [{ id: 1, number: 2, current: paused, onDeck: [], bound: true }],
+    }) ?? (url === '/api/events/7' ? { json: detailWith(IN_ORDER) } : undefined))
+    const user = userEvent.setup()
+
+    await screen.findByRole('radiogroup', { name: MODE_GROUP_LABEL })
+    await vi.waitFor(() => expect(deskOption()).not.toHaveAttribute('aria-disabled'))
+    await user.click(deskOption())
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('Mat 2 is mid-match. Its result will have to be typed at the desk.')).toBeInTheDocument()
+    expect(within(dialog).getByText('Mateo Rivera vs Olivia Kim')).toBeInTheDocument()
+    expect(patchIndex(f)).toBe(-1)
+
+    // Both buttons say what they do.
+    await user.click(within(dialog).getByRole('button', { name: 'Keep the mats scoring' }))
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(patchIndex(f)).toBe(-1)
+
+    await user.click(deskOption())
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Switch to the desk' }))
+    await vi.waitFor(() => expect(patchIndex(f)).toBeGreaterThan(-1))
+    expect(f.body(patchIndex(f))).toEqual({ mode: 'entry' })
   })
 
   // 7.12 / the Alert primitive: a failed write says what failed, in a titled band with a
@@ -342,5 +385,68 @@ describe('EventPage: how the event runs is one stored setting on the shell', () 
     const alert = await screen.findByRole('alert')
     expect(alert.querySelector('[data-slot="alert-title"]')).toHaveTextContent('How this event runs was not changed')
     expect(alert.querySelector('[data-slot="alert-description"]')).toHaveTextContent('this event is finished')
+  })
+})
+
+/**
+ * G09 / 6.4. "The footer carries one line: Questions at the desk: [organizer first name],
+ * [phone]." Event-night volunteer practice requires every volunteer to have a named
+ * person to escalate to or they simply stop working, and no screen in the product named
+ * one. The pair is settable from the event itself, because the New event dialog asks on
+ * the morning nobody has decided who is running the desk yet.
+ */
+describe('EventPage: the desk contact', () => {
+  const withContact = (over: Partial<EventDetail['event']>) => {
+    const d = detailWith(IN_ORDER)
+    return { ...d, event: { ...d.event, ...over } }
+  }
+  const route = (over: Partial<EventDetail['event']> = {}) => (url: string) =>
+    snapshotReply(url) ?? (url === '/api/events/7' ? { json: withContact(over) } : undefined)
+  const patched = (f: { calls: { url: string; init?: RequestInit }[] }) =>
+    f.calls.findIndex(c => c.url === '/api/events/7' && c.init?.method === 'PATCH')
+
+  it('prints the line in the shell footer when the event carries a pair', async () => {
+    mount(route({ contact: { name: 'Sam', phone: '555-0142' } }))
+    await screen.findByRole('radiogroup', { name: MODE_GROUP_LABEL })
+    const footer = await vi.waitFor(() => {
+      const el = document.querySelector('footer')
+      expect(el).not.toBeNull()
+      return el as HTMLElement
+    })
+    expect(footer).toHaveTextContent('Questions at the desk: Sam, 555-0142.')
+  })
+
+  // Never a fabricated line: a name with no number gives a volunteer nothing to act on,
+  // so the server reports the pair as null and the band does not render at all.
+  it('renders no footer band when the event names nobody', async () => {
+    mount(route())
+    await screen.findByRole('radiogroup', { name: MODE_GROUP_LABEL })
+    expect(document.querySelector('footer')).toBeNull()
+  })
+
+  it('sets the pair from the shell and says who it is once it is set', async () => {
+    const { f } = mount(route())
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Add a desk contact' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.type(within(dialog).getByLabelText('Name'), 'Sam')
+    await user.type(within(dialog).getByLabelText('Phone'), '555-0142')
+    await user.click(within(dialog).getByRole('button', { name: 'Save contact' }))
+    await vi.waitFor(() => expect(patched(f)).toBeGreaterThan(-1))
+    expect(f.body(patched(f))).toEqual({ contactName: 'Sam', contactPhone: '555-0142' })
+  })
+
+  it('opens on the stored pair, so changing one half does not clear the other', async () => {
+    const { f } = mount(route({ contact: { name: 'Sam', phone: '555-0142' } }))
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Desk contact: Sam' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByLabelText('Name')).toHaveValue('Sam')
+    const phone = within(dialog).getByLabelText('Phone')
+    await user.clear(phone)
+    await user.type(phone, '555-0199')
+    await user.click(within(dialog).getByRole('button', { name: 'Save contact' }))
+    await vi.waitFor(() => expect(patched(f)).toBeGreaterThan(-1))
+    expect(f.body(patched(f))).toEqual({ contactName: 'Sam', contactPhone: '555-0199' })
   })
 })
