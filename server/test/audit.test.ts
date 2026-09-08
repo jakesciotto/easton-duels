@@ -36,7 +36,20 @@ describe('audit log, scoring', () => {
     expect(row.actor).toBe('mat:1')
     expect(row.action).toBe('score')
     expect(row.matchId).toBe(s.matchIds[0])
-    expect(row.detail).toEqual({ seq: 1, athleteId: s.a1, actionKey: 'mount' })
+    expect(row.detail).toEqual({ seq: 1, athleteId: s.a1, actionKey: 'mount', points: 4, label: 'Mount' })
+  })
+
+  it('keeps what the press was worth, so editing the ruleset later cannot rewrite it', async () => {
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db, { live: true })
+    const token = matToken(s.eventId, s.matIds[0])
+    await call(app, 'POST', `/api/matches/${s.matchIds[0]}/events`, { id: 'score-0001', type: 'score', athleteId: s.a1, actionKey: 'mount', lastSeq: 0 }, token)
+    const edited = await call(app, 'PATCH', `/api/rulesets/${s.rulesetId}`, {
+      actions: [{ key: 'mount', label: 'Mount position', points: 9 }],
+    }, adminToken)
+    expect(edited.status).toBe(200)
+    const score = (await rows(db, s.eventId)).find(r => r.action === 'score')
+    expect(score?.detail).toMatchObject({ actionKey: 'mount', points: 4, label: 'Mount' })
   })
 
   it('records nothing extra when the same press arrives twice', async () => {

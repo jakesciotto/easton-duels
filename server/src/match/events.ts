@@ -53,7 +53,10 @@ export interface ExtendInput {
   at?: string
 }
 
-export interface AppendResult { duplicate: boolean; match: MatchRow }
+// `scored` is the ruleset action this write resolved, carried out so the audit row can
+// keep the points and the label it was worth on the day. A ruleset edited later must not
+// change what the sheet says a match was.
+export interface AppendResult { duplicate: boolean; match: MatchRow; scored?: { points: number; label: string } }
 export interface UndoResult { match: MatchRow; deleted: MatchEventRow }
 
 type Insert = typeof matchEvents.$inferInsert
@@ -150,12 +153,14 @@ export async function appendMatchEvent(db: DbLike, input: AppendInput): Promise<
     const at = input.at ?? new Date().toISOString()
     let seq = match.lastSeq
     const rows: Insert[] = []
+    let scored: { points: number; label: string } | undefined
     switch (input.type) {
       case 'score': {
         const action = (await loadRuleset(tx, match.rulesetId)).actions.find(a => a.key === input.actionKey)
         if (!action) throw new MatchStateError('unknown action')
         const athleteId = assertAthlete(match, input.athleteId)
         rows.push({ id: input.id, matchId: match.id, seq: ++seq, type: 'score', athleteId, actionKey: action.key, points: action.points, at })
+        scored = { points: action.points, label: action.label }
         break
       }
       case 'terminal': {
@@ -178,7 +183,7 @@ export async function appendMatchEvent(db: DbLike, input: AppendInput): Promise<
         break
     }
     await tx.insert(matchEvents).values(rows).run()
-    return { duplicate: false, match: await recompute(tx, match.id) }
+    return { duplicate: false, match: await recompute(tx, match.id), scored }
   })
 }
 

@@ -57,6 +57,19 @@ describe('historyRows', () => {
     expect(line.fromMat).toBe(true)
   })
 
+  it('prints what the press was worth on the day, not what the ruleset says now', () => {
+    const edited: HistoryContext = { ...ctx, actions: [{ key: 'takedown', label: 'Takedown to the mat', points: 9 }] }
+    const [line] = historyRows([row('score', { seq: 1, athleteId: 100, actionKey: 'takedown', points: 2, label: 'Takedown' })], edited)
+    expect(line.what).toBe('Takedown +2 Mateo Rivera')
+    expect(line.detail).toBe('Score 2 to 0')
+  })
+
+  it('falls back to the ruleset for a row written before the points were recorded', () => {
+    const [line] = historyRows([row('score', { seq: 1, athleteId: 100, actionKey: 'mount' })], ctx)
+    expect(line.what).toBe('Mount +4 Mateo Rivera')
+    expect(line.detail).toBe('Score 4 to 0')
+  })
+
   it('keeps the sign on an action that takes a point away', () => {
     const [line] = historyRows([row('score', { seq: 1, athleteId: 200, actionKey: 'penalty' })], ctx)
     expect(line.what).toBe('Penalty -1 Olivia Kim')

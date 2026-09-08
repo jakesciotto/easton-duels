@@ -168,9 +168,15 @@ scoringRoutes.post('/matches/:matchId/events', requireMatOrAdmin(matIdFromMatch)
     const r = await db.transaction(async tx => {
       const appended = await appendMatchEvent(tx, { ...body, matchId })
       if (!appended.duplicate) {
+        // The points and the label are what the ruleset said at the moment of the press.
+        // The sheet reads them back rather than looking the action up again, so editing a
+        // ruleset after the match cannot rewrite a match that already happened.
         await recordAudit(tx, {
           eventId: appended.match.eventId, matchId, actor, action: body.type,
-          detail: { seq: appended.match.lastSeq, athleteId: body.athleteId ?? null, actionKey: body.actionKey ?? null },
+          detail: {
+            seq: appended.match.lastSeq, athleteId: body.athleteId ?? null, actionKey: body.actionKey ?? null,
+            ...(appended.scored ?? {}),
+          },
         })
         await bumpVersion(tx, appended.match.eventId)
       }

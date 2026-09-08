@@ -6,10 +6,10 @@ import type { EventDetail } from '@/lib/types'
 /**
  * The audit log as a person reads it.
  *
- * The rows the server hands back are the write, not the sentence: a score row names an
- * action key and an athlete id and nothing else, because the points and the label live in
- * the ruleset and the running score is a consequence of every row before it. So the sheet
- * cannot print "Takedown +2, score 2 to 0" from one row; it has to replay the log.
+ * The rows the server hands back are the write, not the sentence: a score row names the
+ * press and what it was worth, but the running score is a consequence of every row before
+ * it. So the sheet cannot print "Takedown +2, score 2 to 0" from one row; it has to replay
+ * the log.
  *
  * Replaying is also what makes the undo treatment honest. An undone action stays in the
  * list, in the quiet tone, with the undo beneath it, and contributes nothing to the score
@@ -174,12 +174,17 @@ function lineFor(entry: AuditEntry, ctx: HistoryContext, score: Score): Line {
   if (entry.action === 'score') {
     const key = str(d.actionKey)
     const athleteId = num(d.athleteId)
-    const action = key === null ? undefined : ctx.actions.find(a => a.key === key)
-    if (action === undefined || athleteId === null) return { what: plain, detail: null }
-    if (athleteId === ctx.athleteAId) score.a += action.points
-    else if (athleteId === ctx.athleteBId) score.b += action.points
+    // The row carries what the press was worth on the day. Only a row written before the
+    // server recorded that falls back to the ruleset, which may since have been edited.
+    const stored = num(d.points)
+    const fallback = key === null ? undefined : ctx.actions.find(a => a.key === key)
+    const points = stored ?? fallback?.points ?? null
+    const label = str(d.label) ?? fallback?.label ?? null
+    if (points === null || label === null || athleteId === null) return { what: plain, detail: null }
+    if (athleteId === ctx.athleteAId) score.a += points
+    else if (athleteId === ctx.athleteBId) score.b += points
     return {
-      what: `${action.label} ${signed(action.points)} ${ctx.nameOf(athleteId)}`,
+      what: `${label} ${signed(points)} ${ctx.nameOf(athleteId)}`,
       detail: scored(ctx) ? `Score ${score.a} to ${score.b}` : null,
     }
   }
