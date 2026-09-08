@@ -48,15 +48,33 @@ export async function startEvent(db: DbLike, eventId: number): Promise<void> {
   })
 }
 
+/**
+ * The mode gate lives here rather than at each caller, because every path that loads a mat
+ * runs through this one function: Start, the end of a match, a skip, a typed entry, the
+ * Live panel's advance, and a match created or moved onto the mat. Only Start checked the
+ * mode, so a match added to a live desk event went live on a mat that nothing scores and
+ * left every desk list that hides the live lane.
+ *
+ * In desk mode no match is ever loaded. A match already live on a mat stays there, because
+ * that is a switch to the desk taken mid-bout and the desk still has to type its result;
+ * once that result settles, the next call releases the mat rather than naming a finished
+ * pair for the rest of the afternoon.
+ */
 export async function advanceMat(db: DbLike, matId: number): Promise<MatchRow | null> {
   return db.transaction(async tx => {
     const mat = await loadMat(tx, matId)
     const ev = await tx.select().from(events).where(eq(events.id, mat.eventId)).get()
     if (!ev || ev.status !== 'live') return null
-    if (mat.currentMatchId !== null) {
-      const current = await tx.select().from(matches).where(eq(matches.id, mat.currentMatchId)).get()
-      if (current && current.status === 'live') return current
+    const current = mat.currentMatchId === null
+      ? undefined
+      : await tx.select().from(matches).where(eq(matches.id, mat.currentMatchId)).get()
+    if (ev.mode !== 'live') {
+      if (mat.currentMatchId !== null && current?.status !== 'live') {
+        await tx.update(mats).set({ currentMatchId: null }).where(eq(mats.id, matId)).run()
+      }
+      return null
     }
+    if (current && current.status === 'live') return current
     const next = await tx.select().from(matches)
       .where(and(eq(matches.matId, matId), eq(matches.status, 'pending')))
       .orderBy(asc(matches.orderIndex)).get()

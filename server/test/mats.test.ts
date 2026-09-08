@@ -54,6 +54,19 @@ describe('advanceMat', () => {
     expect((await advanceMat(db, s.matIds[0]))?.id).toBe(s.matchIds[0])
   })
 
+  it('loads nothing in desk mode and releases the mat once the typed result settles', async () => {
+    const db = await freshDb()
+    const s = await seedEvent(db, { matCount: 1, live: true })
+    await db.update(events).set({ mode: 'entry' }).where(eq(events.id, s.eventId)).run()
+    const [first, second] = s.matchIds
+    expect(await advanceMat(db, s.matIds[0])).toBeNull()
+    expect((await db.select().from(mats).where(eq(mats.id, s.matIds[0])).get())?.currentMatchId).toBe(first)
+
+    await enterResult(db, first, { entryId: 'entry-0002', pointsA: 4, pointsB: 2, winnerAthleteId: s.a1, winType: 'points' })
+    expect((await db.select().from(mats).where(eq(mats.id, s.matIds[0])).get())?.currentMatchId).toBeNull()
+    expect((await loadMatch(db, second)).status).toBe('pending')
+  })
+
   it('clears the mat when the queue is empty and does nothing in setup', async () => {
     const db = await freshDb()
     const s = await seedEvent(db, { matCount: 1, live: true, matches: 1 })

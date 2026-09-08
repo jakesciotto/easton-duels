@@ -43,6 +43,20 @@ describe('match routes', () => {
     expect((await db.select().from(mats).where(eq(mats.id, addedMat.id)).get())?.currentMatchId).toBe(second.body.id)
   })
 
+  it('leaves a match added or moved on a live desk event pending, with the mat idle', async () => {
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db, { matCount: 2, live: true, matches: 0, mode: 'entry' })
+    const created = await call(app, 'POST', `/api/events/${s.eventId}/matches`, { athleteAId: s.a1, athleteBId: s.b1, matId: s.matIds[0] }, adminToken)
+    expect(created.status).toBe(201)
+    expect((await db.select().from(matches).where(eq(matches.id, created.body.id)).get())?.status).toBe('pending')
+    expect((await db.select().from(mats).where(eq(mats.id, s.matIds[0])).get())?.currentMatchId).toBeNull()
+
+    const moved = await call(app, 'PATCH', `/api/matches/${created.body.id}`, { matId: s.matIds[1] }, adminToken)
+    expect(moved.status).toBe(200)
+    expect((await db.select().from(matches).where(eq(matches.id, created.body.id)).get())?.status).toBe('pending')
+    expect((await db.select().from(mats).where(eq(mats.id, s.matIds[1])).get())?.currentMatchId).toBeNull()
+  })
+
   it('advances an idle mat on request and refuses while one is showing a match', async () => {
     const { app, db, adminToken } = await createTestApp()
     const s = await seedEvent(db, { matCount: 1, live: true })

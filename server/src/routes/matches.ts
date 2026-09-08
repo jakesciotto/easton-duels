@@ -56,8 +56,9 @@ matchRoutes.post('/events/:eventId/matches', requireAdmin, validate('json', crea
       matId,
       orderIndex: (max?.m ?? -1) + 1,
     }).returning().get()
-    // An idle mat has nothing to advance it, so on a live event the new match starts there.
-    // advanceMat is a no-op while the event is in setup or the mat already has a live match.
+    // An idle mat has nothing to advance it, so on a live event scored on the mats the new
+    // match starts there. advanceMat is a no-op in setup, in desk mode, and on a mat that
+    // already has a live match.
     if (matId !== null) await advanceMat(tx, matId)
     await bumpVersion(tx, eventId)
     return inserted
