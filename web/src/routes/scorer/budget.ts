@@ -42,6 +42,12 @@ export const STACK_GAP = 8
 export const MAT_LINE = 16
 /** t2: the last action line, and any single line printed in the reference region. */
 export const LINE = 18
+/**
+ * 6.4's contact line, in the reference region because that is where 6.16 leaves room. It is
+ * the only box here that is neither a control nor a fact about the match, so it is the first
+ * thing the alarm is allowed to push out of sight.
+ */
+export const CONTACT_LINE = LINE
 /** 7.6's "Not updating Ns" at t2, printed while a poll is late. */
 export const STALE_LINE = 18
 /**
@@ -76,9 +82,18 @@ export function clockHeight(viewport: number): number {
  */
 export const MINUS_ROW = SECONDARY + STACK_GAP
 
-/** Undo, the shared reason, Start/Pause, its reason, the moat and its rule, End match. */
+/**
+ * The clock's row. Start/Pause and the add-time control share it at one height rather than
+ * taking a row each, which is the only way the control fits: at SHORTEST_VIEWPORT the
+ * guarantee below has three pixels of slack, and a second 104px row would put End match
+ * under the fold on every 1024 x 768 iPad. They pair honestly, because they are refused in
+ * mutually exclusive states and so can share the one reason line beneath them.
+ */
+export const CLOCK_ROW = COMMIT
+
+/** Undo, the shared reason, the clock row, its reason, the moat and its rule, End match. */
 export const STACK_COMMIT =
-  COMMIT + REASON + COMMIT + REASON + MOAT + RULE + COMMIT + 6 * STACK_GAP
+  COMMIT + REASON + CLOCK_ROW + REASON + MOAT + RULE + COMMIT + 6 * STACK_GAP
 
 /** The whole stack when the height pays for the minus row too. */
 export const STACK = STACK_COMMIT + MINUS_ROW

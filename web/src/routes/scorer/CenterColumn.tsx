@@ -4,15 +4,16 @@ import { Clock } from '@/components/Clock'
 import { useClock } from '@/lib/useClock'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { signed, type LocalAction } from './actions'
+import { ADD_TIME_MS, signed, type LocalAction } from './actions'
 import {
-  COLUMN_GAP, COMMIT, HEAD_GAP, HEAD_LINE, MOAT, PAD, REASON, RULE, SECONDARY, STACK_GAP,
-  columnBudget,
+  CLOCK_ROW, COLUMN_GAP, COMMIT, HEAD_GAP, HEAD_LINE, MOAT, PAD, REASON, RULE, SECONDARY,
+  STACK_GAP, columnBudget,
 } from './budget'
 import { useViewportHeight } from './viewport'
 
 export interface CenterRefusals {
   clock: string | null
+  addTime: string | null
   undo: string | null
   minusA: string | null
   minusB: string | null
@@ -53,6 +54,13 @@ function LastAction({ action }: { action: LocalAction | null }) {
   if (action.kind === 'clock') {
     return <p className="t2 text-gray-10">{action.label} at <span className="fig">{action.at}</span></p>
   }
+  if (action.kind === 'extend') {
+    return (
+      <p className="t2 text-gray-10">
+        {action.label} <span className="fig">{formatClock(action.addMs)}</span> at <span className="fig">{action.at}</span>
+      </p>
+    )
+  }
   return (
     <p className="t2 text-gray-10">
       {action.label} <span className="fig">{signed(action.points)}</span> {action.name} at <span className="fig">{action.at}</span>
@@ -60,7 +68,7 @@ function LastAction({ action }: { action: LocalAction | null }) {
   )
 }
 
-export function CenterColumn({ mat, match, serverNow, lastSuccessAt, pollIntervalMs, expired, lastAction, refusals, error, onClock, onUndo, onMinus, onEnd }: {
+export function CenterColumn({ mat, match, serverNow, lastSuccessAt, pollIntervalMs, expired, lastAction, refusals, error, contact, onClock, onAddTime, onUndo, onMinus, onEnd }: {
   mat: MatView
   match: MatchView
   serverNow: string | null
@@ -70,7 +78,10 @@ export function CenterColumn({ mat, match, serverNow, lastSuccessAt, pollInterva
   lastAction: LocalAction | null
   refusals: CenterRefusals
   error: string | null
+  /** 6.4's contact line, or null when the event carries no desk contact. */
+  contact: string | null
   onClock: () => void
+  onAddTime: () => void
   onUndo: () => void
   onMinus: (athleteId: number) => void
   onEnd: () => void
@@ -150,7 +161,7 @@ export function CenterColumn({ mat, match, serverNow, lastSuccessAt, pollInterva
           is about. */}
       {expired && (
         <Alert className="w-full shrink-0">
-          <AlertTitle>Time expired. Record the result.</AlertTitle>
+          <AlertTitle>Time expired. Record the result or add time.</AlertTitle>
         </Alert>
       )}
 
@@ -173,6 +184,9 @@ export function CenterColumn({ mat, match, serverNow, lastSuccessAt, pollInterva
               reconcile against the referee's signal without touching anything. It is reference,
               so when the alarm needs the room this is what yields it. */}
           <LastAction action={lastAction} />
+          {/* 6.4's footer line. It is reference rather than a control, so it sits with the
+              on deck and last action lines and yields to the alarm before either of them. */}
+          {contact && <p className="text-center t2 text-gray-10">{contact}</p>}
           {!budget.minusRowFixed && minusRow}
         </div>
       </div>
@@ -187,8 +201,10 @@ export function CenterColumn({ mat, match, serverNow, lastSuccessAt, pollInterva
           style={{ height: COMMIT }}
         >
           <span>
-            {lastAction?.kind === 'score' ? `Undo ${lastAction.label.toLowerCase()} ` : 'Undo the last action'}
+            {lastAction?.kind === 'score' && `Undo ${lastAction.label.toLowerCase()} `}
             {lastAction?.kind === 'score' && <span className="fig">{signed(lastAction.points)}</span>}
+            {lastAction?.kind === 'extend' && 'Undo the added time'}
+            {(!lastAction || lastAction.kind === 'clock') && 'Undo the last action'}
           </span>
           {lastAction?.kind === 'score' && (
             <span className="max-w-full min-w-0 truncate t2 font-normal! text-gray-10">{lastAction.name}</span>
@@ -198,17 +214,35 @@ export function CenterColumn({ mat, match, serverNow, lastSuccessAt, pollInterva
         {budget.minusRowFixed && minusRow}
         <Reason text={correctionReason} />
 
-        <Button
-          type="button"
-          variant={running ? 'secondary' : 'default'}
-          disabled={refusals.clock !== null}
-          onClick={onClock}
-          className="touch w-full"
-          style={{ height: COMMIT }}
-        >
-          {running ? 'Pause' : 'Start'}
-        </Button>
-        <Reason text={refusals.clock} />
+        {/* The clock's row holds both of its controls at one height rather than taking a
+            row each: the guarantee at the shortest layout viewport has three pixels in it
+            (budget.ts), and a second 104px row would put End match under the fold. They are
+            never refused at the same time -- a running clock refuses the extension, an
+            expired one refuses Start -- so the one reason line below serves both, and each
+            sentence names the control it is about. */}
+        <div className="grid w-full" style={{ gridTemplateColumns: '3fr 2fr', gap: STACK_GAP * 2 }}>
+          <Button
+            type="button"
+            variant={running ? 'secondary' : 'default'}
+            disabled={refusals.clock !== null}
+            onClick={onClock}
+            className="touch w-full"
+            style={{ height: CLOCK_ROW }}
+          >
+            {running ? 'Pause' : 'Start'}
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={refusals.addTime !== null}
+            onClick={onAddTime}
+            className="touch w-full"
+            style={{ height: CLOCK_ROW }}
+          >
+            Add <span className="fig">{formatClock(ADD_TIME_MS)}</span>
+          </Button>
+        </div>
+        <Reason text={refusals.clock ?? refusals.addTime} />
 
         {/* The moat again: the control that ends a match never shares a row, or a
             neighbourhood, with the one the operator presses every thirty seconds. */}

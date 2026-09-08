@@ -1,14 +1,20 @@
 import { describe, it, expect } from 'vitest'
 import { ApiError } from '@/lib/api'
+import { EXTEND_MAX_MS, EXTEND_MIN_MS } from '@shared/types'
 import {
-  applyClockPause, applyClockStart, applyScore, applyUndo, errorCopy, signed, withDeadline,
-  TimeoutError, type ClockAction, type ScoreAction,
+  ADD_TIME_MS, applyClockExtend, applyClockPause, applyClockStart, applyScore, applyUndo,
+  errorCopy, signed, withDeadline, EVENT_FINISHED, TimeoutError,
+  type ClockAction, type ExtendAction, type ScoreAction,
 } from '@/routes/scorer/actions'
-import { clockRefusal, minusRefusal, REASONS, scoreRefusal, undoRefusal } from '@/routes/scorer/refusals'
+import {
+  addTimeRefusal, clockRefusal, minusRefusal, REASONS, scoreRefusal, scorerRefusals, undoRefusal,
+  CLOCK_RUNNING, EVENT_DONE, EXTEND_EVENT,
+} from '@/routes/scorer/refusals'
 import { fitsScorer } from '@/routes/scorer/viewport'
 import {
-  ALERT, COMMIT, HEAD_LINE, IPAD_SCREEN_HEIGHT, LINE, MAX_BROWSER_CHROME, MINUS_ROW, MOAT, PAD,
-  REASON, SECONDARY, SHORTEST_VIEWPORT, STACK, STACK_COMMIT, STALE_LINE, columnBudget,
+  ALERT, CLOCK_ROW, COMMIT, CONTACT_LINE, HEAD_LINE, IPAD_SCREEN_HEIGHT, LINE,
+  MAX_BROWSER_CHROME, MINUS_ROW, MOAT, PAD, REASON, RULE, SECONDARY, SHORTEST_VIEWPORT,
+  STACK, STACK_COMMIT, STALE_LINE, columnBudget,
 } from '@/routes/scorer/budget'
 import { sampleMatch } from './fakes'
 
@@ -20,6 +26,10 @@ function action(over: Partial<ScoreAction> = {}): ScoreAction {
 
 function clockAction(over: Partial<ClockAction> = {}): ClockAction {
   return { kind: 'clock', seq: 1, label: 'Clock paused', at: '2:14', ...over }
+}
+
+function extendAction(over: Partial<ExtendAction> = {}): ExtendAction {
+  return { kind: 'extend', seq: 1, label: 'Time added', addMs: ADD_TIME_MS, at: '0:00', ...over }
 }
 
 describe('optimistic folds', () => {
@@ -61,6 +71,32 @@ describe('optimistic folds', () => {
     expect(signed(2)).toBe('+2')
     expect(signed(-1)).toBe('-1')
   })
+
+  // The countdown, the expiry frame and the alarm all follow from the clock's length, so an
+  // extension that moves it moves all three on the same frame the operator presses.
+  it('adds the minute to the length, in both of the copies that carry it', () => {
+    const expired = sampleMatch({ clock: { elapsedMs: 300_000, startedAt: null, lengthMs: 300_000 } })
+    const longer = applyClockExtend(expired, ADD_TIME_MS)
+    expect(longer.clock.lengthMs).toBe(360_000)
+    expect(longer.lengthSec).toBe(360)
+    expect(longer.clock.elapsedMs).toBe(300_000)
+    expect(longer.lastSeq).toBe(1)
+  })
+
+  it('takes the added minute back off an undo, length and all', () => {
+    const expired = sampleMatch({ clock: { elapsedMs: 300_000, startedAt: null, lengthMs: 300_000 } })
+    const longer = applyClockExtend(expired, ADD_TIME_MS)
+    const undone = applyUndo(longer, extendAction({ seq: 1 }))
+    expect(undone.clock.lengthMs).toBe(300_000)
+    expect(undone.lengthSec).toBe(300)
+    expect(undone.lastSeq).toBe(0)
+  })
+
+  it('presses a minute at a time, inside the bounds the server accepts', () => {
+    expect(ADD_TIME_MS).toBe(60_000)
+    expect(ADD_TIME_MS).toBeGreaterThanOrEqual(EXTEND_MIN_MS)
+    expect(ADD_TIME_MS).toBeLessThanOrEqual(EXTEND_MAX_MS)
+  })
 })
 
 // A socket the room's access point dropped without a reset never settles, and the serial
@@ -84,6 +120,14 @@ describe('errorCopy', () => {
 
   it('says what to do about an ended match', () => {
     expect(errorCopy(new ApiError(409, 'match_state', 'match is done'))).toMatch(/Reopen it from the Live tab/)
+  })
+
+  // G03: the event and the match both refuse with match_state and both say "done", and the
+  // instruction is opposite. A finished event was being reported as a match to reopen from
+  // a Live tab this tablet does not have and a screen that would refuse it anyway.
+  it('separates a finished event from an ended match', () => {
+    expect(errorCopy(new ApiError(409, 'match_state', 'event is done'))).toBe(EVENT_FINISHED)
+    expect(errorCopy(new ApiError(409, 'match_state', 'event is done'))).not.toMatch(/Reopen it/)
   })
 
   it('keeps the server sentence when it is already an instruction', () => {
@@ -170,6 +214,61 @@ describe('refusals', () => {
   it('keeps every printed reason inside the one line the column reserves for it', () => {
     for (const reason of REASONS) expect(reason.length, reason).toBeLessThanOrEqual(40)
   })
+
+  /**
+   * G19. The extension is refused in exactly one state, and it is the opposite of the one
+   * that refuses Start. That is what lets the two share the single reason line under their
+   * row, and each sentence names the control it is about rather than the row.
+   */
+  describe('the add-time refusal', () => {
+    const running = { ...live, clock: { ...live.clock, startedAt: '2026-10-03T16:00:00.000Z' } }
+    const expired = { ...live, clock: { elapsedMs: 300_000, startedAt: null, lengthMs: 300_000 } }
+
+    it('refuses only while the clock runs, and takes an expired or a paused one', () => {
+      expect(addTimeRefusal(true, running)).toBe(CLOCK_RUNNING)
+      expect(addTimeRefusal(true, expired)).toBeNull()
+      expect(addTimeRefusal(true, live)).toBeNull()
+    })
+
+    it('is never refused at the same time as the clock control beside it', () => {
+      for (const [match, expired_] of [[running, false], [expired, true], [live, false]] as const) {
+        const both = [clockRefusal(true, match, expired_), addTimeRefusal(true, match)].filter(r => r !== null)
+        expect(both.length, JSON.stringify(match.clock)).toBeLessThanOrEqual(1)
+      }
+    })
+
+    it('refuses with the whole screen when the screen is refusing', () => {
+      expect(addTimeRefusal(false, live)).toMatch(/Not connected/)
+      expect(addTimeRefusal(true, null)).toMatch(/No match on this mat/)
+      expect(addTimeRefusal(true, { ...live, pendingTerminal: { athleteId: 200, actionKey: 'pin' } })).toMatch(/result is waiting/)
+    })
+  })
+
+  // Undo removes the newest event whatever it is, so it reaches an extension; a minus takes
+  // a point back off one side, and an extension belongs to neither of them.
+  it('lets undo reach an extension and keeps the minus off it', () => {
+    const extended = { ...live, lastSeq: 1 }
+    expect(undoRefusal(true, extended, extendAction({ seq: 1 }), true)).toBeNull()
+    expect(minusRefusal(true, extended, extendAction({ seq: 1 }), 100)).toBe(EXTEND_EVENT)
+  })
+
+  /**
+   * G03. After Finish the server refuses every write, so the event outranks whatever the
+   * match itself would say. A tab that has not polled since has to refuse the tap rather
+   * than send it and translate the answer.
+   */
+  it('refuses every control on a finished event, whatever the match says', () => {
+    const refusals = scorerRefusals({ connected: true, eventStatus: 'done', match: live, last: null, expired: false })
+    for (const [name, reason] of Object.entries(refusals)) expect(reason, name).toBe(EVENT_DONE)
+  })
+
+  it('leaves the controls to the match while the event is live', () => {
+    const refusals = scorerRefusals({ connected: true, eventStatus: 'live', match: live, last: null, expired: false })
+    expect(refusals.half).toBeNull()
+    expect(refusals.clock).toBeNull()
+    expect(refusals.addTime).toBeNull()
+    expect(refusals.undo).toMatch(/Nothing to take back/)
+  })
 })
 
 /**
@@ -237,10 +336,24 @@ describe('the centre column budget', () => {
   })
 
   // What the alarm displaces is the reference content, which is the trade this whole
-  // arrangement exists to make.
-  it('has room for the last action line whenever the alarm is not showing', () => {
+  // arrangement exists to make. G09's contact line joins it, and is the last thing in.
+  it('has room for the last action line and the contact line whenever the alarm is not showing', () => {
     const b = columnBudget(SHORTEST_VIEWPORT)
-    expect(b.slack + ALERT).toBeGreaterThanOrEqual(LINE)
+    expect(b.slack + ALERT).toBeGreaterThanOrEqual(LINE + CONTACT_LINE)
+  })
+
+  /**
+   * G19's control had to fit a column with three pixels of slack at the shortest layout
+   * viewport. It fits because it shares the clock's row rather than taking one: a second
+   * 104px row would have put End match under the fold on every 1024 x 768 iPad, and the
+   * arithmetic below is what says so rather than a hope.
+   */
+  it('pays for the add-time control out of the clock row, not out of the guarantee', () => {
+    expect(CLOCK_ROW).toBe(COMMIT)
+    expect(STACK_COMMIT).toBe(COMMIT + REASON + CLOCK_ROW + REASON + MOAT + RULE + COMMIT + 6 * 8)
+    // A row of its own would not have fitted, which is the whole reason it shares one.
+    const asOwnRow = columnBudget(SHORTEST_VIEWPORT).guaranteed + COMMIT + REASON
+    expect(asOwnRow).toBeGreaterThan(SHORTEST_VIEWPORT)
   })
 
   it('keeps every box on the 4px grid and at or above the size 6.16 gives it', () => {

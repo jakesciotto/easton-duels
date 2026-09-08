@@ -3,12 +3,14 @@ import type { MatchView, RulesetView, Snapshot, WinType } from '@shared/types'
 import { formatClock, remainingMs } from '@shared/clock'
 import { ApiError } from '@/lib/api'
 import type { MatBinding } from '@/lib/auth'
-import { endMatch, heartbeat, postMatchEvent, undoLast, type ScoreResponse } from '@/lib/scoring'
+import { bindLossOf, type BindLoss } from '@/lib/matBinding'
+import { endMatch, extendClock, heartbeat, postMatchEvent, undoLast, type ScoreResponse } from '@/lib/scoring'
 import { playRegistered, playRejected } from '@/lib/sounds'
 import {
-  applyClockPause, applyClockStart, applyScore, applyUndo, errorCopy, withDeadline,
-  WRITE_DEADLINE_MS, type LocalAction,
+  ADD_TIME_MS, applyClockExtend, applyClockPause, applyClockStart, applyScore, applyUndo,
+  errorCopy, withDeadline, WRITE_DEADLINE_MS, type LocalAction,
 } from './actions'
+import { loadLedger, saveLedger } from './ledger'
 
 const HEARTBEAT_MS = 20_000
 
@@ -41,6 +43,14 @@ interface PendingOp {
   needed: (match: MatchView) => boolean
 }
 
+/**
+ * The ledger travels with the match it describes rather than beside it. The match id changes
+ * inside an effect, so a ledger held in its own state would be written to session storage
+ * under the NEW match id while it still held the OLD match's entries: one commit is enough
+ * to hand mat 1's taps to mat 2's first match.
+ */
+interface Ledger { matchId: number; actions: LocalAction[] }
+
 function derive(match: MatchView, ruleset: RulesetView | null): Outcome {
   if (match.pendingTerminal) {
     const t = ruleset?.terminals.find(x => x.key === match.pendingTerminal!.actionKey)
@@ -65,7 +75,8 @@ export function useScorer(binding: MatBinding, snapshot: Snapshot | null, connec
   const [written, setWritten] = useState<MatchView | null>(null)
   const [writeMark, setWriteMark] = useState<{ seq: number; version: number } | null>(null)
   const [pending, setPending] = useState<PendingOp[]>([])
-  const [log, setLog] = useState<LocalAction[]>([])
+  const [log, setLog] = useState<Ledger>({ matchId: 0, actions: [] })
+  const [bindingLost, setBindingLost] = useState<BindLoss | null>(null)
   const seqRef = useRef<{ matchId: number; seq: number; version: number } | null>(null)
   const projected = useRef<{ matchId: number; seq: number } | null>(null)
   const chain = useRef<Promise<unknown>>(Promise.resolve())
@@ -114,22 +125,43 @@ export function useScorer(binding: MatBinding, snapshot: Snapshot | null, connec
   }
 
   // Entries above the authoritative seq were rolled back by an undo, here or elsewhere.
-  const live = current ? log.filter(a => a.seq <= current.lastSeq) : []
+  const mine = current && log.matchId === current.id ? log.actions : []
+  const live = current ? mine.filter(a => a.seq <= current.lastSeq) : []
   const lastAction = current && live.length > 0 && live[live.length - 1].seq === current.lastSeq ? live[live.length - 1] : null
 
+  // A 401 on the heartbeat is the only warning a tablet gets that its mat is no longer its
+  // own: it fires every 20 seconds whether or not anyone is scoring, so it finds an expired
+  // token or a takeover long before the next tap does. Swallowed, it left the tablet showing
+  // a live match it could not write to.
   useEffect(() => {
-    void heartbeat(binding.matId, binding.token).catch(() => {})
-    const id = setInterval(() => { void heartbeat(binding.matId, binding.token).catch(() => {}) }, HEARTBEAT_MS)
+    const beat = () => {
+      void heartbeat(binding.matId, binding.token).catch(e => {
+        const lost = bindLossOf(e)
+        if (lost) setBindingLost(lost)
+      })
+    }
+    beat()
+    const id = setInterval(beat, HEARTBEAT_MS)
     return () => clearInterval(id)
   }, [binding.matId, binding.token])
 
-  // A new match clears any leftover sheet, error, optimistic write or local ledger.
+  // A new match clears any leftover sheet, error and optimistic write, and takes the ledger
+  // this tablet already wrote for it: after a reload that is the tap the operator is
+  // reaching for Undo to take back.
   useEffect(() => {
     setSheet(null)
     setError(null)
     setPending([])
-    setLog([])
+    const id = current?.id ?? 0
+    setLog({ matchId: id, actions: id ? loadLedger(id, current!.lastSeq) : [] })
+    // The ledger is restored for the match, not for a moment in it, so the seq it is pruned
+    // against is deliberately not a dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current?.id])
+
+  useEffect(() => {
+    if (log.matchId) saveLedger(log.matchId, log.actions)
+  }, [log])
 
   // An agreed seq only falls when events were taken away: a refused write rolling back, an
   // undo here, an undo on another device. Anything the ledger still holds above it describes
@@ -141,7 +173,7 @@ export function useScorer(binding: MatBinding, snapshot: Snapshot | null, connec
   const agreed = pending.length === 0 ? base?.lastSeq : undefined
   useEffect(() => {
     if (agreed === undefined) return
-    setLog(l => (l.some(a => a.seq > agreed) ? l.filter(a => a.seq <= agreed) : l))
+    setLog(l => (l.actions.some(a => a.seq > agreed) ? { ...l, actions: l.actions.filter(a => a.seq <= agreed) } : l))
   }, [agreed, base?.id])
 
   /**
@@ -174,6 +206,13 @@ export function useScorer(binding: MatBinding, snapshot: Snapshot | null, connec
         } catch (e) {
           generation.current += 1
           setPending([])
+          // A write refused for the token is not a write to report and retry: this tablet
+          // has no mat any more, and the page sends it back to the mat pick with the reason.
+          const lost = bindLossOf(e)
+          if (lost) {
+            setBindingLost(lost)
+            return null
+          }
           if (e instanceof ApiError && e.code === 'sequence') {
             const s = Number(e.details.currentSeq)
             // The version is kept, not raised: the poll that carries this correction has
@@ -200,6 +239,11 @@ export function useScorer(binding: MatBinding, snapshot: Snapshot | null, connec
     return id
   }
 
+  // Every entry carries the match it belongs to, so a ledger can never be appended to, or
+  // saved under, a match that has already moved on.
+  const record = (matchId: number, action: LocalAction) =>
+    setLog(l => (l.matchId === matchId ? { matchId, actions: [...l.actions, action] } : { matchId, actions: [action] }))
+
   const tap = (athleteId: number, actionKey: string) => {
     const m = current
     const action = ruleset?.actions.find(a => a.key === actionKey)
@@ -208,7 +252,7 @@ export function useScorer(binding: MatBinding, snapshot: Snapshot | null, connec
     const target = ++projected.current.seq
     const name = m.a.athleteId === athleteId ? m.a.name : m.b.name
     const at = formatClock(remainingMs(m.clock, Date.now() + offset.current))
-    setLog(l => [...l, { kind: 'score', seq: target, athleteId, name, label: action.label, points: action.points, at }])
+    record(m.id, { kind: 'score', seq: target, athleteId, name, label: action.label, points: action.points, at })
     const id = push({ apply: x => applyScore(x, athleteId, action.points), needed: x => x.lastSeq < target })
     playRegistered()
     void enqueue((matchId, seq) => postMatchEvent(matchId, binding.token, { type: 'score', athleteId, actionKey, lastSeq: seq }), id)
@@ -225,11 +269,41 @@ export function useScorer(binding: MatBinding, snapshot: Snapshot | null, connec
     // to name the newest event can say it was the clock rather than claim this tablet
     // recorded nothing, and refuse for the reason that is actually true.
     const at = formatClock(remainingMs(m.clock, nowMs))
-    setLog(l => [...l, { kind: 'clock', seq: target, label: running ? 'Clock paused' : 'Clock started', at }])
+    record(m.id, { kind: 'clock', seq: target, label: running ? 'Clock paused' : 'Clock started', at })
     const id = running
       ? push({ apply: x => applyClockPause(x, nowMs), needed: x => x.clock.startedAt !== null })
       : push({ apply: x => applyClockStart(x, new Date(nowMs).toISOString()), needed: x => x.clock.startedAt === null })
     void enqueue((matchId, seq) => postMatchEvent(matchId, binding.token, { type: running ? 'clock_pause' : 'clock_start', lastSeq: seq }), id)
+  }
+
+  /**
+   * G19: the clock is the one thing a referee cannot correct after the fact, so a match that
+   * ran out takes another minute rather than a result nobody agrees with. It is the fifth
+   * optimistic write and folds like the others: the length moves at 0ms, which clears the
+   * expiry frame and the alarm on the same frame the operator presses.
+   */
+  const addTime = () => {
+    const m = current
+    if (!m || !connected || !projected.current) return
+    if (m.clock.startedAt !== null) return
+    setError(null)
+    const target = ++projected.current.seq
+    const at = formatClock(remainingMs(m.clock, Date.now() + offset.current))
+    record(m.id, { kind: 'extend', seq: target, label: 'Time added', addMs: ADD_TIME_MS, at })
+    const id = push({ apply: x => applyClockExtend(x, ADD_TIME_MS), needed: x => x.lastSeq < target })
+    void enqueue(async (matchId, seq) => {
+      try {
+        return await extendClock(matchId, binding.token, { lastSeq: seq, addMs: ADD_TIME_MS })
+      } catch (e) {
+        // The route sweeps an overdue clock into a pause of its own before it extends, so
+        // the seq this tablet is holding is one behind through nobody's fault. Adopt the
+        // server's number once rather than reporting a conflict with a device that is not
+        // there; a second one is a real conflict and rolls back like any other.
+        const server = e instanceof ApiError && e.code === 'sequence' ? Number(e.details.currentSeq) : NaN
+        if (!Number.isFinite(server)) throw e
+        return await extendClock(matchId, binding.token, { lastSeq: server, addMs: ADD_TIME_MS })
+      }
+    }, id)
   }
 
   const undo = () => {
@@ -237,10 +311,10 @@ export function useScorer(binding: MatBinding, snapshot: Snapshot | null, connec
     const target = lastAction
     if (!m || !connected || !projected.current || projected.current.seq === 0) return
     // The server's undo removes the newest event and nothing else, so this fires only when
-    // that event is a score this tablet recorded. Undoing anything else means undoing what
-    // the tablet cannot name: a pause the server refuses to remove, or a start whose
-    // removal stops a clock the operator was not asking to stop.
-    if (!target || target.kind !== 'score' || target.seq !== m.lastSeq) return
+    // that event is one this tablet recorded and can name: a score or an extension. Undoing
+    // a clock press means undoing what the tablet cannot name -- a pause the server refuses
+    // to remove, or a start whose removal stops a clock nobody asked it to stop.
+    if (!target || target.kind === 'clock' || target.seq !== m.lastSeq) return
     setError(null)
     const gone = projected.current.seq
     projected.current.seq = gone - 1
@@ -345,5 +419,5 @@ export function useScorer(binding: MatBinding, snapshot: Snapshot | null, connec
     close()
   }
 
-  return { mat, current, ruleset, busy, sheetBusy, error, sheet, lastAction, tap, terminal, clock, undo, minus, openEnd, pickWinner, confirm, cancel }
+  return { mat, current, ruleset, busy, sheetBusy, error, sheet, lastAction, bindingLost, tap, terminal, clock, addTime, undo, minus, openEnd, pickWinner, confirm, cancel }
 }

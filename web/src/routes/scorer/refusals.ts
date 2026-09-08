@@ -1,4 +1,4 @@
-import type { MatchView } from '@shared/types'
+import type { EventStatus, MatchView } from '@shared/types'
 import type { LocalAction } from './actions'
 
 /**
@@ -21,14 +21,22 @@ export const NOTHING = 'Nothing to take back yet.'
 export const NO_MATCH = 'No match on this mat.'
 export const ENDED = 'This match has ended.'
 export const NOT_STARTED = 'This match has not started.'
-export const TIME_UP = 'Time is up. Record the result.'
+/** Two ways out of an expired clock now, so the reason names both of them. */
+export const TIME_UP = 'Time is up. Add time or end the match.'
 /** Both clock presses this tablet recorded: the server's undo reaches neither. */
 export const CLOCK_EVENT = 'Undo does not reach the clock.'
 export const ELSEWHERE = 'The newest action came from elsewhere.'
+/** A minus takes back a point, and an extension is not one. Undo still reaches it. */
+export const EXTEND_EVENT = 'The newest action added time.'
+/** The server refuses an extension while the clock runs, so the control says so first. */
+export const CLOCK_RUNNING = 'Add time while the clock is stopped.'
+/** After Finish the server refuses every write, whatever the match itself says. */
+export const EVENT_DONE = 'This event is finished.'
 
 /** Every reason that prints in the reserved line, for the length check that guards it. */
 export const REASONS = [
   OFFLINE, PENDING, NOTHING, NO_MATCH, ENDED, NOT_STARTED, TIME_UP, CLOCK_EVENT, ELSEWHERE,
+  EXTEND_EVENT, CLOCK_RUNNING, EVENT_DONE,
 ]
 
 function unavailable(connected: boolean, match: MatchView | null): string | null {
@@ -50,9 +58,23 @@ export function clockRefusal(connected: boolean, match: MatchView | null, expire
   const gone = unavailable(connected, match)
   if (gone) return gone
   if (match!.pendingTerminal) return PENDING
-  // The server refuses clock_start once the elapsed time has reached the length, so the
-  // only move left is to record the result.
+  // The server refuses clock_start once the elapsed time has reached the length, so what is
+  // left is to add time or to record the result. An extension moves the length, which clears
+  // `expired` and hands the clock back.
   if (expired) return TIME_UP
+  return null
+}
+
+/**
+ * The extension. The server sweeps an overdue clock into a pause before it writes one, so an
+ * expired clock takes time as readily as a paused one; a RUNNING clock is the single state it
+ * turns down, and this is the sentence that says so before the tap rather than after it.
+ */
+export function addTimeRefusal(connected: boolean, match: MatchView | null): string | null {
+  const gone = unavailable(connected, match)
+  if (gone) return gone
+  if (match!.pendingTerminal) return PENDING
+  if (match!.clock.startedAt !== null) return CLOCK_RUNNING
   return null
 }
 
@@ -78,6 +100,7 @@ export function undoRefusal(
   if (match!.lastSeq === 0) return NOTHING
   if (!last || last.seq !== match!.lastSeq) return ELSEWHERE
   if (last.kind === 'clock') return CLOCK_EVENT
+  // An extension is removed like any other event, so undo reaches it and says so by name.
   return null
 }
 
@@ -97,9 +120,48 @@ export function minusRefusal(
   if (match!.lastSeq === 0) return NOTHING
   if (!last || last.seq !== match!.lastSeq) return ELSEWHERE
   if (last.kind === 'clock') return CLOCK_EVENT
+  // A minus takes a point back off one side, and an extension belongs to neither of them.
+  if (last.kind === 'extend') return EXTEND_EVENT
   // The only refusal that names a competitor, and so the only one that can outrun the
   // reserved line. It never prints there: it is raised for exactly one of the two sides,
   // and the line prints only what both of them, and Undo, refuse for.
   if (last.athleteId !== athleteId) return `The newest action was ${last.name}'s.`
   return null
+}
+
+/**
+ * Every refusal the page prints, decided in one place, because the event outranks all of
+ * them. After Finish the server turns down every write with `event is done`, so a tab that
+ * has not polled since must refuse the tap rather than send it and translate the answer.
+ *
+ * This is the only production caller of the functions above: each of them answers for its
+ * own control, and none of them can see the event.
+ */
+export interface ScorerRefusals {
+  /** Covers a whole half: its point buttons and the terminals behind the moat. */
+  half: string | null
+  clock: string | null
+  addTime: string | null
+  undo: string | null
+  minusA: string | null
+  minusB: string | null
+}
+
+export function scorerRefusals(input: {
+  connected: boolean
+  eventStatus: EventStatus | null
+  match: MatchView | null
+  last: LocalAction | null
+  expired: boolean
+}): ScorerRefusals {
+  const { connected, eventStatus, match, last, expired } = input
+  const done = eventStatus === 'done' ? EVENT_DONE : null
+  return {
+    half: done ?? scoreRefusal(connected, match),
+    clock: done ?? clockRefusal(connected, match, expired),
+    addTime: done ?? addTimeRefusal(connected, match),
+    undo: done ?? undoRefusal(connected, match, last, expired),
+    minusA: done ?? (match ? minusRefusal(connected, match, last, match.a.athleteId) : null),
+    minusB: done ?? (match ? minusRefusal(connected, match, last, match.b.athleteId) : null),
+  }
 }

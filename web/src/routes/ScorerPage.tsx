@@ -1,6 +1,9 @@
 import { useEffect, useRef } from 'react'
-import { Link, Navigate, useParams } from 'react-router'
-import { getMatBinding, type MatBinding } from '@/lib/auth'
+import { Link, Navigate, useNavigate, useParams } from 'react-router'
+import type { EventContact } from '@shared/types'
+import { clearMatBinding, getMatBinding, type MatBinding } from '@/lib/auth'
+import { contactLine } from '@/lib/format'
+import { matPickPath } from '@/lib/matBinding'
 import { useSnapshot } from '@/lib/useSnapshot'
 import { useClock } from '@/lib/useClock'
 import { useWakeLock } from '@/lib/useWakeLock'
@@ -12,14 +15,27 @@ import { ScoreSide } from './scorer/ScoreSide'
 import { CenterColumn } from './scorer/CenterColumn'
 import { ConfirmSheet } from './scorer/ConfirmSheet'
 import { useScorer } from './scorer/useScorer'
-import { clockRefusal, minusRefusal, scoreRefusal, undoRefusal } from './scorer/refusals'
+import { EVENT_FINISHED } from './scorer/actions'
+import { scorerRefusals } from './scorer/refusals'
 import { useFitsScorer } from './scorer/viewport'
+
+// The two screens that stand instead of the scorer both send the reader to the board, which
+// is the one surface that goes on being useful from a phone or after the event is over.
+function BoardNote({ eventId }: { eventId: number }) {
+  const path = `/board/${eventId}`
+  const origin = typeof window === 'undefined' ? '' : window.location.origin
+  return (
+    <>
+      <p className="t3 text-gray-11">To follow the scores from here, open the board instead.</p>
+      <Link to={path} className={buttonVariants({ size: 'lg' })}>Open the board</Link>
+      <p className="fig t2 break-all text-gray-10">{origin}{path}</p>
+    </>
+  )
+}
 
 // 6.16: below 900 CSS px, or out of landscape, the honest answer is a plain page. A phone
 // cannot hold a 20mm target in a three up grid, and this route is where a QR scan lands.
 function WrongDevice({ binding }: { binding: MatBinding }) {
-  const path = `/board/${binding.eventId}`
-  const origin = typeof window === 'undefined' ? '' : window.location.origin
   return (
     <main className="grid min-h-dvh place-items-center bg-background p-6">
       <div className="grid max-w-md gap-4">
@@ -28,15 +44,34 @@ function WrongDevice({ binding }: { binding: MatBinding }) {
           Scoring runs on an iPad held sideways. The buttons have to stay big enough to hit without
           looking, and a phone cannot hold them at that size.
         </p>
-        <p className="t3 text-gray-11">To follow the scores from here, open the board instead.</p>
-        <Link to={path} className={buttonVariants({ size: 'lg' })}>Open the board</Link>
-        <p className="fig t2 break-all text-gray-10">{origin}{path}</p>
+        <BoardNote eventId={binding.eventId} />
+      </div>
+    </main>
+  )
+}
+
+/**
+ * 6.16, refuse rather than reject, at the scale of the whole afternoon. After Finish the
+ * server turns down every write, so a scorer that went on showing its buttons would let a
+ * volunteer tap through a match and meet an error a second later for every one of them. The
+ * screen states the fact instead and offers the two things that still work: the board, and
+ * the person at the desk.
+ */
+function EventFinished({ eventId, contact }: { eventId: number; contact: EventContact | null }) {
+  const line = contactLine(contact)
+  return (
+    <main className="grid min-h-dvh place-items-center bg-background p-6">
+      <div className="grid max-w-md gap-4">
+        <h1 className="t5 text-gray-12">{EVENT_FINISHED}</h1>
+        <BoardNote eventId={eventId} />
+        {line && <p className="t2 text-gray-10">{line}</p>}
       </div>
     </main>
   )
 }
 
 function Scorer({ binding }: { binding: MatBinding }) {
+  const navigate = useNavigate()
   const { snapshot, connected, lastSuccessAt } = useSnapshot(binding.eventId)
   const s = useScorer(binding, snapshot, connected)
   const { remainingMs } = useClock(s.current?.clock ?? null, snapshot?.now ?? null)
@@ -46,6 +81,9 @@ function Scorer({ binding }: { binding: MatBinding }) {
   // still frozen at zero can't retrigger it.
   const firedForId = useRef<number | null>(null)
   const ranSinceFire = useRef(false)
+  // The length the last alarm was armed against. An extension moves the expiry, so the tone
+  // has to be armed again for the new one rather than counted as already sounded.
+  const firedForLength = useRef<number | null>(null)
 
   useEffect(() => {
     const unlock = () => unlockAudio()
@@ -74,6 +112,15 @@ function Scorer({ binding }: { binding: MatBinding }) {
     }
   }, [wakeLock.active, wakeLock.request])
 
+  // G04: an expired token and a token another iPad took over are both facts about this
+  // device's binding, not about the write that met them. The binding goes, and the tablet
+  // lands on the mat pick with the reason on the URL so a reload keeps it.
+  useEffect(() => {
+    if (!s.bindingLost) return
+    clearMatBinding()
+    navigate(matPickPath(binding.eventId, s.bindingLost), { replace: true })
+  }, [s.bindingLost, binding.eventId, navigate])
+
   const m = s.current
   // Server confirmed, not merely counted down: m.clock.elapsedMs only reaches the length
   // once a snapshot carries the pause the server wrote, so this waits for the real thing
@@ -86,21 +133,35 @@ function Scorer({ binding }: { binding: MatBinding }) {
   // exactly once per expiry -- no flash, no toast, no repeat.
   useEffect(() => {
     if (m?.clock.startedAt) ranSinceFire.current = true
+    // An extension is a new expiry, so the alarm is armed for it.
+    if (m && firedForLength.current !== null && firedForLength.current !== m.clock.lengthMs) {
+      firedForId.current = null
+    }
     if (!expired || !m) return
     if (firedForId.current === m.id && !ranSinceFire.current) return
     firedForId.current = m.id
+    firedForLength.current = m.clock.lengthMs
     ranSinceFire.current = false
     playExpired()
   }, [expired, m])
 
-  const teams = snapshot?.teams ?? []
-  const halfRefusal = scoreRefusal(connected, m)
-  const refusals = {
-    clock: clockRefusal(connected, m, expired),
-    undo: undoRefusal(connected, m, s.lastAction, expired),
-    minusA: m ? minusRefusal(connected, m, s.lastAction, m.a.athleteId) : null,
-    minusB: m ? minusRefusal(connected, m, s.lastAction, m.b.athleteId) : null,
+  if (snapshot?.event.status === 'done') {
+    return <EventFinished eventId={binding.eventId} contact={snapshot.event.contact} />
   }
+
+  const teams = snapshot?.teams ?? []
+  const refusals = scorerRefusals({
+    connected,
+    eventStatus: snapshot?.event.status ?? null,
+    match: m,
+    last: s.lastAction,
+    expired,
+  })
+  // G05: a mat with nothing on it and nothing queued is finished for the day, and telling
+  // its volunteer to wait for the organizer is telling them to wait for nothing.
+  const idleNote = s.mat && s.mat.current === null && s.mat.onDeck.length === 0
+    ? `Mat ${s.mat.number} complete.`
+    : 'No match on this mat. Waiting for the organizer.'
 
   return (
     <main className="relative flex h-dvh select-none flex-col overflow-hidden bg-background">
@@ -114,7 +175,7 @@ function Scorer({ binding }: { binding: MatBinding }) {
         </div>
       )}
       {!m || !s.mat ? (
-        <div className="grid flex-1 place-items-center t5 text-gray-10">No match on this mat. Waiting for the organizer.</div>
+        <div className="grid flex-1 place-items-center t5 text-gray-10">{idleNote}</div>
       ) : (
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_320px_minmax(0,1fr)]">
           <ScoreSide
@@ -124,7 +185,7 @@ function Scorer({ binding }: { binding: MatBinding }) {
             edge="left"
             lead={m.a.score >= m.b.score}
             expired={expired}
-            refusal={halfRefusal}
+            refusal={refusals.half}
             onTap={k => s.tap(m.a.athleteId, k)}
             onTerminal={k => void s.terminal(m.a.athleteId, k)}
           />
@@ -138,7 +199,9 @@ function Scorer({ binding }: { binding: MatBinding }) {
             lastAction={s.lastAction}
             refusals={refusals}
             error={s.sheet ? null : s.error}
+            contact={contactLine(snapshot?.event.contact ?? null)}
             onClock={s.clock}
+            onAddTime={s.addTime}
             onUndo={s.undo}
             onMinus={s.minus}
             onEnd={() => s.openEnd(expired ? 'time' : 'end')}
@@ -150,7 +213,7 @@ function Scorer({ binding }: { binding: MatBinding }) {
             edge="right"
             lead={m.b.score >= m.a.score}
             expired={expired}
-            refusal={halfRefusal}
+            refusal={refusals.half}
             onTap={k => s.tap(m.b.athleteId, k)}
             onTerminal={k => void s.terminal(m.b.athleteId, k)}
           />

@@ -4,6 +4,8 @@ import userEvent from '@testing-library/user-event'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { routes } from '@/router'
 import { SHORTEST_VIEWPORT } from '@/routes/scorer/budget'
+import { CLOCK_RUNNING, EVENT_DONE, TIME_UP } from '@/routes/scorer/refusals'
+import { EVENT_FINISHED } from '@/routes/scorer/actions'
 import { CenterColumn } from '@/routes/scorer/CenterColumn'
 import { ConfirmSheet } from '@/routes/scorer/ConfirmSheet'
 import type { Sheet as SheetState } from '@/routes/scorer/useScorer'
@@ -138,11 +140,24 @@ describe('ScorerPage', () => {
     expect(f.body(f.calls.findIndex(c => c.url === '/api/matches/10/end'))).toMatchObject({ lastSeq: 0, winnerAthleteId: 100 })
   })
 
-  it('shows the empty state when the mat has no match', async () => {
+  // G05: between bouts and finished for the day are different facts, and the tablet said
+  // "waiting for the organizer" for both. On a mat with nothing left the organizer is not
+  // coming, and a volunteer stood there all afternoon waiting for them.
+  it('says the mat is complete when nothing is left on it, and waits only when a match is queued', async () => {
     const feed = snapshotFeed(sampleSnapshot({ mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: true }], matches: [] }))
     fakeFetch(url => feed.handle(url) ?? { json: {} })
     await mount()
-    expect(await screen.findByText(/No match on this mat/)).toBeInTheDocument()
+    expect(await screen.findByText('Mat 1 complete.')).toBeInTheDocument()
+    expect(screen.queryByText(/Waiting for the organizer/)).toBeNull()
+  })
+
+  it('keeps the waiting copy for a mat that still has a match queued', async () => {
+    const queued = sampleMatch({ id: 11, status: 'pending' })
+    const feed = snapshotFeed(sampleSnapshot({ mats: [{ id: 1, number: 1, current: null, onDeck: [queued], bound: true }], matches: [queued] }))
+    fakeFetch(url => feed.handle(url) ?? { json: {} })
+    await mount()
+    expect(await screen.findByText(/No match on this mat. Waiting for the organizer./)).toBeInTheDocument()
+    expect(screen.queryByText('Mat 1 complete.')).toBeNull()
   })
 
   // 6.16: the action grid is fixed 3 x 3 and a shorter ruleset leaves cells EMPTY rather
@@ -281,16 +296,16 @@ describe('ScorerPage', () => {
     const feed = snapshotFeed(onOneMat(expired))
     fakeFetch(url => feed.handle(url) ?? { json: {} })
     await mount()
-    expect(await screen.findByText('Time expired. Record the result.')).toBeInTheDocument()
+    expect(await screen.findByText('Time expired. Record the result or add time.')).toBeInTheDocument()
     expect(playExpired).toHaveBeenCalledTimes(1)
-    // The clock is not something the operator can restart, so it says so instead of
-    // accepting the press.
+    // The clock does not restart on its own once it has run out, so Start says so instead
+    // of accepting the press, and names the control that does move it.
     expect(screen.getByRole('button', { name: 'Start' })).toBeDisabled()
-    expect(screen.getByText('Time is up. Record the result.')).toBeInTheDocument()
+    expect(screen.getByText(TIME_UP)).toBeInTheDocument()
 
     // It does not clear itself, and it does not sound again on later polls.
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 3100)) })
-    expect(screen.getByText('Time expired. Record the result.')).toBeInTheDocument()
+    expect(screen.getByText('Time expired. Record the result or add time.')).toBeInTheDocument()
     expect(playExpired).toHaveBeenCalledTimes(1)
   })
 
@@ -306,7 +321,7 @@ describe('ScorerPage', () => {
     fakeFetch(url => feed.handle(url) ?? { json: {} })
     await mount()
 
-    const alarm = await screen.findByText('Time expired. Record the result.')
+    const alarm = await screen.findByText('Time expired. Record the result or add time.')
     const end = screen.getByRole('button', { name: 'End match' })
     const scroller = referenceRegion()
     expect(scroller.contains(alarm)).toBe(false)
@@ -343,11 +358,11 @@ describe('ScorerPage', () => {
     vi.stubGlobal('innerHeight', SHORTEST_VIEWPORT)
     const match = expiredMatch()
     const mat = { id: 1, number: 1, current: match, onDeck: [], bound: true }
-    const refusals = { clock: null, undo: null, minusA: null, minusB: null }
+    const refusals = { clock: null, addTime: null, undo: null, minusA: null, minusB: null }
     const props = {
       mat, match, serverNow: sampleSnapshot().now, pollIntervalMs: 1000, expired: true,
-      lastAction: null, refusals, error: null,
-      onClock: () => {}, onUndo: () => {}, onMinus: () => {}, onEnd: () => {},
+      lastAction: null, refusals, error: null, contact: null,
+      onClock: () => {}, onAddTime: () => {}, onUndo: () => {}, onMinus: () => {}, onEnd: () => {},
     }
 
     const fresh = render(<CenterColumn {...props} lastSuccessAt={Date.now()} />)
@@ -491,6 +506,146 @@ describe('ScorerPage', () => {
     cleanup()
     await act(async () => { await vi.advanceTimersByTimeAsync(20_000) })
     expect(heartbeats()).toHaveLength(2)
+  })
+
+  /**
+   * G03. After Finish the server refuses every write with `event is done`, and the scorer
+   * translated that into "This match already ended. Reopen it from the Live tab" -- an
+   * instruction that does not work, given to a volunteer who had already tapped through a
+   * whole match to reach it.
+   */
+  describe('after the desk finishes the event', () => {
+    const finished = (over = {}) => sampleSnapshot({
+      event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'done', mode: 'live', matCount: 1, contact: null, ...over },
+    })
+
+    it('states the fact, drops every scoring control, and offers the board and the desk', async () => {
+      const feed = snapshotFeed(finished({ contact: { name: 'Dana Whitfield', phone: '555 0147' } }))
+      fakeFetch(url => feed.handle(url) ?? { json: {} })
+      await mount()
+      expect(await screen.findByRole('heading', { name: EVENT_FINISHED })).toBeInTheDocument()
+      expect(screen.queryByRole('region', { name: 'Mateo Rivera' })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'End match' })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Start' })).toBeNull()
+      expect(screen.getByRole('link', { name: 'Open the board' })).toHaveAttribute('href', '/board/1')
+      expect(screen.getByText('Questions at the desk: Dana Whitfield, 555 0147.')).toBeInTheDocument()
+    })
+
+    // The done screen depends on a poll landing, and the poll is the thing that may be a
+    // few seconds late. A tab still showing controls has to refuse the tap rather than
+    // send it and translate the answer.
+    it('refuses every control on a tab whose poll has not caught up yet', async () => {
+      const feed = snapshotFeed(sampleSnapshot())
+      const f = fakeFetch(url => feed.handle(url) ?? { json: {} })
+      await mount()
+      const left = await screen.findByRole('region', { name: 'Mateo Rivera' })
+      expect(within(left).getByRole('button', { name: /Takedown/ })).toBeEnabled()
+
+      // Only the event's status changes: the mat is still carrying its live match.
+      feed.push(finished({ }))
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 3100)) })
+
+      expect(await screen.findByRole('heading', { name: EVENT_FINISHED })).toBeInTheDocument()
+      expect(f.calls.some(c => c.url === '/api/matches/10/events')).toBe(false)
+    })
+  })
+
+  /**
+   * G19. The clock could not be restarted or extended once it ran out, so a match that
+   * needed thirty more seconds had to be recorded as whatever the board happened to say.
+   */
+  describe('adding time to a clock that ran out', () => {
+    const extended = (over = {}) => sampleMatch({
+      lastSeq: 1, clock: { elapsedMs: 300_000, startedAt: null, lengthMs: 360_000 }, lengthSec: 360, ...over,
+    })
+
+    it('extends by a minute, clears the alarm, and hands the clock back to Start', async () => {
+      const feed = snapshotFeed(onOneMat(expiredMatch()))
+      const f = fakeFetch(url => feed.handle(url) ?? { json: { match: extended(), version: 2 } })
+      await mount()
+      await screen.findByText('Time expired. Record the result or add time.')
+
+      await userEvent.setup().click(screen.getByRole('button', { name: 'Add 1:00' }))
+      await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/matches/10/clock/extend')).toBe(true))
+      const body = f.body(f.calls.findIndex(c => c.url === '/api/matches/10/clock/extend'))
+      expect(body).toMatchObject({ lastSeq: 0, addMs: 60_000 })
+      expect(typeof body.id).toBe('string')
+
+      // The fold lands at 0ms, so the frame and the alarm go with it rather than waiting
+      // for the poll that confirms them.
+      await vi.waitFor(() => expect(screen.queryByText('Time expired. Record the result or add time.')).toBeNull())
+      expect(screen.getByRole('button', { name: 'Start' })).toBeEnabled()
+      expect(screen.getByText(/Time added/)).toBeInTheDocument()
+    })
+
+    it('refuses while the clock runs, and says which control the reason is about', async () => {
+      const running = sampleMatch({ clock: { elapsedMs: 0, startedAt: '2026-10-03T16:00:00.000Z', lengthMs: 300_000 } })
+      const feed = snapshotFeed(onOneMat(running))
+      const f = fakeFetch(url => feed.handle(url) ?? { json: {} })
+      await mount()
+      const add = await screen.findByRole('button', { name: 'Add 1:00' })
+      expect(add).toBeDisabled()
+      expect(screen.getByText(CLOCK_RUNNING)).toBeInTheDocument()
+      // Pause is not refused by the same line, which is what makes one line legal here.
+      expect(screen.getByRole('button', { name: 'Pause' })).toBeEnabled()
+      expect(f.calls.some(c => c.url.includes('/clock/extend'))).toBe(false)
+    })
+
+    /**
+     * The route sweeps an overdue clock into a pause of its own before it extends, so the
+     * seq this tablet holds is one behind through nobody's fault. Reporting that as
+     * "another device scored this mat first" is a lie that also loses the minute.
+     */
+    it('adopts the server seq and retries once when the expiry sweep wrote first', async () => {
+      const sent: number[] = []
+      const feed = snapshotFeed(onOneMat(expiredMatch()))
+      const f = fakeFetch((url, init) => {
+        const fromFeed = feed.handle(url)
+        if (fromFeed) return fromFeed
+        if (!url.includes('/clock/extend')) return { json: {} }
+        const body = JSON.parse(String(init?.body)) as { lastSeq: number }
+        sent.push(body.lastSeq)
+        if (sent.length === 1) {
+          return { status: 409, json: { error: { code: 'sequence', message: 'stale sequence', currentSeq: 4 } } }
+        }
+        return { json: { match: extended({ lastSeq: 5 }), version: 3 } }
+      })
+      await mount()
+      await screen.findByText('Time expired. Record the result or add time.')
+      await userEvent.setup().click(screen.getByRole('button', { name: 'Add 1:00' }))
+
+      await vi.waitFor(() => expect(sent).toEqual([0, 4]))
+      expect(screen.queryByText(/Another device scored this mat first/)).toBeNull()
+      // Two attempts, two client event ids: the first never landed, so the second must not
+      // be deduped against it.
+      const ids = f.calls.filter(c => c.url.includes('/clock/extend')).map(c => JSON.parse(String(c.init?.body)).id)
+      expect(new Set(ids).size).toBe(2)
+    })
+
+    it('sounds the alarm again when the extended clock runs out a second time', async () => {
+      // The mock is declared at module scope, so its count carries over from every other
+      // test in the file that let a clock expire.
+      vi.mocked(playExpired).mockClear()
+      vi.useFakeTimers({ now: T0 })
+      const feed = snapshotFeed(onOneMat(expiredMatch()))
+      fakeFetch(url => feed.handle(url) ?? { json: {} })
+      await mount()
+      expect(screen.getByText('Time expired. Record the result or add time.')).toBeInTheDocument()
+      expect(playExpired).toHaveBeenCalledTimes(1)
+
+      // The extension lands, so the alarm goes with it and stays gone.
+      feed.push(onOneMat(extended()))
+      await act(async () => { await vi.advanceTimersByTimeAsync(3100) })
+      expect(screen.queryByText('Time expired. Record the result or add time.')).toBeNull()
+      expect(playExpired).toHaveBeenCalledTimes(1)
+
+      // The referee runs the added minute off and it expires again, at a new expiry the
+      // alarm has never sounded for.
+      feed.push(onOneMat(sampleMatch({ lastSeq: 3, lengthSec: 360, clock: { elapsedMs: 360_000, startedAt: null, lengthMs: 360_000 } })))
+      await act(async () => { await vi.advanceTimersByTimeAsync(3100) })
+      expect(screen.getByText('Time expired. Record the result or add time.')).toBeInTheDocument()
+      expect(playExpired).toHaveBeenCalledTimes(2)
+    })
   })
 })
 

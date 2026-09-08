@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react'
-import { TEAM_COLORS, type TeamColor, type WinType } from '@shared/types'
+import { TEAM_COLORS, type EventContact, type TeamColor, type WinType } from '@shared/types'
 
 export function beltLabel(belt: string | null): string {
   if (!belt) return 'No belt'
@@ -32,4 +32,14 @@ export function genderLabel(gender: string | null): string | null {
   if (!gender) return null
   const first = gender.trim().charAt(0).toUpperCase()
   return first === '' ? null : first
+}
+
+/**
+ * 6.4's footer line, printed identically wherever a volunteer might need the desk: the
+ * connect page, the scorer's reference region and its done screen. Null when the event
+ * carries no contact, because a half filled one gives nobody anything to act on.
+ */
+export function contactLine(contact: EventContact | null): string | null {
+  if (!contact) return null
+  return `Questions at the desk: ${contact.name}, ${contact.phone}.`
 }

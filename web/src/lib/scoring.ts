@@ -38,3 +38,13 @@ export function endMatch(matchId: number, token: string, input: { lastSeq: numbe
 export function heartbeat(matId: number, token: string): Promise<{ ok: boolean }> {
   return api(`/api/mats/${matId}/heartbeat`, { method: 'POST', body: {}, token })
 }
+
+/**
+ * Adds time to a clock that ran out. Its own event id, like every other write here, so the
+ * retry inside withRetry cannot add the minute twice; the caller's retry after a 409
+ * sequence mints a fresh one, because that attempt never landed.
+ */
+export function extendClock(matchId: number, token: string, input: { lastSeq: number; addMs: number }): Promise<ScoreResponse> {
+  const id = newEventId()
+  return withRetry(() => api<ScoreResponse>(`/api/matches/${matchId}/clock/extend`, { method: 'POST', body: { id, ...input }, token }))
+}

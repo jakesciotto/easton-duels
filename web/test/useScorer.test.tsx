@@ -1,8 +1,8 @@
-import { describe, it, expect, afterEach, vi } from 'vitest'
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
-import type { Snapshot } from '@shared/types'
+import { EXTEND_MAX_MS, EXTEND_MIN_MS, type Snapshot } from '@shared/types'
 import { useScorer } from '@/routes/scorer/useScorer'
-import { WRITE_DEADLINE_MS } from '@/routes/scorer/actions'
+import { ADD_TIME_MS, WRITE_DEADLINE_MS } from '@/routes/scorer/actions'
 import type { MatBinding } from '@/lib/auth'
 import { fakeFetch, sampleMatch, sampleSnapshot } from './fakes'
 
@@ -461,5 +461,189 @@ describe('useScorer', () => {
     await act(async () => { await result.current.cancel() })
     expect(result.current.sheet).toBeNull()
     expect(result.current.error).toBeNull()
+  })
+
+  /**
+   * G04. A token lives 24 hours and a takeover kills the one it replaced, so both of these
+   * reach a tablet that is otherwise working: it shows a live match, it takes taps, and
+   * every one of them fails. The 401 is a fact about the binding, not about the write, so
+   * it is reported as one and the page acts on it.
+   */
+  describe('when the tablet loses its mat', () => {
+    const unauthorized = { status: 401, json: { error: { code: 'unauthorized', message: 'token required' } } }
+    const stale = {
+      status: 401,
+      json: { error: { code: 'token_stale', message: 'Another iPad took this mat over. Bind again to score from here.' } },
+    }
+
+    it('reports an expired token from a write rather than printing the server word for it', async () => {
+      fakeFetch(url => (url === '/api/matches/10/events' ? unauthorized : { json: { ok: true } }))
+      const { result } = renderHook(() => useScorer(binding, sampleSnapshot(), true))
+
+      act(() => result.current.tap(100, 'takedown'))
+      await settle(result)
+      expect(result.current.bindingLost).toBe('expired')
+      // Not an inline write error: there is nothing on this screen for the operator to
+      // retry, and the page is about to leave.
+      expect(result.current.error).toBeNull()
+    })
+
+    it('reports a takeover from a write', async () => {
+      fakeFetch(url => (url === '/api/matches/10/events' ? stale : { json: { ok: true } }))
+      const { result } = renderHook(() => useScorer(binding, sampleSnapshot(), true))
+
+      act(() => result.current.tap(100, 'takedown'))
+      await settle(result)
+      expect(result.current.bindingLost).toBe('taken')
+    })
+
+    // The heartbeat is the only thing this tablet sends while nobody is scoring, so it is
+    // what finds a lost binding between matches. It swallowed every failure.
+    it('reports both from the heartbeat, with nobody touching the screen', async () => {
+      for (const [reply, expected] of [[unauthorized, 'expired'], [stale, 'taken']] as const) {
+        fakeFetch(() => reply)
+        const { result, unmount } = renderHook(() => useScorer(binding, sampleSnapshot(), true))
+        await vi.waitFor(() => expect(result.current.bindingLost).toBe(expected))
+        unmount()
+      }
+    })
+
+    // A 403 is a token for another mat, which is a different fault with a different cure,
+    // and a 409 is the match talking. Neither unbinds the device.
+    it('leaves the binding alone for anything that is not a 401 about this token', async () => {
+      fakeFetch(url => (url === '/api/matches/10/events'
+        ? { status: 403, json: { error: { code: 'forbidden', message: 'token is for another mat' } } }
+        : { json: { ok: true } }))
+      const { result } = renderHook(() => useScorer(binding, sampleSnapshot(), true))
+
+      act(() => result.current.tap(100, 'takedown'))
+      await settle(result)
+      expect(result.current.bindingLost).toBeNull()
+      expect(result.current.error).toMatch(/another mat/)
+    })
+  })
+
+  /**
+   * G11. The ledger lived in component state, so a tablet that reloaded mid match refused
+   * to take back the tap it had just made: Undo and both minus buttons printed "The newest
+   * action came from elsewhere", which was not true, and the mat had no correction left.
+   */
+  describe('the ledger across a reload', () => {
+    beforeEach(() => sessionStorage.clear())
+
+    const scored = sampleMatch({ lastSeq: 1, a: { ...sampleMatch().a, score: 2 } })
+
+    it('restores what this tablet recorded, so undo still names its target', async () => {
+      const f = fakeFetch(url => (url === '/api/matches/10/events' ? { json: { match: scored, version: 2 } } : { json: { ok: true } }))
+      const first = renderHook(() => useScorer(binding, sampleSnapshot(), true))
+      act(() => first.result.current.tap(100, 'takedown'))
+      await settle(first.result)
+      expect(first.result.current.lastAction).toMatchObject({ kind: 'score', name: 'Mateo Rivera', points: 2 })
+      first.unmount()
+
+      // The tablet is reloaded. All it has is the snapshot, which carries the score but
+      // says nothing about who put it there.
+      const after = renderHook(() => useScorer(binding, snapshotWith(scored, 2), true))
+      expect(after.result.current.lastAction).toMatchObject({ kind: 'score', name: 'Mateo Rivera', points: 2 })
+
+      act(() => after.result.current.minus(100))
+      await settle(after.result)
+      expect(f.calls.some(c => c.url === '/api/matches/10/events/last')).toBe(true)
+    })
+
+    // Anything above the seq the server reports describes an event that was taken away
+    // while this tab was gone, and offering to undo it would take back somebody else's.
+    it('drops entries the server no longer reports', async () => {
+      fakeFetch(url => (url === '/api/matches/10/events' ? { json: { match: scored, version: 2 } } : { json: { ok: true } }))
+      const first = renderHook(() => useScorer(binding, sampleSnapshot(), true))
+      act(() => first.result.current.tap(100, 'takedown'))
+      await settle(first.result)
+      first.unmount()
+
+      // The desk undid it before the tablet came back.
+      const after = renderHook(() => useScorer(binding, snapshotWith(sampleMatch({ lastSeq: 0 }), 3), true))
+      expect(after.result.current.lastAction).toBeNull()
+    })
+
+    it('keeps the ledger of one match out of the next one', async () => {
+      fakeFetch(url => (url === '/api/matches/10/events' ? { json: { match: scored, version: 2 } } : { json: { ok: true } }))
+      const first = renderHook(() => useScorer(binding, sampleSnapshot(), true))
+      act(() => first.result.current.tap(100, 'takedown'))
+      await settle(first.result)
+      first.unmount()
+
+      const next = sampleMatch({ id: 11, orderIndex: 1, lastSeq: 1 })
+      const after = renderHook(() => useScorer(binding, snapshotWith(next, 4), true))
+      expect(after.result.current.lastAction).toBeNull()
+    })
+  })
+
+  /**
+   * G19. The clock is the one thing a referee cannot correct after the fact, so a match
+   * that ran out takes another minute rather than a result nobody agrees with.
+   */
+  describe('adding time', () => {
+    const expired = sampleMatch({ clock: { elapsedMs: 300_000, startedAt: null, lengthMs: 300_000 } })
+    const longer = sampleMatch({ lastSeq: 1, lengthSec: 360, clock: { elapsedMs: 300_000, startedAt: null, lengthMs: 360_000 } })
+
+    it('paints the new length at once and posts a minute inside the server bounds', async () => {
+      const f = fakeFetch(url => (url.includes('/clock/extend') ? { json: { match: longer, version: 2 } } : { json: { ok: true } }))
+      const { result } = renderHook(() => useScorer(binding, snapshotWith(expired), true))
+
+      act(() => result.current.addTime())
+      expect(result.current.current?.clock.lengthMs).toBe(360_000)
+      expect(result.current.current?.lengthSec).toBe(360)
+      await settle(result)
+      const body = f.body(f.calls.findIndex(c => c.url.includes('/clock/extend')))
+      expect(body.addMs).toBe(ADD_TIME_MS)
+      expect(body.addMs).toBeGreaterThanOrEqual(EXTEND_MIN_MS)
+      expect(body.addMs).toBeLessThanOrEqual(EXTEND_MAX_MS)
+    })
+
+    it('adds another minute on every press', async () => {
+      let served = expired
+      const f = fakeFetch(url => {
+        if (!url.includes('/clock/extend')) return { json: { ok: true } }
+        served = { ...served, lastSeq: served.lastSeq + 1, lengthSec: served.lengthSec + 60, clock: { ...served.clock, lengthMs: served.clock.lengthMs + 60_000 } }
+        return { json: { match: served, version: served.lastSeq + 1 } }
+      })
+      const { result } = renderHook(() => useScorer(binding, snapshotWith(expired), true))
+
+      act(() => result.current.addTime())
+      await settle(result)
+      act(() => result.current.addTime())
+      await settle(result)
+      expect(f.calls.filter(c => c.url.includes('/clock/extend'))).toHaveLength(2)
+      expect(result.current.current?.clock.lengthMs).toBe(420_000)
+    })
+
+    it('will not send one while the clock is running', async () => {
+      const running = sampleMatch({ clock: { elapsedMs: 0, startedAt: '2026-10-03T16:00:00.000Z', lengthMs: 300_000 } })
+      const f = fakeFetch(() => ({ json: { ok: true } }))
+      const { result } = renderHook(() => useScorer(binding, snapshotWith(running), true))
+
+      act(() => result.current.addTime())
+      expect(f.calls.some(c => c.url.includes('/clock/extend'))).toBe(false)
+    })
+
+    // Undo removes the newest event whatever it is, so an extension the operator did not
+    // mean comes straight back off, length and all.
+    it('lets undo take the added minute back', async () => {
+      const f = fakeFetch(url => {
+        if (url.includes('/clock/extend')) return { json: { match: longer, version: 2 } }
+        if (url.endsWith('/events/last')) return { json: { match: expired, version: 3 } }
+        return { json: { ok: true } }
+      })
+      const { result } = renderHook(() => useScorer(binding, snapshotWith(expired), true))
+
+      act(() => result.current.addTime())
+      await settle(result)
+      expect(result.current.lastAction).toMatchObject({ kind: 'extend', addMs: ADD_TIME_MS })
+
+      act(() => result.current.undo())
+      expect(result.current.current?.clock.lengthMs).toBe(300_000)
+      await settle(result)
+      expect(f.calls.some(c => c.url === '/api/matches/10/events/last')).toBe(true)
+    })
   })
 })
