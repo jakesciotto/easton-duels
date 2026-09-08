@@ -265,3 +265,30 @@ describe('audit log, the mats and the server itself', () => {
     expect(sweeps[1].detail).toEqual({ reaped: true, mats: [1] })
   })
 })
+
+describe('GET /api/matches/:matchId/history', () => {
+  it('lists the match in order, and only that match', async () => {
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db, { matCount: 1, live: true })
+    const token = matToken(s.eventId, s.matIds[0])
+    const url = `/api/matches/${s.matchIds[0]}`
+    await call(app, 'POST', `${url}/events`, { id: 'score-0001', type: 'score', athleteId: s.a1, actionKey: 'mount', lastSeq: 0 }, token)
+    await call(app, 'DELETE', `${url}/events/last`, { lastSeq: 1 }, token)
+    await call(app, 'POST', `${url}/end`, { id: 'end-0001', lastSeq: 0, winnerAthleteId: s.a1 }, token)
+
+    const r = await call(app, 'GET', `${url}/history`, undefined, adminToken)
+    expect(r.status).toBe(200)
+    expect(r.body.map((row: { actor: string; action: string }) => `${row.actor} ${row.action}`)).toEqual(['mat:1 score', 'mat:1 undo', 'mat:1 end'])
+    expect(Object.keys(r.body[0])).toEqual(['id', 'at', 'actor', 'action', 'detail'])
+    expect(r.body[1].detail).toMatchObject({ seq: 1, type: 'score' })
+    expect((await call(app, 'GET', `/api/matches/${s.matchIds[1]}/history`, undefined, adminToken)).body).toEqual([])
+  })
+
+  it('needs an admin token, and answers an unknown match with nothing', async () => {
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db, { live: true })
+    expect((await call(app, 'GET', `/api/matches/${s.matchIds[0]}/history`)).status).toBe(401)
+    expect((await call(app, 'GET', `/api/matches/${s.matchIds[0]}/history`, undefined, matToken(s.eventId, s.matIds[0]))).status).toBe(403)
+    expect((await call(app, 'GET', '/api/matches/999/history', undefined, adminToken)).body).toEqual([])
+  })
+})

@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { and, asc, eq, sql } from 'drizzle-orm'
 import type { Env } from '../context.js'
-import { events, rulesets, mats, matches } from '../db/schema.js'
+import { auditLog, events, rulesets, mats, matches } from '../db/schema.js'
 import { validate } from '../lib/validate.js'
 import { errorJson, requireAdmin } from '../auth/middleware.js'
 import { generateMatches } from '../matchmaker/generate.js'
@@ -11,6 +11,7 @@ import { eventDetail } from './events.js'
 import { bumpVersion } from '../match/events.js'
 import { recordAudit } from '../audit/log.js'
 import { assertNotCertified } from '../audit/certify.js'
+import type { AuditEntry } from '../shared/types.js'
 import { advanceMat } from '../match/mats.js'
 
 const createSchema = z.object({
@@ -23,6 +24,21 @@ const createSchema = z.object({
 const patchSchema = createSchema.partial()
 
 export const matchRoutes = new Hono<Env>()
+
+// A match carries a few dozen audit rows at most, so the cap is a guard against a bug
+// rather than a page size, and it takes the oldest rows because the sheet reads downwards.
+export const HISTORY_LIMIT = 500
+
+// No existence check: the audit log outlives the rows it describes, so the history of a
+// match somebody deleted is exactly the history worth reading. An unknown id has no rows
+// and answers with none.
+matchRoutes.get('/matches/:matchId/history', requireAdmin, async c => {
+  const { db } = c.get('ctx')
+  const rows: AuditEntry[] = await db.select({
+    id: auditLog.id, at: auditLog.at, actor: auditLog.actor, action: auditLog.action, detail: auditLog.detail,
+  }).from(auditLog).where(eq(auditLog.matchId, Number(c.req.param('matchId')))).orderBy(asc(auditLog.id)).limit(HISTORY_LIMIT).all()
+  return c.json(rows)
+})
 
 matchRoutes.post('/events/:eventId/matches/generate', requireAdmin, async c => {
   const { db } = c.get('ctx')
