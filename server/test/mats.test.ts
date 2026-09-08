@@ -144,11 +144,11 @@ describe('skipMatch', () => {
     expect((await db.select().from(mats).where(eq(mats.id, s.matIds[0])).get())?.currentMatchId).toBe(second)
   })
 
-  it('refuses a match with scoring events', async () => {
+  it('refuses a match with scoring events, and prints the way out', async () => {
     const db = await freshDb()
     const s = await seedEvent(db, { live: true })
     await appendMatchEvent(db, { id: 'e1', matchId: s.matchIds[0], type: 'score', athleteId: s.a1, actionKey: 'takedown', lastSeq: 0 })
-    await expect(skipMatch(db, s.matchIds[0])).rejects.toThrow(/undo/)
+    await expect(skipMatch(db, s.matchIds[0])).rejects.toThrow('match has events; undo them before skipping. End it from the Live tab, then edit the result.')
     await db.update(matches).set({ status: 'pending' }).where(eq(matches.id, s.matchIds[1])).run()
   })
 })

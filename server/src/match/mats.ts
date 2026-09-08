@@ -117,7 +117,7 @@ export async function skipMatch(db: DbLike, matchId: number, id?: string): Promi
     if (replay) return replay
     const match = await loadMatch(tx, matchId)
     if (match.status === 'done') throw new MatchStateError('cannot skip a done match')
-    if (await hasScoringEvents(tx, match.id)) throw new MatchStateError('match has events; undo them before skipping')
+    if (await hasScoringEvents(tx, match.id)) throw new MatchStateError('match has events; undo them before skipping. End it from the Live tab, then edit the result.')
     const max = await tx.select({ m: sql<number>`coalesce(max(${matches.orderIndex}), 0)` }).from(matches).where(eq(matches.eventId, match.eventId)).get()
     const seq = match.lastSeq + 1
     await tx.insert(matchEvents).values({ id: id === undefined ? adminEventId(match.id, seq) : clientAdminEventId(id), matchId: match.id, seq, type: 'admin', payload: { kind: 'skip' }, at: new Date().toISOString() }).run()

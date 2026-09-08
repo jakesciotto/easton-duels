@@ -93,7 +93,7 @@ matchRoutes.patch('/matches/:matchId', requireAdmin, validate('json', patchSchem
   const existing = await db.select().from(matches).where(eq(matches.id, id)).get()
   if (!existing) return errorJson(c, 404, 'not_found', 'match not found')
   await assertNotCertified(db, existing.eventId)
-  if (existing.status !== 'pending') return errorJson(c, 409, 'match_state', 'only a pending match can be edited')
+  if (existing.status !== 'pending') return errorJson(c, 409, 'match_state', 'only a pending match can be edited. End it from the Live tab, then edit the result.')
   const body = c.req.valid('json')
   const update: Partial<typeof matches.$inferInsert> = {}
   if (body.athleteAId !== undefined || body.athleteBId !== undefined) {
@@ -127,7 +127,7 @@ matchRoutes.delete('/matches/:matchId', requireAdmin, async c => {
   const existing = await db.select().from(matches).where(eq(matches.id, id)).get()
   if (!existing) return errorJson(c, 404, 'not_found', 'match not found')
   await assertNotCertified(db, existing.eventId)
-  if (existing.status !== 'pending') return errorJson(c, 409, 'match_state', 'only a pending match can be deleted')
+  if (existing.status !== 'pending') return errorJson(c, 409, 'match_state', 'only a pending match can be deleted. End it from the Live tab, then edit the result.')
   await db.transaction(async tx => {
     await tx.update(mats).set({ currentMatchId: null }).where(eq(mats.currentMatchId, id)).run()
     await tx.delete(matches).where(eq(matches.id, id)).run()
