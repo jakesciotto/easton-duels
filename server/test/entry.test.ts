@@ -132,7 +132,9 @@ describe('entry routes', () => {
     expect((await call(app, 'POST', `/api/matches/${r.body.match.id}/entry`, { entryId: 'short', pointsA: 0, pointsB: 0, winnerAthleteId: s.a1, winType: 'points' }, adminToken)).status).toBe(422)
   })
 
-  it('refuses a new entry and a correction once the event is done', async () => {
+  // Finish closes the afternoon to new results, not to fixing the ones it produced. The
+  // lock that stops a correction too is certification.
+  it('refuses a new entry once the event is done, and still takes a correction', async () => {
     const { app, db, adminToken } = await createTestApp()
     const s = await seedEvent(db, { live: true })
     const first = await call(app, 'POST', `/api/matches/${s.matchIds[0]}/entry`, { entryId: 'entry-0001', pointsA: 3, pointsB: 1, winnerAthleteId: s.a1, winType: 'points' }, adminToken)
@@ -143,13 +145,18 @@ describe('entry routes', () => {
     expect(late.status).toBe(409)
     expect(late.body.error).toMatchObject({ code: 'match_state', message: 'event is done' })
 
-    const correction = await call(app, 'POST', `/api/matches/${s.matchIds[0]}/entry`, { entryId: 'entry-0003', pointsA: 0, pointsB: 5, winnerAthleteId: s.b1, winType: 'points' }, adminToken)
-    expect(correction.status).toBe(409)
-    expect(correction.body.error).toMatchObject({ code: 'match_state', message: 'event is done' })
+    const correction = await call(app, 'POST', `/api/matches/${s.matchIds[0]}/entry`, { entryId: 'entry-0003', pointsA: 0, pointsB: 5, winnerAthleteId: s.b1, winType: 'points', reason: 'the mat called the wrong colour' }, adminToken)
+    expect(correction.status).toBe(200)
+    expect(correction.body.match.result).toEqual({ winnerAthleteId: s.b1, winType: 'points' })
+
+    // The second designed match never settled, so typing it now is a new result.
+    const unsettled = await call(app, 'POST', `/api/matches/${s.matchIds[1]}/entry`, { entryId: 'entry-0004', pointsA: 1, pointsB: 0, winnerAthleteId: s.a2, winType: 'points' }, adminToken)
+    expect(unsettled.status).toBe(409)
+    expect(unsettled.body.error).toMatchObject({ code: 'match_state', message: 'event is done' })
 
     const replay = await call(app, 'POST', `/api/matches/${s.matchIds[0]}/entry`, { entryId: 'entry-0001', pointsA: 3, pointsB: 1, winnerAthleteId: s.a1, winType: 'points' }, adminToken)
     expect(replay.status).toBe(200)
-    expect(replay.body.match.lastSeq).toBe(first.body.match.lastSeq)
+    expect(replay.body.match.lastSeq).toBe(correction.body.match.lastSeq)
   })
 
   it('replays a create entry as a 200 without a second match', async () => {

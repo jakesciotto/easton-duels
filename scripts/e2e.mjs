@@ -127,9 +127,19 @@ async function certifyArm(admin) {
   const snap = (await pollSnapshot(eventId)).snapshot
   const matchId = snap.mats[0].current.id
   const athleteA = snap.mats[0].current.a.athleteId
+  const athleteB = snap.mats[0].current.b.athleteId
   assert((await j('POST', `/api/matches/${matchId}/events`, { id: 'e2e-cert-score-1', type: 'score', athleteId: athleteA, actionKey: 'mount', lastSeq: 0 }, mat)).status === 200, 'certify arm scored')
   assert((await j('POST', `/api/matches/${matchId}/end`, { id: 'e2e-cert-end-1', lastSeq: 1 }, mat)).status === 200, 'certify arm match ended')
   assert((await j('PATCH', `/api/events/${eventId}`, { status: 'done' }, admin)).status === 200, 'certify arm event finished')
+
+  // Finish ends the afternoon, it does not close the record: the desk can still fix a
+  // result that settled. What it refuses is a new one.
+  const correction = (id, reason) => j('POST', `/api/matches/${matchId}/entry`, {
+    entryId: id, pointsA: 0, pointsB: 4, winnerAthleteId: athleteB, winType: 'points', reason,
+  }, admin)
+  const afterFinish = await correction('e2e-cert-fix-1', 'the mat called the wrong colour')
+  assert(afterFinish.status === 200, 'a finished event still takes a correction')
+  assert(afterFinish.body.match.result.winnerAthleteId === athleteB, 'the correction moved the winner')
 
   const wrongPin = await j('POST', `/api/events/${eventId}/certify`, { pin: '000000' }, admin)
   assert(wrongPin.status === 401, 'certify asks for the PIN again')
@@ -144,24 +154,30 @@ async function certifyArm(admin) {
 
   const refusedScore = await j('POST', `/api/matches/${matchId}/events`, { id: 'e2e-cert-score-2', type: 'score', athleteId: athleteA, actionKey: 'mount', lastSeq: 2 }, mat)
   assert(refusedScore.status === 409 && refusedScore.body.error.message === 'event is certified', 'a certified event refuses a scoring write')
-  const refusedEntry = await j('POST', `/api/matches/${matchId}/entry`, { entryId: 'e2e-cert-entry-1', pointsA: 1, pointsB: 0, winnerAthleteId: athleteA, winType: 'points' }, admin)
-  assert(refusedEntry.status === 409 && refusedEntry.body.error.message === 'event is certified', 'a certified event refuses a typed result')
+  const refusedFix = await correction('e2e-cert-fix-2', 'a second thought')
+  assert(refusedFix.status === 409 && refusedFix.body.error.message === 'event is certified', 'a certified event refuses a correction')
   const refusedRoster = await j('POST', `/api/events/${eventId}/matches/reorder`, { ids: [matchId] }, admin)
   assert(refusedRoster.status === 409 && refusedRoster.body.error.message === 'event is certified', 'a certified event refuses the running order too')
 
   const unlocked = await j('POST', `/api/events/${eventId}/uncertify`, { pin: '123456', reason: 'mat 1 score was called wrong' }, admin)
   assert(unlocked.status === 200, 'event unlocked')
   assert(unlocked.body.event.status === 'done' && unlocked.body.event.certifiedAt === null, 'an unlock returns the event to done')
+  const afterUnlock = await correction('e2e-cert-fix-3', 'and back again')
+  assert(afterUnlock.status === 200, 'an unlocked event takes the correction again')
   const reordered = await j('POST', `/api/events/${eventId}/matches/reorder`, { ids: [matchId] }, admin)
   assert(reordered.status === 200, 'the running order moves again once unlocked')
-  // An unlock lifts the certification lock only. A typed result stays refused by the rule
-  // Finish has carried since batch 1, which is a separate decision.
-  const afterUnlock = await j('POST', `/api/matches/${matchId}/entry`, { entryId: 'e2e-cert-entry-2', pointsA: 1, pointsB: 0, winnerAthleteId: athleteA, winType: 'points' }, admin)
-  assert(afterUnlock.body.error.message === 'event is done', 'the certification refusal is gone')
+  // The one thing an unlock does not reopen: the event is still finished, so nothing new
+  // gets scored into it.
+  const fresh = await j('POST', `/api/events/${eventId}/entries`, {
+    entryId: 'e2e-cert-entry-1', athleteAId: athleteA, athleteBId: athleteB, pointsA: 1, pointsB: 0, winnerAthleteId: athleteA, winType: 'points',
+  }, admin)
+  assert(fresh.status === 409 && fresh.body.error.message === 'event is done', 'a finished event still refuses a new result')
 
   const matchHistory = (await j('GET', `/api/matches/${matchId}/history`, undefined, admin)).body
-  assert(matchHistory.map(r => r.action).join() === 'score,end', 'the match history lists what the mat did')
-  assert(matchHistory.every(r => r.actor === 'mat:1'), 'the match history names the mat')
+  assert(matchHistory.map(r => r.action).join() === 'score,end,correction,correction', 'the match history lists the mat and both corrections')
+  assert(matchHistory.map(r => r.actor).join() === 'mat:1,mat:1,desk,desk', 'the match history names who did each')
+  assert(matchHistory[2].detail.reason === 'the mat called the wrong colour', 'a correction carries its reason')
+  assert(matchHistory[2].detail.before.winnerAthleteId === athleteA && matchHistory[2].detail.after.winnerAthleteId === athleteB, 'a correction carries both sides')
   const eventHistory = (await j('GET', `/api/events/${eventId}/history`, undefined, admin)).body
   const signed = eventHistory.filter(r => r.action === 'certify' || r.action === 'uncertify')
   assert(signed.map(r => r.action).join() === 'certify,uncertify', 'the history lists the certify and uncertify rows')

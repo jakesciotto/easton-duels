@@ -4,6 +4,7 @@ import { events, rulesets, mats, matches, matchEvents, type MatchRow } from '../
 import { loadMatch, recompute, MatchStateError } from './events.js'
 import { advanceMat } from './mats.js'
 import { resolvePair } from './pairs.js'
+import { CERTIFIED_MESSAGE } from '../audit/certify.js'
 import type { WinType } from '../shared/types.js'
 
 export interface EntryInput {
@@ -37,13 +38,21 @@ async function replayed(db: DbLike, entryId: string): Promise<EntryResult | null
   return row ? { duplicate: true, match: await loadMatch(db, row.matchId) } : null
 }
 
-// The board has already announced the final score, so a stray keystroke at the desk must
-// not move it. A replay of an entry taken before Finish still answers, because it changes
-// nothing. Setup and live both stay open: entries are how a rehearsal is filled in.
-async function assertEventOpen(db: DbLike, eventId: number): Promise<void> {
+/**
+ * The three states, from the outside in. Setup and live take anything: entries are how a
+ * rehearsal is filled in. Done refuses a new result, because the board has announced the
+ * final score and a stray keystroke at the desk must not invent a match after Finish, but
+ * it takes a correction of a match that is already settled: fixing the record after the
+ * afternoon is exactly what Finish and then certify are for. Certified refuses both, and
+ * that is the lock.
+ *
+ * A replay of an entry taken before Finish still answers, because it changes nothing.
+ */
+async function assertEventOpen(db: DbLike, eventId: number, correcting: boolean): Promise<void> {
   const ev = await db.select({ status: events.status }).from(events).where(eq(events.id, eventId)).get()
   if (!ev) throw new MatchStateError('event not found')
-  if (ev.status === 'done') throw new MatchStateError('event is done')
+  if (ev.status === 'certified') throw new MatchStateError(CERTIFIED_MESSAGE)
+  if (ev.status === 'done' && !correcting) throw new MatchStateError('event is done')
 }
 
 export async function enterResult(db: DbLike, matchId: number, input: EntryInput): Promise<EntryResult> {
@@ -51,10 +60,10 @@ export async function enterResult(db: DbLike, matchId: number, input: EntryInput
     const replay = await replayed(tx, input.entryId)
     if (replay) return replay
     const match = await loadMatch(tx, matchId)
-    await assertEventOpen(tx, match.eventId)
+    const wasDone = match.status === 'done'
+    await assertEventOpen(tx, match.eventId, wasDone)
     if (input.winnerAthleteId !== match.athleteAId && input.winnerAthleteId !== match.athleteBId) throw new MatchStateError('athlete not in match')
     const at = input.at ?? new Date().toISOString()
-    const wasDone = match.status === 'done'
     if (match.status === 'pending') await tx.update(matches).set({ status: 'live' }).where(eq(matches.id, matchId)).run()
 
     let seq = match.lastSeq
@@ -103,7 +112,8 @@ export async function createEntry(db: DbLike, eventId: number, input: CreateEntr
   return db.transaction(async tx => {
     const replay = await replayed(tx, input.entryId)
     if (replay) return replay
-    await assertEventOpen(tx, eventId)
+    // A pair with no settled match is a new result, and Finish closed those.
+    await assertEventOpen(tx, eventId, false)
     const pair = await resolvePair(tx, eventId, input.athleteAId, input.athleteBId)
     if (typeof pair === 'string') throw new MatchStateError(pair)
     const existing = await findOpenMatch(tx, eventId, pair)

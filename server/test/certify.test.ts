@@ -76,25 +76,25 @@ describe('certification locks the event', () => {
     expect(r.body?.error?.message).not.toBe(CERTIFIED_MESSAGE)
   })
 
-  /**
-   * An unlock returns the event to done, and done has refused a typed result since the
-   * batch that added Finish: the board has already announced the final score. So an
-   * unlock reopens the roster, the match list and the rulesets, which Finish never
-   * locked, and a result still has to be fixed before Finish. Recorded here because the
-   * two rules are easy to mistake for one, and because the second one is a ruling
-   * (batch 1) rather than an oversight.
-   */
-  it('reopens what Finish never locked, and leaves the finished-event rule standing', async () => {
+  // An unlock returns the event to done, which takes a correction of a settled match but
+  // still refuses a new result. Certification is the lock; Finish is only the end of the
+  // afternoon.
+  it('reopens the record and the running order, and still refuses a new result', async () => {
     const { app, adminToken, s } = await certified()
     await call(app, 'POST', `/api/events/${s.eventId}/uncertify`, { pin: TEST_PIN, reason: 'mat 1 winner was wrong' }, adminToken)
     const reordered = await call(app, 'POST', `/api/events/${s.eventId}/matches/reorder`, { ids: [...s.matchIds].reverse() }, adminToken)
     expect(reordered.status).toBe(200)
     expect((await call(app, 'PATCH', `/api/athletes/${s.a1}`, { weightLbs: 64 }, adminToken)).status).toBe(200)
     const fixed = await call(app, 'POST', `/api/matches/${s.matchIds[0]}/entry`, {
-      entryId: 'entry-0009', pointsA: 0, pointsB: 4, winnerAthleteId: s.b1, winType: 'points',
+      entryId: 'entry-0009', pointsA: 0, pointsB: 4, winnerAthleteId: s.b1, winType: 'points', reason: 'mat 1 winner was wrong',
     }, adminToken)
-    expect(fixed.status).toBe(409)
-    expect(fixed.body.error.message).toBe('event is done')
+    expect(fixed.status).toBe(200)
+    expect(fixed.body.match.result).toEqual({ winnerAthleteId: s.b1, winType: 'points' })
+    const fresh = await call(app, 'POST', `/api/events/${s.eventId}/entries`, {
+      entryId: 'entry-0010', athleteAId: s.a2, athleteBId: s.b2, pointsA: 1, pointsB: 0, winnerAthleteId: s.a2, winType: 'points',
+    }, adminToken)
+    expect(fresh.status).toBe(409)
+    expect(fresh.body.error.message).toBe('event is done')
   })
 
   it('keeps the heartbeat and the unbind open, and takes the mat back', async () => {
