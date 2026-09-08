@@ -13,9 +13,10 @@ import { matchViewOf } from '@/lib/matchView'
 import { cn } from '@/lib/utils'
 import { defaultOutcome } from './entry-defaults'
 import {
-  CUE_MS, LEDGER_LIMIT, RESTORED_NEW_ENTRY, SAVED_LABEL_MS, SAVE_TIMEOUT_MS,
+  CUE_MS, LEDGER_LIMIT, RESTORED_NEW_ENTRY, RETRY_INTERVAL_MS, SAVED_LABEL_MS, SAVE_TIMEOUT_MS,
   clearDraft, clockLabel, duplicateCopy, entryShape, isRepeatPair, ledgerTime, loadDraft, outcomeMatches,
-  pairKey, restoreDraft, restoredBannerCopy, saveDraft, saveErrorCopy, seedPairLog, serverRefused, storedOutcome, teamWins,
+  pairKey, restoreDraft, restoredBannerCopy, retriesItself, saveDraft, saveErrorCopy, seedPairLog, serverRefused,
+  storedOutcome, teamWins,
   type EntryDraft, type EntryMatch, type SaveErrorCopy,
 } from './entry-state'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -70,6 +71,22 @@ interface EntryResult { res: EntryResponse; duplicate: boolean }
 // The result this attempt asked the server to store, to compare against the one it returns.
 interface Sent { winnerAthleteId: number; winType: WinType; scores: Record<number, number> }
 
+/**
+ * One press of Save, frozen whole.
+ *
+ * 7.12's automatic retry re-sends the write the desk actually pressed Save on, so every
+ * part of it -- the body, the held entryId, the pair the guard logs, the sentence the
+ * fallback announces -- is captured at the press rather than read off a form the desk may
+ * have moved on from.
+ */
+interface Attempt {
+  payload: Form
+  key: string
+  typed: string
+  sent: Sent
+  request: { kind: 'create'; body: NewEntryBody } | { kind: 'correct'; id: number; body: CorrectionBody }
+}
+
 export function EntryTab({ detail }: { detail: EventDetail }) {
   const eventId = detail.event.id
   const [teamA, teamB] = detail.teams
@@ -119,6 +136,21 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
   const watchdog = useRef<ReturnType<typeof setTimeout> | null>(null)
   const formRef = useRef<HTMLFormElement>(null)
+  /**
+   * 7.12's automatic retry, and the press it is retrying.
+   *
+   * The arm is a rising number rather than a flag, and that is load bearing. A retry
+   * stops the clock and its answer starts it again, and React batches those two updates
+   * into one render whenever the answer lands in the same task: a boolean would go false
+   * and back to true, the effect would see no change, and the loop would stop after
+   * exactly one retry. A number that only ever rises always reads as a change.
+   */
+  const [retryArm, setRetryArm] = useState<number | null>(null)
+  const arms = useRef(0)
+  const attempt = useRef<Attempt | null>(null)
+  const sendRef = useRef<(a: Attempt) => void>(() => {})
+  const stopRetry = () => setRetryArm(null)
+  const armRetry = () => { arms.current += 1; setRetryArm(arms.current) }
 
   const later = (fn: () => void, ms: number) => { timers.current.push(setTimeout(fn, ms)) }
   useEffect(() => () => {
@@ -167,16 +199,21 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   // A points edit alone never resets touched: auto-derivation from points only
   // drives the suggestion until the organizer picks a winner or a win type (or
   // loads a match to correct); after that the pick sticks until Save or Cancel edit.
-  const setPoints = (key: 'pointsA' | 'pointsB') => (v: string) => setF(s => ({ ...s, [key]: v.replace(/\D/g, '').slice(0, 2) }))
+  //
+  // Every edit also stops 7.12's automatic retry. The retry re-sends the press it was
+  // armed on, and once the desk has changed the form that press is no longer the result
+  // they mean: the next Save is the one that says so.
+  const edit = (update: (s: Form) => Form) => { stopRetry(); setF(update) }
+  const setPoints = (key: 'pointsA' | 'pointsB') => (v: string) => edit(s => ({ ...s, [key]: v.replace(/\D/g, '').slice(0, 2) }))
   const pickKid = (key: 'aId' | 'bId') => (v: string) => {
     setPairPrompt(null)
-    setF(s => ({ ...s, [key]: v }))
+    edit(s => ({ ...s, [key]: v }))
   }
-  const pickWinner = (w: 'a' | 'b') => setF(s => {
+  const pickWinner = (w: 'a' | 'b') => edit(s => {
     const nextWinType = s.touched ? s.winType : (defaultOutcome(pA, pB).winner === null ? 'decision' : defaultOutcome(pA, pB).winType)
     return { ...s, winner: w, winType: nextWinType, touched: true }
   })
-  const pickType = (t: WinType) => setF(s => ({ ...s, winner, winType: t, touched: true }))
+  const pickType = (t: WinType) => edit(s => ({ ...s, winner, winType: t, touched: true }))
 
   // The save's own focus, announced to 4.4's gate so the refetch it triggered is not
   // held behind it. The grant ends the moment the operator touches the field.
@@ -196,6 +233,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   // unsent new entry that correction interrupted, banner and all. The two drafts
   // live in separate slots, so the one that was never sent is still there to restore.
   const resume = (editingId: number | null) => {
+    stopRetry()
     const kept = editingId === null ? null : loadDraft(eventId)
     if (!kept) {
       setF(fresh())
@@ -208,8 +246,10 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     lastAttempt.current = { shape: entryShape(kept), refused: false }
   }
 
-  const onSaved = (out: EntryResult | undefined, key: string, typed: string, sent: Sent, payload: Form) => {
+  const onSaved = (out: EntryResult | undefined, { key, typed, sent, payload }: Attempt) => {
     settle()
+    stopRetry()
+    attempt.current = null
     clearDraft(eventId, payload.editingId)
     pairLog.current[key] = Date.now()
     const outcome = storedOutcome(out?.res.match)
@@ -232,12 +272,51 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     focusFirstField()
   }
 
-  const onFailed = (payload: Form, error: unknown) => {
+  const onFailed = (a: Attempt, error: unknown) => {
     settle()
-    saveDraft(eventId, draftOf(payload))
-    lastAttempt.current = { shape: entryShape(draftOf(payload)), refused: serverRefused(error) }
+    saveDraft(eventId, draftOf(a.payload))
+    lastAttempt.current = { shape: entryShape(draftOf(a.payload)), refused: serverRefused(error) }
     setFailure(saveErrorCopy(error))
+    // Only the unreachable server and the watchdog re-arm the clock. Every refusal the
+    // server answered stops it, because a retry would only ask for the same refusal.
+    attempt.current = a
+    if (retriesItself(error)) armRetry()
+    else stopRetry()
   }
+
+  /**
+   * One dispatch for the first press and for every automatic retry.
+   *
+   * The clock is stopped here and restarted by the answer rather than run free, so a
+   * retry can never overlap the attempt before it: the watchdog gives an attempt eight
+   * seconds and the interval is five.
+   */
+  const send = (a: Attempt) => {
+    setDupe(null)
+    setTimedOut(false)
+    stopRetry()
+    settle()
+    watchdog.current = setTimeout(() => {
+      setTimedOut(true)
+      onFailed(a, new Error('timeout'))
+    }, SAVE_TIMEOUT_MS)
+    const answered = {
+      onSuccess: (out: EntryResult) => onSaved(out, a),
+      onError: (err: Error) => onFailed(a, err),
+    }
+    if (a.request.kind === 'correct') correct.mutate({ id: a.request.id, body: a.request.body }, answered)
+    else create.mutate(a.request.body, answered)
+  }
+
+  useEffect(() => { sendRef.current = send })
+  useEffect(() => {
+    if (retryArm === null) return
+    const t = setTimeout(() => {
+      const a = attempt.current
+      if (a) sendRef.current(a)
+    }, RETRY_INTERVAL_MS)
+    return () => clearTimeout(t)
+  }, [retryArm])
 
   const submit = (e?: FormEvent) => {
     e?.preventDefault()
@@ -267,27 +346,12 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     const payload: Form = { ...f, entryId, winner, winType, touched: true }
     if (entryId !== f.entryId) setF(s => ({ ...s, entryId }))
 
-    setDupe(null)
-    setTimedOut(false)
-    settle()
-    watchdog.current = setTimeout(() => {
-      setTimedOut(true)
-      onFailed(payload, new Error('timeout'))
-    }, SAVE_TIMEOUT_MS)
-
-    if (f.editingId !== null) {
-      const body: CorrectionBody = { entryId, pointsA: pA, pointsB: pB, winnerAthleteId, winType }
-      correct.mutate({ id: f.editingId, body }, {
-        onSuccess: out => onSaved(out, key, typed, sent, payload),
-        onError: err => onFailed(payload, err),
-      })
-    } else {
-      const body: NewEntryBody = { entryId, athleteAId: a.id, athleteBId: b.id, pointsA: pA, pointsB: pB, winnerAthleteId, winType }
-      create.mutate(body, {
-        onSuccess: out => onSaved(out, key, typed, sent, payload),
-        onError: err => onFailed(payload, err),
-      })
-    }
+    send({
+      payload, key, typed, sent,
+      request: f.editingId !== null
+        ? { kind: 'correct', id: f.editingId, body: { entryId, pointsA: pA, pointsB: pB, winnerAthleteId, winType } }
+        : { kind: 'create', body: { entryId, athleteAId: a.id, athleteBId: b.id, pointsA: pA, pointsB: pB, winnerAthleteId, winType } },
+    })
   }
 
   // Single keys on top of the tab order. Letters are read even inside a points
@@ -327,6 +391,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     // way cancelEdit does, or a failed save on it survives in storage forever
     // and later restores wearing a banner that looks like an unsent new entry.
     if (f.editingId !== null && f.editingId !== m.id) clearDraft(eventId, f.editingId)
+    stopRetry()
     setF({
       aId: String(m.athleteAId), bId: String(m.athleteBId),
       pointsA: String(m.pointsA), pointsB: String(m.pointsB),
@@ -345,6 +410,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   // failed save on it survives and later restores as an entry nobody typed.
   const use = (m: MatchRow) => {
     if (f.editingId !== null) clearDraft(eventId, f.editingId)
+    stopRetry()
     setPairPrompt(null)
     setFailure(null)
     setDupe(null)

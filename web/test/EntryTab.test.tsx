@@ -314,6 +314,127 @@ describe('EntryTab', () => {
     }
   })
 
+  /**
+   * G28 / 7.12. The banner said "Press Save to try again when the connection returns" and
+   * nothing retried, so an entry typed during a wifi drop sat on the screen until somebody
+   * happened to press the button again. The tab now re-sends the same write, with the same
+   * held entryId, five seconds after each failed answer.
+   */
+  it('retries the same write every 5 seconds while the server cannot be reached', async () => {
+    let reachable = false
+    const f = fakeFetch(async () => {
+      if (!reachable) throw new TypeError('Failed to fetch')
+      return { status: 201, json: { match: { id: 9 }, version: 1 } }
+    })
+    mount()
+    const user = userEvent.setup()
+    await pick(user, 'Ridgeline competitor', 'Ava Park')
+    await pick(user, 'Lakeside competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(saveButton())
+      await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+      expect(f.calls.length).toBe(1)
+      expect(screen.getByText(/Retrying every 5 seconds\./)).toBeInTheDocument()
+      // Between attempts the desk can still press Save itself.
+      expect(saveButton()).toBeEnabled()
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+      expect(f.calls.length).toBe(2)
+      expect(f.body(1).entryId).toBe(f.body(0).entryId)
+
+      reachable = true
+      await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+      expect(f.calls.length).toBe(3)
+      expect(screen.queryByText(/Retrying every 5 seconds\./)).not.toBeInTheDocument()
+
+      // Stopped on success: nothing is re-sent over a result the server already stored.
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000) })
+      expect(f.calls.length).toBe(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('disables Save while a retry is in flight', async () => {
+    const f = fakeFetch(async (url) => {
+      if (url !== '/api/events/7/entries') return { json: {} }
+      if (f.calls.filter(c => c.url === url).length > 1) return new Promise<never>(() => {})
+      throw new TypeError('Failed to fetch')
+    })
+    mount()
+    const user = userEvent.setup()
+    await pick(user, 'Ridgeline competitor', 'Ava Park')
+    await pick(user, 'Lakeside competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(saveButton())
+      await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+      expect(saveButton()).toBeEnabled()
+      await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+      expect(saveButton()).toBeDisabled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // A refusal the server answered is not a connection problem, and re-sending it would
+  // only ask for the same refusal every five seconds for the rest of the afternoon.
+  it('stops retrying the moment the server refuses', async () => {
+    let refuse = false
+    const f = fakeFetch(async () => {
+      if (!refuse) throw new TypeError('Failed to fetch')
+      return { status: 422, json: { error: { code: 'validation', message: 'that pair is not on this event' } } }
+    })
+    mount()
+    const user = userEvent.setup()
+    await pick(user, 'Ridgeline competitor', 'Ava Park')
+    await pick(user, 'Lakeside competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(saveButton())
+      await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+      refuse = true
+      await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+      expect(f.calls.length).toBe(2)
+      expect(screen.getByText('That result cannot be saved')).toBeInTheDocument()
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+      expect(f.calls.length).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // The retry re-sends the press it was armed on. Once the desk has changed the form that
+  // press is no longer the result they mean, so the next Save is the one that says so.
+  it('stops retrying when the desk edits the form', async () => {
+    const f = fakeFetch(async () => { throw new TypeError('Failed to fetch') })
+    mount()
+    const user = userEvent.setup()
+    await pick(user, 'Ridgeline competitor', 'Ava Park')
+    await pick(user, 'Lakeside competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+    await user.click(saveButton())
+    await vi.waitFor(() => expect(f.calls.length).toBe(1))
+
+    await user.clear(screen.getByLabelText('Ridgeline points'))
+    await user.type(screen.getByLabelText('Ridgeline points'), '7')
+
+    vi.useFakeTimers()
+    try {
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+      expect(f.calls.length).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('asks once before saving the same pair inside a minute', async () => {
     const f = fakeFetch(() => ({ status: 201, json: { match: { id: 9 }, version: 1 } }))
     mount()

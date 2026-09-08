@@ -9,6 +9,11 @@ export const SAME_PAIR_WINDOW_MS = 60_000
 // the only recourse, and a reload mints a new entryId and reopens the duplicate
 // window. The watchdog makes "no answer" a terminal outcome like any other.
 export const SAVE_TIMEOUT_MS = 8_000
+// 7.12: "automatic retry every 5 seconds while the banner shows". The clock is restarted
+// by each answer rather than run free, so a retry can never overlap the attempt before
+// it: the watchdog gives an attempt eight seconds and the interval is five.
+export const RETRY_INTERVAL_MS = 5_000
+export const RETRYING_LINE = 'Retrying every 5 seconds.'
 export const LEDGER_LIMIT = 200
 export const SAVED_LABEL_MS = 900
 export const CUE_MS = 600
@@ -133,6 +138,19 @@ export function entryShape(d: EntryDraft): string {
 export function serverRefused(error: unknown): boolean {
   if (!(error instanceof ApiError)) return false
   return error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429
+}
+
+/**
+ * Whether the failure is the one that retries by itself.
+ *
+ * 7.12 gives the automatic retry to the unreachable server and to the eight second
+ * watchdog, and to nothing else: a 429 says wait a minute, a 5xx says press Save again,
+ * and every refusal the server actually answered is a refusal a retry would only repeat.
+ * The banner promised a retry that never ran, which is the one copy in the product that
+ * asked the desk to do nothing and then did nothing.
+ */
+export function retriesItself(error: unknown): boolean {
+  return !(error instanceof ApiError)
 }
 
 /**
@@ -273,7 +291,7 @@ export const EVENT_CERTIFIED: SaveErrorCopy = {
 // server's own codes. The unreachable-server case is the one gym wifi produces.
 export function saveErrorCopy(error: unknown): SaveErrorCopy {
   if (!(error instanceof ApiError)) {
-    return { title: 'Could not reach the server', body: 'Your entry is kept on this device. Press Save to try again when the connection returns.' }
+    return { title: 'Could not reach the server', body: `Your entry is kept on this device. ${RETRYING_LINE}` }
   }
   if (error.status === 429) return { title: 'Too many attempts', body: 'Wait a minute, then press Save again.' }
   if (error.status === 401 || error.status === 403) return { title: 'The desk session expired', body: 'Enter the event PIN again, then press Save.' }

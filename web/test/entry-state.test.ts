@@ -3,7 +3,7 @@ import { ApiError } from '@/lib/api'
 import { CERTIFIED_REFUSAL_BODY, CERTIFIED_REFUSAL_TITLE } from '@/lib/eventMode'
 import {
   SAME_PAIR_WINDOW_MS, clearDraft, clockLabel, draftKey, isRepeatPair, ledgerTime, loadDraft, pairKey, restoreDraft,
-  saveDraft, saveErrorCopy, seedPairLog, serverRefused, teamWins,
+  RETRYING_LINE, retriesItself, saveDraft, saveErrorCopy, seedPairLog, serverRefused, teamWins,
   type EntryDraft,
 } from '@/routes/event/entry-state'
 import type { AthleteRow, MatchRow } from '@/lib/types'
@@ -132,8 +132,22 @@ describe('team wins', () => {
 })
 
 describe('save error copy', () => {
-  it('names the gym wifi case and keeps the entry', () => {
+  it('names the gym wifi case, keeps the entry, and states the retry that now runs', () => {
     expect(saveErrorCopy(new Error('timeout')).title).toBe('Could not reach the server')
+    expect(saveErrorCopy(new Error('timeout')).body).toContain(RETRYING_LINE)
+  })
+
+  /**
+   * G28 / 7.12: the automatic retry belongs to the unreachable server and to the eight
+   * second watchdog, and to nothing else. Everything the server answered would only be
+   * answered the same way five seconds later.
+   */
+  it('retries only what the server never answered', () => {
+    expect(retriesItself(new Error('timeout'))).toBe(true)
+    expect(retriesItself(new TypeError('Failed to fetch'))).toBe(true)
+    expect(retriesItself(new ApiError(429, 'rate_limited', 'too many'))).toBe(false)
+    expect(retriesItself(new ApiError(500, 'internal', 'boom'))).toBe(false)
+    expect(retriesItself(new ApiError(422, 'validation', 'no'))).toBe(false)
   })
 
   it('maps the server codes to an instruction', () => {
