@@ -1,7 +1,9 @@
 import type { Context } from 'hono'
 import { createMiddleware } from 'hono/factory'
 import { getConnInfo } from '@hono/node-server/conninfo'
+import { eq } from 'drizzle-orm'
 import type { Env } from '../context.js'
+import { mats } from '../db/schema.js'
 import { verifyToken } from './tokens.js'
 
 type Status = 401 | 403 | 404 | 409 | 422 | 429 | 503
@@ -50,6 +52,12 @@ export function requireMatOrAdmin(resolveMatId: (c: Context<Env>) => number | nu
     if (auth.role === 'admin') return next()
     const matId = await resolveMatId(c)
     if (matId === null || auth.matId !== matId) return errorJson(c, 403, 'forbidden', 'token is for another mat')
+    // One tablet scores a mat at a time. A later bind mints a higher epoch, so the token
+    // the earlier tablet is still holding stops here rather than fighting over the match.
+    const mat = await c.get('ctx').db.select({ bindEpoch: mats.bindEpoch }).from(mats).where(eq(mats.id, matId)).get()
+    if (mat && auth.epoch !== mat.bindEpoch) {
+      return errorJson(c, 401, 'token_stale', 'Another iPad took this mat over. Bind again to score from here.')
+    }
     await next()
   })
 }

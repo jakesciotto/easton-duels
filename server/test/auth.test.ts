@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { Hono } from 'hono'
-import { signToken, verifyToken, tokenExpiry } from '../src/auth/tokens.js'
+import { signToken, verifyToken, tokenExpiry, type TokenPayload } from '../src/auth/tokens.js'
 import { pinMatches, validateAdminPin, randomMatCode } from '../src/auth/pin.js'
 import { attachAuth, requireAdmin, requireMatOrAdmin, clientIp } from '../src/auth/middleware.js'
 import type { Env, AppContext } from '../src/context.js'
+import { freshDb } from './fixtures.js'
 
 const SECRET = 'test-secret'
 
@@ -19,9 +20,13 @@ describe('tokens', () => {
     expect(verifyToken('nope', SECRET, 0)).toBeNull()
   })
   it('rejects an expired token', () => {
-    const t = signToken({ role: 'mat', eventId: 1, matId: 2, exp: 100 }, SECRET)
+    const t = signToken({ role: 'mat', eventId: 1, matId: 2, epoch: 1, exp: 100 }, SECRET)
     expect(verifyToken(t, SECRET, 99_000)).not.toBeNull()
     expect(verifyToken(t, SECRET, 101_000)).toBeNull()
+  })
+  it('reads a mat token minted before the epoch existed as epoch zero', () => {
+    const legacy = signToken({ role: 'mat', eventId: 1, matId: 2, exp: tokenExpiry(0) } as unknown as TokenPayload, SECRET)
+    expect(verifyToken(legacy, SECRET, 0)).toMatchObject({ role: 'mat', epoch: 0 })
   })
 })
 
@@ -72,10 +77,11 @@ describe('clientIp', () => {
 })
 
 describe('middleware', () => {
-  function build() {
+  async function build() {
+    const db = await freshDb()
     const app = new Hono<Env>()
     app.use('*', async (c, next) => {
-      c.set('ctx', { port: 0, db: null as never, secret: SECRET, adminPin: '123456' } as unknown as AppContext)
+      c.set('ctx', { port: 0, db, secret: SECRET, adminPin: '123456' } as unknown as AppContext)
       await next()
     })
     app.use('*', attachAuth)
@@ -84,16 +90,16 @@ describe('middleware', () => {
     return app
   }
   const admin = signToken({ role: 'admin', exp: tokenExpiry() }, SECRET)
-  const mat2 = signToken({ role: 'mat', eventId: 1, matId: 2, exp: tokenExpiry() }, SECRET)
+  const mat2 = signToken({ role: 'mat', eventId: 1, matId: 2, epoch: 0, exp: tokenExpiry() }, SECRET)
 
   it('401s without a token and 403s with the wrong role', async () => {
-    const app = build()
+    const app = await build()
     expect((await app.request('/admin')).status).toBe(401)
     expect((await app.request('/admin', { headers: { authorization: `Bearer ${mat2}` } })).status).toBe(403)
     expect((await app.request('/admin', { headers: { authorization: `Bearer ${admin}` } })).status).toBe(200)
   })
   it('lets a mat token through only for its own mat', async () => {
-    const app = build()
+    const app = await build()
     expect((await app.request('/mat/2', { headers: { authorization: `Bearer ${mat2}` } })).status).toBe(200)
     expect((await app.request('/mat/3', { headers: { authorization: `Bearer ${mat2}` } })).status).toBe(403)
     expect((await app.request('/mat/3', { headers: { authorization: `Bearer ${admin}` } })).status).toBe(200)

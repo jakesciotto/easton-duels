@@ -45,9 +45,44 @@ describe('bind and heartbeat', () => {
     expect((await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)).body.snapshot.mats[0].bound).toBe(true)
     for (let i = 0; i < 18; i++) await call(app, 'POST', `/api/events/${s.eventId}/mats/${s.matIds[0]}/bind`, { code: '9999' })
     // Nineteen wrong codes so far, and the correct ones in between never spent the budget.
-    expect((await call(app, 'POST', `/api/events/${s.eventId}/mats/${s.matIds[0]}/bind`, { code: '0420' })).status).toBe(200)
+    expect((await call(app, 'POST', `/api/events/${s.eventId}/mats/${s.matIds[0]}/bind`, { code: '0420', takeOver: true })).status).toBe(200)
     await call(app, 'POST', `/api/events/${s.eventId}/mats/${s.matIds[0]}/bind`, { code: '9999' })
     expect((await call(app, 'POST', `/api/events/${s.eventId}/mats/${s.matIds[0]}/bind`, { code: '0420' })).status).toBe(429)
+  })
+
+  it('refuses a second tablet on a bound mat and hands the mat over on request', async () => {
+    const { app, db } = await createTestApp()
+    const s = await seedEvent(db, { live: true })
+    const bind = `/api/events/${s.eventId}/mats/${s.matIds[0]}/bind`
+    const first = await call(app, 'POST', bind, { code: '0420' })
+    expect(first.status).toBe(200)
+    expect((await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)).body.snapshot.mats[0].bound).toBe(true)
+
+    const second = await call(app, 'POST', bind, { code: '0420' })
+    expect(second.status).toBe(409)
+    expect(second.body.error.code).toBe('mat_bound')
+    expect(second.body.error.message).toMatch(/already has an iPad/)
+
+    const taken = await call(app, 'POST', bind, { code: '0420', takeOver: true })
+    expect(taken.status).toBe(200)
+    expect(taken.body.token).not.toBe(first.body.token)
+
+    const stale = await call(app, 'POST', `/api/matches/${s.matchIds[0]}/events`, { id: 'stale-0001', type: 'clock_start', lastSeq: 0 }, first.body.token)
+    expect(stale.status).toBe(401)
+    expect(stale.body.error.code).toBe('token_stale')
+    expect((await call(app, 'POST', `/api/mats/${s.matIds[0]}/heartbeat`, {}, first.body.token)).status).toBe(401)
+
+    const fresh = await call(app, 'POST', `/api/matches/${s.matchIds[0]}/events`, { id: 'fresh-0001', type: 'clock_start', lastSeq: 0 }, taken.body.token)
+    expect(fresh.status).toBe(200)
+  })
+
+  it('lets a tablet bind a mat whose scorer stopped answering', async () => {
+    const { app, db } = await createTestApp()
+    const s = await seedEvent(db, { live: true })
+    const bind = `/api/events/${s.eventId}/mats/${s.matIds[0]}/bind`
+    expect((await call(app, 'POST', bind, { code: '0420' })).status).toBe(200)
+    await db.update(mats).set({ lastHeartbeatAt: new Date(Date.now() - 120_000).toISOString() }).where(eq(mats.id, s.matIds[0])).run()
+    expect((await call(app, 'POST', bind, { code: '0420' })).status).toBe(200)
   })
 
   it('answers 404 for an unknown event or an unknown mat', async () => {

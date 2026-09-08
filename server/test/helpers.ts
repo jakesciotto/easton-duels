@@ -18,8 +18,8 @@ export async function createTestApp(overrides: Partial<AppContext> = {}) {
   return { app, ctx, db, adminToken }
 }
 
-export function matToken(eventId: number, matId: number): string {
-  return signToken({ role: 'mat', eventId, matId, exp: tokenExpiry() }, TEST_SECRET)
+export function matToken(eventId: number, matId: number, epoch = 0): string {
+  return signToken({ role: 'mat', eventId, matId, epoch, exp: tokenExpiry() }, TEST_SECRET)
 }
 
 export async function call(app: ReturnType<typeof createApp>, method: string, path: string, body?: unknown, token?: string) {

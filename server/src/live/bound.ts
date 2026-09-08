@@ -1,7 +1,7 @@
 import { and, eq, inArray, lt } from 'drizzle-orm'
 import type { DbLike } from '../db/client.js'
 import { mats } from '../db/schema.js'
-import { bumpVersion } from '../match/events.js'
+import { bumpVersion, MatchStateError } from '../match/events.js'
 import { isBusy } from '../match/expiry.js'
 
 export const BOUND_WINDOW_MS = 60_000
@@ -17,6 +17,25 @@ export async function heartbeatMat(db: DbLike, matId: number, eventId: number, n
   await db.transaction(async tx => {
     await touch(tx)
     await bumpVersion(tx, eventId)
+  })
+}
+
+// Binding is what settles who scores a mat, so it reads the mat's live state rather than
+// the stored flag alone: a tablet whose heartbeats stopped more than the reap window ago
+// has already lost the mat, whether or not a poll has swept it yet. Returns the epoch the
+// caller's token must carry, or null when a tablet is still on the mat and the caller did
+// not ask to take it over. Every successful bind mints the next epoch, so the token any
+// earlier tablet still holds stops working the moment this one starts.
+export async function bindMat(db: DbLike, matId: number, eventId: number, nowMs: number, takeOver: boolean): Promise<number | null> {
+  return db.transaction(async tx => {
+    const row = await tx.select().from(mats).where(eq(mats.id, matId)).get()
+    if (!row) throw new MatchStateError('mat not found')
+    const held = row.bound && row.lastHeartbeatAt !== null && Date.parse(row.lastHeartbeatAt) > nowMs - BOUND_WINDOW_MS
+    if (held && !takeOver) return null
+    const epoch = row.bindEpoch + 1
+    await tx.update(mats).set({ bound: true, lastHeartbeatAt: new Date(nowMs).toISOString(), bindEpoch: epoch }).where(eq(mats.id, matId)).run()
+    await bumpVersion(tx, eventId)
+    return epoch
   })
 }
 

@@ -57,7 +57,7 @@ function detailWith(matches: MatchRow[], athletes = ROSTER): EventDetail {
 const slowSnapshot = (over: Partial<Snapshot['event']> = {}) => sampleSnapshot({
   mats: [],
   matches: [],
-  event: { id: 7, name: 'Fall Duels', date: '2026-10-03', status: 'setup', mode: 'live', matCount: 1, ...over },
+  event: { id: 7, name: 'Fall Duels', date: '2026-10-03', status: 'setup', mode: 'live', matCount: 1, contact: null, ...over },
 })
 const SLOW_SNAPSHOT = slowSnapshot()
 

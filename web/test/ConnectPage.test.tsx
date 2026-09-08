@@ -51,7 +51,7 @@ describe('ConnectPage', () => {
     fakeFetch(url => {
       if (/\/snapshot(\?|$)/.test(url)) {
         return { json: { version: 1, snapshot: sampleSnapshot({
-          event: { id: 7, name: 'Fall Duels', date: '2026-10-03', status: 'live', mode: 'entry', matCount: 1 },
+          event: { id: 7, name: 'Fall Duels', date: '2026-10-03', status: 'live', mode: 'entry', matCount: 1, contact: null },
         }) } }
       }
       return { json: { url: 'http://192.168.1.20:8422', matCode: '0420' } }

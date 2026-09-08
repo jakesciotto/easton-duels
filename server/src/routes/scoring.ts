@@ -13,7 +13,7 @@ import { appendMatchEvent, endMatch, undoLastMatchEvent, loadMatch, latestEndedA
 import { advanceMat, reopenMatch, setResult, skipMatch } from '../match/mats.js'
 import { expireOverdue } from '../match/lazyExpiry.js'
 import { toMatchView, buildSnapshot } from '../live/snapshot.js'
-import { heartbeatMat } from '../live/bound.js'
+import { bindMat, heartbeatMat } from '../live/bound.js'
 
 export const scoringRoutes = new Hono<Env>()
 
@@ -54,7 +54,7 @@ async function seqConflict(c: Context<Env>, matchId: number, err: SeqConflict) {
   return errorJson(c, 409, 'sequence', 'stale sequence', { currentSeq: err.currentSeq, match: await matchView(c, await loadMatch(c.get('ctx').db, matchId)) })
 }
 
-scoringRoutes.post('/events/:eventId/mats/:matId/bind', validate('json', z.object({ code: z.string().regex(/^\d{4}$/) })), async c => {
+scoringRoutes.post('/events/:eventId/mats/:matId/bind', validate('json', z.object({ code: z.string().regex(/^\d{4}$/), takeOver: z.boolean().optional() })), async c => {
   const ctx = c.get('ctx')
   const ip = clientIp(c)
   const limit = await checkLimit(ctx.db, 'bind', ip, Date.now())
@@ -64,7 +64,8 @@ scoringRoutes.post('/events/:eventId/mats/:matId/bind', validate('json', z.objec
   const ev = await ctx.db.select().from(events).where(eq(events.id, eventId)).get()
   const mat = await ctx.db.select().from(mats).where(and(eq(mats.id, matId), eq(mats.eventId, eventId))).get()
   if (!ev || !mat) return errorJson(c, 404, 'not_found', 'event or mat not found')
-  if (!pinMatches(c.req.valid('json').code, ev.matCode)) {
+  const body = c.req.valid('json')
+  if (!pinMatches(body.code, ev.matCode)) {
     await recordFailure(ctx.db, 'bind', ip, Date.now())
     return errorJson(c, 401, 'bad_code', 'wrong mat code')
   }
@@ -78,8 +79,13 @@ scoringRoutes.post('/events/:eventId/mats/:matId/bind', validate('json', z.objec
     return errorJson(c, 409, 'desk_mode',
       'This event runs from the desk. Every result is typed on the Entry tab, so there is no mat for this iPad to score.')
   }
+  const epoch = await bindMat(ctx.db, matId, eventId, Date.now(), body.takeOver ?? false)
+  if (epoch === null) {
+    return errorJson(c, 409, 'mat_bound',
+      'This mat already has an iPad scoring it. Take it over to score from here instead.')
+  }
   return c.json({
-    token: signToken({ role: 'mat', eventId, matId, exp: tokenExpiry() }, ctx.secret),
+    token: signToken({ role: 'mat', eventId, matId, epoch, exp: tokenExpiry() }, ctx.secret),
     mat: { id: mat.id, number: mat.number },
     event: { id: ev.id, name: ev.name },
   })

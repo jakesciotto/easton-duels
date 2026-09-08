@@ -101,7 +101,7 @@ describe('MatPickPage', () => {
     fakeFetch(url => {
       if (url === '/api/events/5/snapshot') {
         return { json: { version: 1, snapshot: sampleSnapshot({
-          event: { id: 5, name: 'Winter Duels', date: '2026-11-01', status: 'live', mode: 'live', matCount: 1 },
+          event: { id: 5, name: 'Winter Duels', date: '2026-11-01', status: 'live', mode: 'live', matCount: 1, contact: null },
           mats: [{ id: 3, number: 1, current: null, onDeck: [], bound: false }],
         }) } }
       }
@@ -119,7 +119,7 @@ describe('MatPickPage', () => {
     fakeFetch(url => {
       if (url === '/api/events/9/snapshot') {
         return { json: { version: 1, snapshot: sampleSnapshot({
-          event: { id: 9, name: 'Empty Duels', date: '2026-12-01', status: 'setup', mode: 'live', matCount: 0 },
+          event: { id: 9, name: 'Empty Duels', date: '2026-12-01', status: 'setup', mode: 'live', matCount: 0, contact: null },
           mats: [],
         }) } }
       }
@@ -200,7 +200,7 @@ describe('MatPickPage', () => {
     fakeFetch(url => {
       if (url === '/api/events/1/snapshot') {
         return { json: { version: 1, snapshot: sampleSnapshot({
-          event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'live', mode: 'live', matCount: 6 },
+          event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'live', mode: 'live', matCount: 6, contact: null },
           mats: Array.from({ length: 6 }, (_, i) => ({ id: i + 1, number: i + 1, current: null, onDeck: [], bound: false })),
         }) } }
       }
@@ -228,7 +228,7 @@ describe('MatPickPage', () => {
     const f = fakeFetch(url => {
       if (url === '/api/events/3/snapshot') {
         return { json: { version: 1, snapshot: sampleSnapshot({
-          event: { id: 3, name: 'Fall Duels', date: '2026-10-03', status: 'live', mode: 'entry', matCount: 1 },
+          event: { id: 3, name: 'Fall Duels', date: '2026-10-03', status: 'live', mode: 'entry', matCount: 1, contact: null },
           mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: false }],
         }) } }
       }
@@ -263,7 +263,7 @@ describe('MatPickPage', () => {
     const f = fakeFetch(url => {
       if (url === '/api/events/3/snapshot') {
         return { json: { version: 1, snapshot: sampleSnapshot({
-          event: { id: 3, name: 'Fall Duels', date: '2026-10-03', status: 'live', mode, matCount: 1 },
+          event: { id: 3, name: 'Fall Duels', date: '2026-10-03', status: 'live', mode, matCount: 1, contact: null },
           mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: false }],
         }) } }
       }
