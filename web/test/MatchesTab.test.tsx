@@ -375,3 +375,59 @@ describe('MatchesTab', () => {
     }
   })
 })
+
+/**
+ * G10. Two of this screen's columns exist for a tablet. In desk mode no clock ever
+ * starts, so a per match length is a number the organizer can set and nothing will read,
+ * and the "Live now" strip is a lane that can only ever be empty. The mat select stays:
+ * the running order per mat is the whole reason matches are designed in desk mode.
+ */
+describe('MatchesTab in desk mode', () => {
+  const entryDetail: EventDetail = { ...detail, event: { ...detail.event, mode: 'entry' } }
+  const deskSnapshot = (over: Partial<Snapshot> = {}): Snapshot => {
+    const base = sampleSnapshot({
+      matches: [view(1), view(2), view(3, { status: 'done', result: { winnerAthleteId: 100, winType: 'points' } })],
+      mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: false }],
+      ...over,
+    })
+    return { ...base, event: { ...base.event, mode: 'entry' } }
+  }
+
+  it('drops the clock length column and keeps the mat select', async () => {
+    mountStreaming(deskSnapshot(), entryDetail)
+    await vi.waitFor(() => expect(pendingRows().length).toBeGreaterThan(0))
+    expect(screen.queryByText('Sec')).not.toBeInTheDocument()
+    expect(within(pendingRows()[0]).queryByLabelText(`Length for ${M1}`)).not.toBeInTheDocument()
+    expect(within(pendingRows()[0]).getByLabelText(`Mat for ${M1}`)).toBeInTheDocument()
+  })
+
+  it('keeps both columns when the mats are scoring', async () => {
+    mountStreaming(sampleSnapshot({
+      matches: [view(1), view(2), view(3, { status: 'done', result: { winnerAthleteId: 100, winType: 'points' } })],
+      mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: false }],
+    }))
+    await vi.waitFor(() => expect(pendingRows().length).toBeGreaterThan(0))
+    expect(screen.getByText('Sec')).toBeInTheDocument()
+    expect(within(pendingRows()[0]).getByLabelText(`Length for ${M1}`)).toBeInTheDocument()
+  })
+
+  it('drops the live strip, and Regenerate is free because nothing is live', async () => {
+    mountStreaming(deskSnapshot(), entryDetail)
+    await vi.waitFor(() => expect(pendingRows().length).toBeGreaterThan(0))
+    expect(screen.queryByRole('region', { name: 'Live now' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Regenerate' })).not.toBeDisabled()
+    expect(screen.queryByText(/^Live on mat/)).not.toBeInTheDocument()
+  })
+
+  // One fact, one source: the organizer switches the event from a phone at the same desk
+  // and nothing invalidates this browser's detail cache when they do.
+  it('follows the stream when the detail cache still says the mats are scoring', async () => {
+    const { feed } = mountStreaming(sampleSnapshot({
+      matches: [view(1), view(2), view(3, { status: 'done', result: { winnerAthleteId: 100, winType: 'points' } })],
+      mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: false }],
+    }))
+    expect(await screen.findByText('Sec')).toBeInTheDocument()
+    feed.push(deskSnapshot())
+    await vi.waitFor(() => expect(screen.queryByText('Sec')).not.toBeInTheDocument(), { timeout: 6000 })
+  })
+})

@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { formatClock } from '@shared/clock'
 import type { RulesetAction, RulesetTerminal } from '@shared/types'
 import { adminApi, useAdminMutation } from '@/lib/queries'
+import { useSnapshot } from '@/lib/useSnapshot'
+import { DESK_RULESET_NOTE, modeOf } from '@/lib/eventMode'
 import type { EventDetail, RulesetRow } from '@/lib/types'
 import { RulesetDialog } from './RulesetDialog'
 import { Button } from '@/components/ui/button'
@@ -28,10 +30,11 @@ function ActionGridPreview({ actions, terminals }: { actions: RulesetAction[]; t
   )
 }
 
-function RulesetCard({ ruleset, matchCount, onlyRuleset, onEdit, onDelete }: {
+function RulesetCard({ ruleset, matchCount, onlyRuleset, entryMode, onEdit, onDelete }: {
   ruleset: RulesetRow
   matchCount: number
   onlyRuleset: boolean
+  entryMode: boolean
   onEdit: () => void
   onDelete: () => void
 }) {
@@ -76,7 +79,11 @@ function RulesetCard({ ruleset, matchCount, onlyRuleset, onEdit, onDelete }: {
           <span className="t3 text-right text-gray-10" style={{ minWidth: 'var(--col-num-s)' }}>{t.winType}</span>
         </FieldRow>
       ))}
-      <ActionGridPreview actions={ruleset.actions} terminals={ruleset.terminals} />
+      {/* The preview is a still of the scorer's own action grid, and in desk mode no
+          coach ever sees that grid. The values above it are still the event's scoring
+          vocabulary, so the card keeps them and drops the picture of a screen that is
+          not going to exist. */}
+      {!entryMode && <ActionGridPreview actions={ruleset.actions} terminals={ruleset.terminals} />}
     </FieldSet>
   )
 }
@@ -84,6 +91,10 @@ function RulesetCard({ ruleset, matchCount, onlyRuleset, onEdit, onDelete }: {
 export function RulesetsTab({ detail }: { detail: EventDetail }) {
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<RulesetRow | undefined>(undefined)
+  // The room's own account of how the event runs, not this browser's detail cache, for
+  // the same reason every other surface reads the stream: another device switches it.
+  const { live } = useSnapshot(detail.event.id)
+  const entryMode = modeOf(live, detail.event.mode) === 'entry'
   const remove = useAdminMutation(detail.event.id, (id: number) => adminApi(`/api/rulesets/${id}`, { method: 'DELETE' }))
   const matchCounts = new Map<number, number>()
   for (const m of detail.matches) matchCounts.set(m.rulesetId, (matchCounts.get(m.rulesetId) ?? 0) + 1)
@@ -98,6 +109,9 @@ export function RulesetsTab({ detail }: { detail: EventDetail }) {
           </Alert>
         )}
       </div>
+      {/* One line, because a tab that looks the same in both modes is a tab an organizer
+          spends the afternoon tuning for a tablet nobody is holding. */}
+      {entryMode && <p className="t2 text-gray-10">{DESK_RULESET_NOTE}</p>}
       <RulesetDialog detail={detail} open={open} onOpenChange={setOpen} ruleset={editing} />
       <div className="grid items-start gap-4 md:grid-cols-2">
         {detail.rulesets.map(r => (
@@ -106,6 +120,7 @@ export function RulesetsTab({ detail }: { detail: EventDetail }) {
             ruleset={r}
             matchCount={matchCounts.get(r.id) ?? 0}
             onlyRuleset={detail.rulesets.length === 1}
+            entryMode={entryMode}
             onEdit={() => { setEditing(r); setOpen(true) }}
             onDelete={() => remove.mutate(r.id)}
           />

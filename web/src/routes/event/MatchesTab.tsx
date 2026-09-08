@@ -6,6 +6,7 @@ import { GripVerticalIcon } from 'lucide-react'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import { useSnapshot } from '@/lib/useSnapshot'
 import { pollIntervalForSnapshot } from '@/lib/pollInterval'
+import { modeOf } from '@/lib/eventMode'
 import type { EventDetail, MatchRow, TeamRow } from '@/lib/types'
 import { athleteName, winTypeLabel } from '@/lib/format'
 import { moveId } from '@/lib/reorder'
@@ -32,7 +33,8 @@ interface Pick { matchId: number; side: 'a' | 'b'; teamId: number }
 // 4.4 names 2000ms for this tab. The suspension that keeps an arriving snapshot off the
 // screen while the operator is dragging, typing or picking lives in useSnapshot.
 
-const PENDING_COLUMNS = 9
+// The length column is absent in desk mode, where nothing runs a clock.
+const pendingColumns = (entryMode: boolean) => (entryMode ? 8 : 9)
 
 // The hovered competitor lights every row they appear in. Scanning for one child's next
 // bout is the most common thing this screen is used for, and the table is too tall to
@@ -174,7 +176,7 @@ function LengthCell({ label, value, onSave }: {
   )
 }
 
-function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, doubleBooked, highlight, onHover, onPick, onPatch, onDelete, onMove }: {
+function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, doubleBooked, entryMode, highlight, onHover, onPick, onPatch, onDelete, onMove }: {
   line: MatchLine
   teams: TeamRow[]
   name: NameOf
@@ -183,6 +185,7 @@ function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, d
   index: number
   count: number
   doubleBooked: boolean
+  entryMode: boolean
   highlight: boolean
   onHover: Hover
   onPick: (p: Pick) => void
@@ -266,14 +269,19 @@ function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, d
         An editable cell rather than a boxed input: the length is a figure on the Ledger
         Grid's own track, and a boxed control cannot hold 4ch plus its own border inside it.
         Never type="number" (7.8): the spinner steals the track and the scroll wheel.
+
+        Absent in desk mode. No clock ever starts there, so the cell is a number the
+        organizer can set and nothing will ever read.
       */}
-      <TableCell numeric className="w-[var(--col-num-l)] p-0">
-        <LengthCell
-          label={`Length for ${row}`}
-          value={m.lengthSec}
-          onSave={(lengthSec, onRefused) => onPatch(m.id, { lengthSec }, onRefused)}
-        />
-      </TableCell>
+      {!entryMode && (
+        <TableCell numeric className="w-[var(--col-num-l)] p-0">
+          <LengthCell
+            label={`Length for ${row}`}
+            value={m.lengthSec}
+            onSave={(lengthSec, onRefused) => onPatch(m.id, { lengthSec }, onRefused)}
+          />
+        </TableCell>
+      )}
       <TableCell className="w-[168px]">
         <Select
           value={String(m.rulesetId)}
@@ -350,8 +358,12 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
   // on the derived ramp. Pinning one here produced a number the stream ignored and then fed
   // it to the clock as a staleness threshold, so this tab called data fresh for seconds
   // after the board had already stopped trusting it.
-  const { snapshot, lastSuccessAt } = useSnapshot(eventId)
+  const { snapshot, live: liveSnapshot, lastSuccessAt } = useSnapshot(eventId)
   const pollIntervalMs = pollIntervalForSnapshot(snapshot)
+  // The room's own account of how the event runs, not this browser's detail cache: the
+  // organizer switches the event from a phone at the same desk and nothing invalidates
+  // the cache when they do.
+  const entryMode = modeOf(liveSnapshot, detail.event.mode) === 'entry'
   const [pick, setPick] = useState<Pick | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -510,7 +522,9 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
         </Alert>
       )}
 
-      {live.length > 0 && (
+      {/* Nothing runs a clock in desk mode, so a "Live now" strip there is a lane that
+          can only ever be empty. The pending field is the whole screen instead. */}
+      {!entryMode && live.length > 0 && (
         <section aria-label="Live now" className="grid gap-3">
           {live.map(l => (
             <LiveStrip
@@ -566,7 +580,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
                   <TableHead className="w-[112px]">Mat</TableHead>
                   <TableHead>Competitors</TableHead>
                   <TableHead>Why</TableHead>
-                  <TableHead numeric className="w-[var(--col-num-l)]"><span className="font-sans">Sec</span></TableHead>
+                  {!entryMode && <TableHead numeric className="w-[var(--col-num-l)]"><span className="font-sans">Sec</span></TableHead>}
                   <TableHead className="w-[168px]">Ruleset</TableHead>
                   <TableHead className="w-px"><span className="sr-only">Actions</span></TableHead>
                 </TableRow>
@@ -574,7 +588,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
               <TableBody>
                 {pending.length === 0 ? (
                   <TableRow className="hover:bg-transparent">
-                    <TableCell colSpan={PENDING_COLUMNS} className="p-0">
+                    <TableCell colSpan={pendingColumns(entryMode)} className="p-0">
                       <EmptyState
                         message="No matches yet."
                         action={<Button size="sm" variant="ghost" disabled={blocked !== null || generate.isPending} onClick={onGenerateClick}>Generate matchups</Button>}
@@ -585,7 +599,8 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
                   <PendingRow
                     key={l.row.id} line={l} teams={detail.teams} name={nameOf}
                     matItems={matItems} rulesetItems={rulesetItems} index={i} count={pending.length}
-                    doubleBooked={doubleBooked.has(l.row.id)} highlight={holds(l)} onHover={setHovered}
+                    doubleBooked={doubleBooked.has(l.row.id)} entryMode={entryMode}
+                    highlight={holds(l)} onHover={setHovered}
                     onPick={setPick} onPatch={onPatchAction} onDelete={onDeleteAction} onMove={onMovePending}
                   />
                 ))}

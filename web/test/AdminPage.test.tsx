@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { routes } from '@/router'
 import { setAdminToken } from '@/lib/auth'
+import { MODE_LABEL } from '@/lib/eventMode'
 import { fakeFetch } from './fakes'
 
 beforeEach(() => { localStorage.clear(); setAdminToken('tok') })
@@ -17,7 +18,7 @@ function mount(path = '/admin') {
   return router
 }
 
-const summary = { id: 7, name: 'Fall Duels', date: '2026-10-03', matCount: 2, matCode: '0420', status: 'setup', maxAgeGap: 1, maxWeightGap: 10, sameGender: false, createdAt: 'x',
+const summary = { id: 7, name: 'Fall Duels', date: '2026-10-03', matCount: 2, matCode: '0420', status: 'setup', mode: 'live', maxAgeGap: 1, maxWeightGap: 10, sameGender: false, createdAt: 'x',
   teams: [{ id: 1, eventId: 7, name: 'Ridgeline', color: 'red', position: 0 }, { id: 2, eventId: 7, name: 'Lakeside', color: 'blue', position: 1 }] }
 
 describe('AdminPage', () => {
@@ -69,6 +70,22 @@ describe('AdminPage', () => {
     expect(dateHead.className).toMatch(/(^|\s)t2(\s|$)/)
     expect(dateRow.className).toMatch(/font-mono/)
     expect(dateRow.className).toMatch(/(^|\s)t2(\s|$)/)
+  })
+
+  /**
+   * G10. Two events on one afternoon, one scored on the mats and one run from the desk,
+   * were the same row: the organizer had to open each one to find out which was which.
+   * The word comes from the one exported vocabulary, so this list, the New event dialog
+   * and the event shell cannot drift into three ways of naming the same setting.
+   */
+  it('says how each event runs, in the shared words', async () => {
+    const desk = { ...summary, id: 8, name: 'Winter Duels', mode: 'entry' }
+    fakeFetch(url => url === '/api/events' ? { json: [summary, desk] } : { json: {} })
+    mount()
+    expect(await screen.findByText(MODE_LABEL.live)).toBeInTheDocument()
+    expect(screen.getByText(MODE_LABEL.entry)).toBeInTheDocument()
+    // The head names the column, so a row's word is not a loose fragment.
+    expect(screen.getByText('Runs')).toBeInTheDocument()
   })
 
   // Finding 6 / 7.10: a sentence with no control is a dead end. The empty state's

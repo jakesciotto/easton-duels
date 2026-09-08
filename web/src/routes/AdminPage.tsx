@@ -6,6 +6,7 @@ import { RouteFallback } from '@/components/RouteFallback'
 import { TeamPlate } from '@/components/TeamPlate'
 import { NewEventDialog } from './admin/NewEventDialog'
 import { useEvents } from '@/lib/queries'
+import { MODE_LABEL } from '@/lib/eventMode'
 import type { EventSummary } from '@/lib/types'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -27,7 +28,7 @@ const STATE_RULE: Record<EventSummary['status'], string> = {
 // still resolved the Mats track to two different pixel widths. Both are pinned to
 // the mono face at the row's own t2 -- the same technique the roster row and the
 // candidate row already document -- and the labels take t1 back on themselves.
-const ROW = 'grid h-10 grid-cols-[var(--col-state)_minmax(0,1fr)_92px_var(--col-num-s)_auto] items-center gap-x-3 font-mono t2'
+const ROW = 'grid h-10 grid-cols-[var(--col-state)_minmax(0,1fr)_92px_116px_var(--col-num-s)_auto] items-center gap-x-3 font-mono t2'
 
 function EventRow({ ev }: { ev: EventSummary }) {
   const [teamA, teamB] = ev.teams
@@ -56,6 +57,10 @@ function EventRow({ ev }: { ev: EventSummary }) {
         {teamB && <TeamPlate color={teamB.color} name={teamB.name} size="inline" className="hidden sm:inline-flex" />}
       </div>
       <span className="fig text-gray-10">{ev.date}</span>
+      {/* One word per row for how the event runs, in the one exported vocabulary the New
+          event dialog and the event shell already say it in. Without it a desk event and
+          a mat event are the same row, and the organizer opens the wrong one. */}
+      <span className="truncate font-sans text-gray-10" title={MODE_LABEL[ev.mode]}>{MODE_LABEL[ev.mode]}</span>
       <span className="fig text-right text-gray-10">{ev.matCount}</span>
       {/* Above the row overlay, or the only other destination in the row is unreachable. */}
       <Link to={`/board/${ev.id}`} className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'relative font-sans')}>Board</Link>
@@ -85,6 +90,7 @@ function EventList() {
               <span aria-hidden />
               <span className="t1 font-sans">Event</span>
               <span className="tick t1 font-sans text-right">Date</span>
+              <span className="t1 font-sans">Runs</span>
               <span className="tick t1 font-sans text-right">Mats</span>
               <span className="sr-only">Board</span>
             </FieldHead>

@@ -4,8 +4,9 @@ import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RulesetsTab } from '@/routes/event/RulesetsTab'
 import { setAdminToken } from '@/lib/auth'
+import { DESK_RULESET_NOTE } from '@/lib/eventMode'
 import type { EventDetail, MatchRow, RulesetRow } from '@/lib/types'
-import { fakeFetch } from './fakes'
+import { fakeFetch, sampleSnapshot, snapshotFeed } from './fakes'
 
 beforeEach(() => { localStorage.clear(); setAdminToken('tok') })
 afterEach(() => vi.unstubAllGlobals())
@@ -139,5 +140,39 @@ describe('RulesetsTab', () => {
     expect(uppercased(within(card).getByRole('button', { name: 'Edit' }))).toBe(false)
     expect(uppercased(within(card).getByRole('button', { name: 'Delete' }))).toBe(false)
     expect(uppercased(within(card).getByText('The event needs one ruleset'))).toBe(false)
+  })
+})
+
+/**
+ * G10. A ruleset is the tablet's scoring vocabulary and the preview is a still of the
+ * scorer's own action grid, so in desk mode the tab was showing an organizer a picture of
+ * a screen nobody would open, with no word anywhere saying so. The values stay, because
+ * they are still the event's vocabulary; the picture and the silence go.
+ */
+describe('RulesetsTab in desk mode', () => {
+  const deskSnapshot = () => {
+    const base = sampleSnapshot()
+    return { ...base, event: { ...base.event, id: 7, mode: 'entry' as const } }
+  }
+
+  it('says once that rulesets belong to the tablets, and collapses the grid preview', async () => {
+    const feed = snapshotFeed(deskSnapshot())
+    fakeFetch(url => feed.handle(url) ?? { json: {} })
+    mount()
+    expect(await screen.findByText(DESK_RULESET_NOTE)).toBeInTheDocument()
+    const card = cardFor('Default')
+    // The action values are the event's vocabulary and stay on the card.
+    expect(within(card).getByText('Takedown')).toBeInTheDocument()
+    expect(within(card).getByText('+2')).toBeInTheDocument()
+    expect(card.querySelector('[aria-hidden="true"] .grid')).toBeNull()
+  })
+
+  it('keeps the preview and says nothing when the mats are scoring', async () => {
+    const feed = snapshotFeed(sampleSnapshot())
+    fakeFetch(url => feed.handle(url) ?? { json: {} })
+    mount()
+    const card = cardFor('Default')
+    await vi.waitFor(() => expect(card.querySelector('[aria-hidden="true"] .grid')).not.toBeNull())
+    expect(screen.queryByText(DESK_RULESET_NOTE)).not.toBeInTheDocument()
   })
 })
