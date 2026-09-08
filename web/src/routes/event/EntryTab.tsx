@@ -14,7 +14,7 @@ import { defaultOutcome } from './entry-defaults'
 import {
   CUE_MS, LEDGER_LIMIT, RESTORED_NEW_ENTRY, SAVED_LABEL_MS, SAVE_TIMEOUT_MS,
   EVENT_DONE_LINE, clearDraft, clockLabel, duplicateCopy, entryShape, isRepeatPair, ledgerTime, loadDraft, outcomeMatches,
-  pairKey, restoreDraft, restoredBannerCopy, saveDraft, saveErrorCopy, storedOutcome, teamWins,
+  pairKey, restoreDraft, restoredBannerCopy, saveDraft, saveErrorCopy, seedPairLog, serverRefused, storedOutcome, teamWins,
   type EntryDraft, type EntryMatch, type SaveErrorCopy,
 } from './entry-state'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -93,10 +93,16 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   const [timedOut, setTimedOut] = useState(false)
   const [savedAt, setSavedAt] = useState<Record<number, number>>({})
   const [cue, setCue] = useState<{ id: number; on: boolean } | null>(null)
-  const pairLog = useRef<Record<string, number>>({})
-  // The payload the current entryId has already been sent with, so a plain retry keeps
-  // the id and a corrected one mints a new one.
-  const sentShape = useRef<string | null>(restored.shape)
+  // Seeded from the ledger so a reload does not reopen the same-pair window on a result
+  // the server already holds.
+  const [seededPairs] = useState(() => seedPairLog(detail.matches))
+  const pairLog = useRef<Record<string, number>>(seededPairs)
+  // What the current entryId has already been sent with, and whether the server said in so
+  // many words that it stored nothing. Both have to hold before a corrected retry may carry
+  // a new id: a restored draft carries no verdict, so it keeps the id it was stored with.
+  const lastAttempt = useRef<{ shape: string; refused: boolean } | null>(
+    restored.shape === null ? null : { shape: restored.shape, refused: false },
+  )
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
   const watchdog = useRef<ReturnType<typeof setTimeout> | null>(null)
   const formRef = useRef<HTMLFormElement>(null)
@@ -181,12 +187,12 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     if (!kept) {
       setF(fresh())
       setFailure(null)
-      sentShape.current = null
+      lastAttempt.current = null
       return
     }
     setF({ ...kept, touched: kept.winner !== null })
     setFailure(RESTORED_NEW_ENTRY)
-    sentShape.current = entryShape(kept)
+    lastAttempt.current = { shape: entryShape(kept), refused: false }
   }
 
   const onSaved = (out: EntryResult | undefined, key: string, typed: string, sent: Sent, payload: Form) => {
@@ -216,6 +222,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   const onFailed = (payload: Form, error: unknown) => {
     settle()
     saveDraft(eventId, draftOf(payload))
+    lastAttempt.current = { shape: entryShape(draftOf(payload)), refused: serverRefused(error) }
     setFailure(saveErrorCopy(error))
   }
 
@@ -236,10 +243,14 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     const sent: Sent = { winnerAthleteId, winType, scores: { [a.id]: pA, [b.id]: pB } }
 
     // 7.12 holds one id through a retry so a resend is deduped. A retry whose payload the
-    // operator has corrected is a different write and must not be.
+    // operator has corrected is a different write, but only a failure the server refused
+    // outright proves the first write is not on file: after a timeout or a dropped
+    // connection a new id would insert a second done match and count the team's win twice,
+    // so the id is kept and the resend comes back as the duplicate it is.
     const shape = entryShape(draftOf({ ...f, winner, winType }))
-    const entryId = sentShape.current !== null && sentShape.current !== shape ? newEventId() : f.entryId
-    sentShape.current = shape
+    const prior = lastAttempt.current
+    const entryId = prior !== null && prior.refused && prior.shape !== shape ? newEventId() : f.entryId
+    lastAttempt.current = { shape, refused: false }
     const payload: Form = { ...f, entryId, winner, winType, touched: true }
     if (entryId !== f.entryId) setF(s => ({ ...s, entryId }))
 
@@ -313,7 +324,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     setDupe(null)
     setPairPrompt(null)
     setAnnounce('')
-    sentShape.current = null
+    lastAttempt.current = null
     focusPoints()
   }
   // The other door out of a correction, and it strands the same way load did:
@@ -325,7 +336,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     setFailure(null)
     setDupe(null)
     setF({ ...fresh(), aId: String(m.athleteAId), bId: String(m.athleteBId) })
-    sentShape.current = null
+    lastAttempt.current = null
     focusPoints()
   }
   // Cancelling an edit drops that correction's own draft: a correction sets one

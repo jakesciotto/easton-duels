@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { ApiError } from '@/lib/api'
 import {
   SAME_PAIR_WINDOW_MS, clearDraft, clockLabel, draftKey, isRepeatPair, ledgerTime, loadDraft, pairKey, restoreDraft,
-  saveDraft, saveErrorCopy, teamWins,
+  saveDraft, saveErrorCopy, seedPairLog, serverRefused, teamWins,
   type EntryDraft,
 } from '@/routes/event/entry-state'
 import type { AthleteRow, MatchRow } from '@/lib/types'
@@ -141,6 +141,41 @@ describe('save error copy', () => {
     expect(saveErrorCopy(new ApiError(409, 'sequence', 'stale')).title).toMatch(/Another device/)
     expect(saveErrorCopy(new ApiError(422, 'validation', 'winner must be one of the two athletes')).body).toBe('winner must be one of the two athletes')
     expect(saveErrorCopy(new ApiError(500, 'internal', 'boom')).body).toBe('Press Save to try again.')
+  })
+})
+
+describe('serverRefused', () => {
+  it('is true only where the server said it stored nothing', () => {
+    expect(serverRefused(new ApiError(422, 'validation', 'winner must be one of the two'))).toBe(true)
+    expect(serverRefused(new ApiError(404, 'not_found', 'gone'))).toBe(true)
+    expect(serverRefused(new ApiError(409, 'match_state', 'already done'))).toBe(true)
+  })
+
+  it('is false wherever the write is in doubt', () => {
+    expect(serverRefused(new Error('timeout'))).toBe(false)
+    expect(serverRefused(new ApiError(500, 'internal', 'boom'))).toBe(false)
+    expect(serverRefused(new ApiError(429, 'rate_limited', 'too many'))).toBe(false)
+    expect(serverRefused(new ApiError(408, 'timeout', 'too slow'))).toBe(false)
+  })
+})
+
+describe('seedPairLog', () => {
+  it('reads the last stored time of every settled pair, in either athlete order', () => {
+    const log = seedPairLog([
+      match(1, { status: 'done', athleteAId: 100, athleteBId: 200, endedAt: '2026-10-03T16:00:00.000Z' }),
+      match(2, { status: 'done', athleteAId: 200, athleteBId: 100, endedAt: '2026-10-03T16:05:00.000Z' }),
+      match(3, { status: 'pending', athleteAId: 101, athleteBId: 201, endedAt: '2026-10-03T16:10:00.000Z' }),
+      match(4, { status: 'done', athleteAId: 102, athleteBId: 202, endedAt: null }),
+      match(5, { status: 'done', athleteAId: 103, athleteBId: 203, endedAt: 'not a time' }),
+    ])
+    expect(log).toEqual({ '100-200': Date.parse('2026-10-03T16:05:00.000Z') })
+  })
+
+  it('is what the repeat guard reads after a reload', () => {
+    const now = Date.now()
+    const log = seedPairLog([match(1, { status: 'done', endedAt: new Date(now - 1_000).toISOString() })])
+    expect(isRepeatPair(log, pairKey(200, 100), now)).toBe(true)
+    expect(isRepeatPair(log, pairKey(200, 100), now + SAME_PAIR_WINDOW_MS)).toBe(false)
   })
 })
 

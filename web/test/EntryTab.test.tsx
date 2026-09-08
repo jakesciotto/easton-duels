@@ -724,11 +724,11 @@ describe('EntryTab', () => {
 
   // G17. The id is held so a resend is deduped, which is right until the operator fixes
   // the payload and presses Save again: then the server replays the original result and
-  // the client reports the corrected one.
-  it('mints a new entryId for a retry the operator has corrected', async () => {
+  // the client reports the corrected one. A 422 is the server saying it stored nothing.
+  it('mints a new entryId for a retry the operator has corrected after a refusal', async () => {
     let broken = true
     const f = fakeFetch(() => broken
-      ? { status: 500, json: { error: { code: 'internal', message: 'boom' } } }
+      ? { status: 422, json: { error: { code: 'validation', message: 'that pair is on the same team' } } }
       : { status: 201, json: { match: { id: 9 }, version: 3 } })
     mount()
     const user = userEvent.setup()
@@ -736,7 +736,7 @@ describe('EntryTab', () => {
     await pick(user, 'Lakeside competitor', 'Noah Tran')
     await user.type(screen.getByLabelText('Ridgeline points'), '6')
     await user.click(saveButton())
-    await screen.findByText('The server had a problem')
+    await screen.findByText('That result cannot be saved')
     const first = f.body(0).entryId as string
 
     broken = false
@@ -746,6 +746,66 @@ describe('EntryTab', () => {
     await vi.waitFor(() => expect(f.calls.length).toBe(2))
     expect(f.body(1)).toMatchObject({ pointsA: 8 })
     expect(f.body(1).entryId).not.toBe(first)
+  })
+
+  // C2. The watchdog fires while the POST is still in flight, so a write that landed
+  // reads as a failure. Minting a new id for the corrected retry inserted a second done
+  // match and the team's win was counted twice; keeping it makes the retry a replay, and
+  // the desk is told what is on file.
+  it('keeps the entryId through a timeout, even for a corrected retry', async () => {
+    let hang = true
+    const f = fakeFetch(() => hang
+      ? new Promise<never>(() => {})
+      : { status: 200, json: { match: { id: 9 }, version: 3 } })
+    mount()
+    const user = userEvent.setup()
+    await pick(user, 'Ridgeline competitor', 'Ava Park')
+    await pick(user, 'Lakeside competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('Ridgeline points'), '6')
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.click(saveButton())
+      await act(async () => { vi.advanceTimersByTime(1) })
+      await act(async () => { vi.advanceTimersByTime(8_100) })
+      expect(screen.getByText('Could not reach the server')).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+    const first = f.body(0).entryId as string
+
+    hang = false
+    await user.clear(screen.getByLabelText('Ridgeline points'))
+    await user.type(screen.getByLabelText('Ridgeline points'), '8')
+    await user.click(saveButton())
+    await vi.waitFor(() => expect(f.calls.length).toBe(2))
+    expect(f.body(1)).toMatchObject({ pointsA: 8 })
+    expect(f.body(1).entryId).toBe(first)
+  })
+
+  // G29. The guard against typing the same pair twice lived only in memory, so the reload
+  // a failed save invites reopened the window on the result the ledger already holds.
+  it('asks about a repeated pair after a remount, from the ledger', async () => {
+    const f = fakeFetch(() => ({ status: 201, json: { match: { id: 9 }, version: 3 } }))
+    const recent: EventDetail = {
+      ...detail,
+      matches: [
+        match(1, {
+          status: 'done', athleteAId: 101, athleteBId: 201, pointsA: 4, pointsB: 2,
+          winnerAthleteId: 101, winType: 'points', endedAt: new Date().toISOString(),
+        }),
+      ],
+    }
+    mount(recent)
+    const user = userEvent.setup()
+    await pick(user, 'Ridgeline competitor', 'Ava Park')
+    await pick(user, 'Lakeside competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+    await user.click(saveButton())
+    expect(await screen.findByText('These two were just entered')).toBeInTheDocument()
+    expect(f.calls.filter(c => c.url === '/api/events/7/entries')).toHaveLength(0)
+    await user.click(saveButton())
+    await vi.waitFor(() => expect(f.calls.filter(c => c.url === '/api/events/7/entries')).toHaveLength(1))
   })
 
   it('keeps the entryId for a retry the operator has not touched', async () => {
@@ -768,9 +828,11 @@ describe('EntryTab', () => {
     expect(f.body(1).entryId).toBe(first)
   })
 
-  // A reload rebuilds the form from storage, so the id it carries has to be bound to the
-  // payload it was stored with or a correction typed after the reload is deduped away.
-  it('mints a new entryId when the payload changes after a reload', async () => {
+  // A draft is only ever stored by a failed save, and the reload that rebuilt the form
+  // forgot which kind of failure it was. Doubt is the safe reading: the id is kept, so a
+  // corrected resend of a write that may already be on file comes back as a duplicate
+  // rather than as a second win for the team.
+  it('keeps the restored entryId when the payload changes after a reload', async () => {
     const f = fakeFetch(() => ({ status: 201, json: { match: { id: 9 }, version: 3 } }))
     saveDraft(7, { entryId: 'e-restored-0001', aId: '101', bId: '201', pointsA: '6', pointsB: '1', winner: 'a', winType: 'points', editingId: null })
     mount()
@@ -780,7 +842,7 @@ describe('EntryTab', () => {
     await user.type(screen.getByLabelText('Ridgeline points'), '9')
     await user.click(saveButton())
     await vi.waitFor(() => expect(f.calls.length).toBe(1))
-    expect(f.body(0).entryId).not.toBe('e-restored-0001')
+    expect(f.body(0).entryId).toBe('e-restored-0001')
   })
 
   it('reads the confirmation off the response rather than off the form', async () => {

@@ -110,11 +110,47 @@ export function pairKey(a: number, b: number): string {
  * 7.12 holds one entryId through every retry, and the server dedupes on it. That is
  * right for a plain resend and wrong for a corrected one: an operator who fixed a
  * number after a failure and pressed Save again had the ORIGINAL result replayed and
- * the corrected one reported. A retry that carries a different shape gets a new id.
+ * the corrected one reported. A retry that carries a different shape gets a new id,
+ * but only when the failure it follows was one the server definitely refused.
  */
 export function entryShape(d: EntryDraft): string {
   const points = (v: string) => String(v === '' ? 0 : Number(v))
   return [d.editingId ?? 'new', d.aId, d.bId, points(d.pointsA), points(d.pointsB), d.winner ?? '', d.winType].join('|')
+}
+
+/**
+ * Whether the server is known to have stored nothing, which is the only condition under
+ * which a corrected retry may carry a new entryId.
+ *
+ * A timeout, a dropped connection and a 500 all leave the write in doubt: the POST may
+ * have landed and the answer may have been lost on the way back. Minting a new id there
+ * inserts a second done match for the pair and the team wins twice, which is worse in
+ * every case than the alternative, where the resend is deduped and the desk is told what
+ * is on file. 408 and 429 are 4xx by number and doubt by meaning, so they are excluded
+ * with the rest.
+ */
+export function serverRefused(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false
+  return error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429
+}
+
+/**
+ * The last time each pair was entered, read off the ledger the server already holds.
+ *
+ * The same-pair guard lived only in memory, so the reload that a failed save invites
+ * reopened the window on the pair it was protecting: the desk could type the same result
+ * twice with no question asked. The stored endedAt is the record of the first one.
+ */
+export function seedPairLog(matches: MatchRow[]): Record<string, number> {
+  const log: Record<string, number> = {}
+  for (const m of matches) {
+    if (m.status !== 'done' || !m.endedAt) continue
+    const at = Date.parse(m.endedAt)
+    if (Number.isNaN(at)) continue
+    const key = pairKey(m.athleteAId, m.athleteBId)
+    if (log[key] === undefined || at > log[key]) log[key] = at
+  }
+  return log
 }
 
 // What the client reads off a save's response. Typed as what it checks rather than as
