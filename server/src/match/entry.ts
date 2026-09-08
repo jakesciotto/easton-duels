@@ -12,6 +12,9 @@ export interface EntryInput {
   pointsB: number
   winnerAthleteId: number
   winType: WinType
+  // Only a correction keeps this: a first result has nothing to explain, and the payload
+  // it writes is an end rather than an edit_result.
+  reason?: string
   at?: string
 }
 
@@ -64,7 +67,8 @@ export async function enterResult(db: DbLike, matchId: number, input: EntryInput
     push({ type: 'set_score', athleteId: match.athleteAId, points: input.pointsA })
     push({ type: 'set_score', athleteId: match.athleteBId, points: input.pointsB })
     const result = { winnerAthleteId: input.winnerAthleteId, winType: input.winType }
-    if (wasDone) push({ type: 'admin', athleteId: result.winnerAthleteId, payload: { kind: 'edit_result', ...result } })
+    const reason = input.reason ? { reason: input.reason } : {}
+    if (wasDone) push({ type: 'admin', athleteId: result.winnerAthleteId, payload: { kind: 'edit_result', ...result, ...reason } })
     else push({ type: 'end', athleteId: result.winnerAthleteId, payload: { kind: 'end', ...result } })
     await tx.insert(matchEvents).values(rows).run()
 

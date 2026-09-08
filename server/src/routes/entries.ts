@@ -9,6 +9,7 @@ import { enterResult, createEntry } from '../match/entry.js'
 import { bumpVersion } from '../match/events.js'
 import { resolvePair } from '../match/pairs.js'
 import { recordAudit } from '../audit/log.js'
+import { CORRECTION_REASON_MAX } from '../shared/types.js'
 import { assertNotCertified } from '../audit/certify.js'
 import { respond } from './scoring.js'
 
@@ -18,6 +19,9 @@ const entrySchema = z.object({
   pointsB: z.number().int().min(0).max(99),
   winnerAthleteId: z.number().int(),
   winType: z.enum(['submission', 'points', 'decision']),
+  // Why the result was changed. Empty reads as absent rather than as a validation error:
+  // the field is optional on the dialog and a blank one is the common case.
+  reason: z.string().trim().max(CORRECTION_REASON_MAX).optional(),
 })
 
 const createSchema = entrySchema.extend({
@@ -26,6 +30,7 @@ const createSchema = entrySchema.extend({
   rulesetId: z.number().int().optional(),
 })
 
+const reasonOf = (body: { reason?: string }) => body.reason ? { reason: body.reason } : {}
 const result = (m: MatchRow) => ({ pointsA: m.pointsA, pointsB: m.pointsB, winnerAthleteId: m.winnerAthleteId, winType: m.winType })
 
 export const entryRoutes = new Hono<Env>()
@@ -48,8 +53,8 @@ entryRoutes.post('/matches/:matchId/entry', requireAdmin, validate('json', entry
         eventId: r.match.eventId, matchId, actor: 'desk',
         action: correcting ? 'correction' : 'entry',
         detail: correcting
-          ? { before: result(match), after: result(r.match) }
-          : result(r.match),
+          ? { before: result(match), after: result(r.match), ...reasonOf(body) }
+          : { ...result(r.match), ...reasonOf(body) },
       })
       await bumpVersion(tx, r.match.eventId)
     }
@@ -72,7 +77,7 @@ entryRoutes.post('/events/:eventId/entries', requireAdmin, validate('json', crea
     if (!r.duplicate) {
       await recordAudit(tx, {
         eventId, matchId: r.match.id, actor: 'desk', action: 'entry',
-        detail: { ...result(r.match), created: r.created === true },
+        detail: { ...result(r.match), created: r.created === true, ...reasonOf(body) },
       })
       await bumpVersion(tx, eventId)
     }

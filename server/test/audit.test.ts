@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { asc, eq } from 'drizzle-orm'
 import { createTestApp, call, matToken } from './helpers.js'
 import { seedEvent } from './fixtures.js'
-import { auditLog, events, matches, mats } from '../src/db/schema.js'
+import { auditLog, events, matchEvents, matches, mats } from '../src/db/schema.js'
 import { actorOfMatchEventId } from '../src/audit/log.js'
 import type { Db } from '../src/db/client.js'
 import { BOUND_WINDOW_MS } from '../src/live/bound.js'
@@ -107,6 +107,32 @@ describe('audit log, the desk', () => {
       before: { pointsA: 4, pointsB: 2, winnerAthleteId: s.a1, winType: 'points' },
       after: { pointsA: 1, pointsB: 6, winnerAthleteId: s.b1, winType: 'points' },
     })
+  })
+
+  it('keeps the reason a correction was given, in the match log and in the audit row', async () => {
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db, { live: true, mode: 'entry' })
+    const url = `/api/matches/${s.matchIds[0]}/entry`
+    await call(app, 'POST', url, { entryId: 'entry-0001', pointsA: 4, pointsB: 2, winnerAthleteId: s.a1, winType: 'points' }, adminToken)
+    const fixed = await call(app, 'POST', url, {
+      entryId: 'entry-0002', pointsA: 1, pointsB: 6, winnerAthleteId: s.b1, winType: 'points',
+      reason: 'the mat called the wrong colour',
+    }, adminToken)
+    expect(fixed.status).toBe(200)
+    expect((await last(db, s.eventId)).detail).toMatchObject({ reason: 'the mat called the wrong colour' })
+    const log = await db.select().from(matchEvents).where(eq(matchEvents.matchId, s.matchIds[0])).all()
+    expect(log.at(-1)?.payload).toEqual({ kind: 'edit_result', winnerAthleteId: s.b1, winType: 'points', reason: 'the mat called the wrong colour' })
+
+    const tooLong = await call(app, 'POST', url, {
+      entryId: 'entry-0003', pointsA: 1, pointsB: 6, winnerAthleteId: s.b1, winType: 'points', reason: 'x'.repeat(121),
+    }, adminToken)
+    expect(tooLong.status).toBe(422)
+    // An empty box is not a validation error, and leaves no reason behind.
+    const blank = await call(app, 'POST', url, {
+      entryId: 'entry-0004', pointsA: 2, pointsB: 2, winnerAthleteId: s.a1, winType: 'decision', reason: '',
+    }, adminToken)
+    expect(blank.status).toBe(200)
+    expect((await last(db, s.eventId)).detail).not.toHaveProperty('reason')
   })
 
   it('says whether the desk made a match for the pair it typed', async () => {
