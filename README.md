@@ -66,6 +66,9 @@ It checks health, PIN auth, event creation, a snapshot poll, and cleanup, and pr
 ## Develop
 
 - `npm run dev` starts the server with reload. `npm test` runs the server tests.
+- `npm run db:migrate` applies every pending migration to the database in `.env`. `npm run db:migrate -- --to 0007`
+  stops after that migration, for a release whose newest migration drops a column the running build
+  still reads: apply the additive files, deploy, then run the rest.
 - `npm run e2e` builds nothing; run `npm run build` first. It boots the server on port 8499, scores
   one match over HTTP, and polls the snapshot endpoint.
 - Commits run `gitleaks protect --staged` through `.githooks/pre-commit` (`brew install gitleaks`).
