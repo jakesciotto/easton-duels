@@ -53,6 +53,11 @@ const WIN_TYPES: { value: WinType; label: string; hint: string }[] = [
   { value: 'decision', label: 'By decision', hint: 'D' },
 ]
 const WIN_TYPE_WORD: Record<WinType, string> = { points: 'Points', submission: 'Submission', decision: 'Decision' }
+
+// G30. A 5 to 2 match won by the side with 2 recorded as won on points and nothing said
+// so. The pick is never refused: kids submit from behind all afternoon. It clears the
+// suggestion to the type that explains it and asks once.
+export const FEWER_POINTS_LINE = 'Won with fewer points: check the win type.'
 const WIN_TYPE_KEY: Record<string, WinType> = { p: 'points', s: 'submission', d: 'decision' }
 
 // One set of tracks for the head and every row: name, points, the win type as a
@@ -123,6 +128,8 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   // open until certification, so the ledger's Edit hands a settled result to the one
   // correction dialog rather than to a form that is no longer on the screen.
   const [correcting, setCorrecting] = useState<MatchRow | null>(null)
+  // Whether the desk has answered G30's prompt by naming a win type since the pick.
+  const [winTypeChecked, setWinTypeChecked] = useState(false)
   // Seeded from the ledger so a reload does not reopen the same-pair window on a result
   // the server already holds.
   const [seededPairs] = useState(() => seedPairLog(detail.matches))
@@ -192,6 +199,10 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   // that never answers must not leave a reload as the only way out.
   const inFlight = (create.isPending || correct.isPending) && !timedOut
   const canSave = !!a && !!b && winner !== null
+  // Derived, not remembered, so fixing the points takes the line away without a second
+  // press. It stands until the desk names a win type, which is the answer it asks for.
+  const wonWithFewerPoints = !!a && !!b && winner !== null && !winTypeChecked
+    && (winner === 'a' ? pA < pB : pB < pA)
   const wins = useMemo(() => teamWins(detail.matches, detail.athletes), [detail.matches, detail.athletes])
   const winsA = wins.get(teamA.id) ?? 0
   const winsB = wins.get(teamB.id) ?? 0
@@ -209,11 +220,23 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     setPairPrompt(null)
     edit(s => ({ ...s, [key]: v }))
   }
-  const pickWinner = (w: 'a' | 'b') => edit(s => {
-    const nextWinType = s.touched ? s.winType : (defaultOutcome(pA, pB).winner === null ? 'decision' : defaultOutcome(pA, pB).winType)
-    return { ...s, winner: w, winType: nextWinType, touched: true }
-  })
-  const pickType = (t: WinType) => edit(s => ({ ...s, winner, winType: t, touched: true }))
+  // A winner with fewer points cannot have won on points, so the pick takes the win type
+  // with it rather than leaving the derived "Points" standing over a result it contradicts.
+  const trails = (w: 'a' | 'b') => (w === 'a' ? pA < pB : pB < pA)
+  const pickWinner = (w: 'a' | 'b') => {
+    setWinTypeChecked(false)
+    edit(s => {
+      const derived = defaultOutcome(pA, pB)
+      const nextWinType = trails(w) ? 'submission'
+        : s.touched ? s.winType
+        : derived.winner === null ? 'decision' : derived.winType
+      return { ...s, winner: w, winType: nextWinType, touched: true }
+    })
+  }
+  const pickType = (t: WinType) => {
+    setWinTypeChecked(true)
+    edit(s => ({ ...s, winner, winType: t, touched: true }))
+  }
 
   // The save's own focus, announced to 4.4's gate so the refetch it triggered is not
   // held behind it. The grant ends the moment the operator touches the field.
@@ -234,6 +257,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   // live in separate slots, so the one that was never sent is still there to restore.
   const resume = (editingId: number | null) => {
     stopRetry()
+    setWinTypeChecked(false)
     const kept = editingId === null ? null : loadDraft(eventId)
     if (!kept) {
       setF(fresh())
@@ -392,6 +416,9 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     // and later restores wearing a banner that looks like an unsent new entry.
     if (f.editingId !== null && f.editingId !== m.id) clearDraft(eventId, f.editingId)
     stopRetry()
+    // The win type on a stored result has already been decided, so a correction opens
+    // without G30's prompt over a submission somebody recorded on purpose.
+    setWinTypeChecked(true)
     setF({
       aId: String(m.athleteAId), bId: String(m.athleteBId),
       pointsA: String(m.pointsA), pointsB: String(m.pointsB),
@@ -411,6 +438,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   const use = (m: MatchRow) => {
     if (f.editingId !== null) clearDraft(eventId, f.editingId)
     stopRetry()
+    setWinTypeChecked(false)
     setPairPrompt(null)
     setFailure(null)
     setDupe(null)
@@ -545,6 +573,9 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
             </div>
 
             {winner === null && a && b && <p className="mt-3 t2 text-gray-11">Scores are tied. Pick the winner.</p>}
+            {/* Not amber: kids submit from behind all afternoon, and section 8 keeps
+                --attend for a state nothing is currently doing anything about. */}
+            {wonWithFewerPoints && <p className="mt-3 t2 text-gray-11">{FEWER_POINTS_LINE}</p>}
 
             {pairPrompt !== null && (
               <Alert variant="attend" className="mt-4">

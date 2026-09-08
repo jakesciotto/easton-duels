@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { UserEvent } from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { EntryTab } from '@/routes/event/EntryTab'
+import { EntryTab, FEWER_POINTS_LINE } from '@/routes/event/EntryTab'
 import { saveDraft } from '@/routes/event/entry-state'
 import { setAdminToken } from '@/lib/auth'
 import { CERTIFIED_ENTRY_LINE, CERTIFIED_REFUSAL_BODY, CERTIFIED_REFUSAL_TITLE, FINISHED_LINE } from '@/lib/eventMode'
@@ -433,6 +433,72 @@ describe('EntryTab', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  /**
+   * G30. A 5 to 2 match won by the side with 2 recorded as won on points and nothing said
+   * so. The pick is never refused, because kids submit from behind all afternoon: it takes
+   * the win type with it and asks the desk to confirm.
+   */
+  it('clears the win type to submission when the trailing side is picked as the winner', async () => {
+    const f = fakeFetch(() => ({ status: 201, json: { match: { id: 9 }, version: 1 } }))
+    mount()
+    const user = userEvent.setup()
+    await pick(user, 'Ridgeline competitor', 'Ava Park')
+    await pick(user, 'Lakeside competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+    await user.type(screen.getByLabelText('Lakeside points'), '2')
+    expect(screen.getByRole('button', { name: 'On points' })).toHaveAttribute('data-pressed')
+    expect(screen.queryByText(FEWER_POINTS_LINE)).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /Noah Tran wins/ }))
+    expect(screen.getByRole('button', { name: 'By submission' })).toHaveAttribute('data-pressed')
+    expect(screen.getByRole('button', { name: 'On points' })).not.toHaveAttribute('data-pressed')
+    expect(screen.getByText(FEWER_POINTS_LINE)).toBeInTheDocument()
+
+    await user.click(saveButton())
+    await vi.waitFor(() => expect(f.calls.length).toBe(1))
+    expect(f.body(0)).toMatchObject({ winnerAthleteId: 201, winType: 'submission', pointsA: 5, pointsB: 2 })
+  })
+
+  it('keeps the line up until the desk names a win type', async () => {
+    fakeFetch(() => ({ status: 201, json: { match: { id: 9 }, version: 1 } }))
+    mount()
+    const user = userEvent.setup()
+    await pick(user, 'Ridgeline competitor', 'Ava Park')
+    await pick(user, 'Lakeside competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+    await user.click(screen.getByRole('button', { name: /Noah Tran wins/ }))
+    expect(screen.getByText(FEWER_POINTS_LINE)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'By decision' }))
+    expect(screen.queryByText(FEWER_POINTS_LINE)).not.toBeInTheDocument()
+  })
+
+  it('takes the line away when the points are corrected instead', async () => {
+    fakeFetch(() => ({ status: 201, json: { match: { id: 9 }, version: 1 } }))
+    mount()
+    const user = userEvent.setup()
+    await pick(user, 'Ridgeline competitor', 'Ava Park')
+    await pick(user, 'Lakeside competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+    await user.click(screen.getByRole('button', { name: /Noah Tran wins/ }))
+    expect(screen.getByText(FEWER_POINTS_LINE)).toBeInTheDocument()
+
+    await user.type(screen.getByLabelText('Lakeside points'), '7')
+    expect(screen.queryByText(FEWER_POINTS_LINE)).not.toBeInTheDocument()
+  })
+
+  it('says nothing when the winner is the side with the points', async () => {
+    fakeFetch(() => ({ status: 201, json: { match: { id: 9 }, version: 1 } }))
+    mount()
+    const user = userEvent.setup()
+    await pick(user, 'Ridgeline competitor', 'Ava Park')
+    await pick(user, 'Lakeside competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+    await user.click(screen.getByRole('button', { name: /Ava Park wins/ }))
+    expect(screen.queryByText(FEWER_POINTS_LINE)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'On points' })).toHaveAttribute('data-pressed')
   })
 
   it('asks once before saving the same pair inside a minute', async () => {
