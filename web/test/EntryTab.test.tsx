@@ -501,6 +501,46 @@ describe('EntryTab', () => {
     expect(screen.getByRole('button', { name: 'On points' })).toHaveAttribute('data-pressed')
   })
 
+  /**
+   * G31. A forty match event put forty rows under the one control this screen exists for.
+   * The list is capped the way the Live queue is, states its own remainder, and names the
+   * screen that holds the rest.
+   */
+  it('caps the pending list at eight and states the remainder', async () => {
+    const many = Array.from({ length: 11 }, (_, i) =>
+      match(10 + i, { orderIndex: 10 + i, matId: 1, athleteAId: 101, athleteBId: 201 }))
+    fakeFetch(() => ({ json: {} }))
+    mount({ ...detail, mats: [{ id: 1, eventId: 7, number: 2, currentMatchId: null }], matches: many })
+
+    const list = screen.getByRole('region', { name: 'Pending pairs' })
+    expect(within(list).getAllByRole('button', { name: 'Use' })).toHaveLength(8)
+    expect(within(list).getByText(/more on the Matches tab/)).toHaveTextContent('and 3 more on the Matches tab')
+  })
+
+  it('prints the mat and the order position on every pending row', () => {
+    fakeFetch(() => ({ json: {} }))
+    mount({
+      ...detail,
+      mats: [{ id: 1, eventId: 7, number: 2, currentMatchId: null }],
+      matches: [
+        match(1, { orderIndex: 0, matId: 1, athleteAId: 101, athleteBId: 201 }),
+        match(2, { orderIndex: 1, matId: null, athleteAId: 100, athleteBId: 200 }),
+      ],
+    })
+
+    const rows = Array.from(screen.getByRole('region', { name: 'Pending pairs' }).querySelectorAll('[data-slot="list-row"]'))
+    expect(rows[0]).toHaveTextContent('Match 1')
+    expect(rows[0]).toHaveTextContent('Mat 2')
+    expect(rows[1]).toHaveTextContent('Match 2')
+    expect(rows[1]).toHaveTextContent('No mat')
+  })
+
+  it('says nothing about a remainder while every pending pair fits', () => {
+    fakeFetch(() => ({ json: {} }))
+    mount()
+    expect(screen.queryByText(/more on the Matches tab/)).not.toBeInTheDocument()
+  })
+
   it('asks once before saving the same pair inside a minute', async () => {
     const f = fakeFetch(() => ({ status: 201, json: { match: { id: 9 }, version: 1 } }))
     mount()

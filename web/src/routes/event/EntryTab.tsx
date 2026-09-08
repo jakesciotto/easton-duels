@@ -10,6 +10,7 @@ import { newEventId } from '@/lib/ids'
 import type { AthleteRow, EventDetail, MatchRow, TeamRow } from '@/lib/types'
 import { athleteName, winTypeLabel } from '@/lib/format'
 import { matchViewOf } from '@/lib/matchView'
+import { matchLines } from './matches-view'
 import { cn } from '@/lib/utils'
 import { defaultOutcome } from './entry-defaults'
 import {
@@ -58,6 +59,10 @@ const WIN_TYPE_WORD: Record<WinType, string> = { points: 'Points', submission: '
 // so. The pick is never refused: kids submit from behind all afternoon. It clears the
 // suggestion to the type that explains it and asks once.
 export const FEWER_POINTS_LINE = 'Won with fewer points: check the win type.'
+
+// G31. A forty match event put forty rows under the one control this screen exists for.
+// The Live queue is capped the same way and states its own remainder.
+export const PENDING_CAP = 8
 const WIN_TYPE_KEY: Record<string, WinType> = { p: 'points', s: 'submission', d: 'decision' }
 
 // One set of tracks for the head and every row: name, points, the win type as a
@@ -469,7 +474,12 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
 
   const done = useMemo(() => sortDoneMatches(detail.matches.filter(m => m.status === 'done')), [detail.matches])
   const shown = done.slice(0, LEDGER_LIMIT)
-  const pending = detail.matches.filter(m => m.status === 'pending').sort((x, y) => x.orderIndex - y.orderIndex)
+  // The Matches tab's own lines, so the position and the mat printed here are the ones
+  // the desk will read when the remainder sends them there. Deriving them separately
+  // gave two screens two numbering schemes for one running order.
+  const pending = useMemo(() => matchLines(detail, stream).filter(l => l.status === 'pending'), [detail, stream])
+  const shownPending = pending.slice(0, PENDING_CAP)
+  const pendingRest = pending.length - shownPending.length
   const name = (id: number) => { const k = byId.get(id); return k ? athleteName(k) : 'Unknown' }
   const matNumberOf = (m: MatchRow) => detail.mats.find(mat => mat.id === m.matId)?.number ?? null
   const startError = start.error
@@ -609,14 +619,28 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
             <section aria-label="Pending pairs" className="grid gap-3">
               <h3 className="t4">Pending pairs</h3>
               <List>
-                {pending.map(m => (
-                  <ListRow key={m.id} className="flex items-center gap-3">
-                    <span className="min-w-0 flex-1 truncate t3">{name(m.athleteAId)} vs {name(m.athleteBId)}</span>
-                    {m.why && <span className="t2 text-gray-10">{m.why}</span>}
-                    <Button size="sm" variant="secondary" onClick={() => use(m)}>Use</Button>
+                {shownPending.map(line => (
+                  <ListRow key={line.row.id} className="flex items-center gap-3">
+                    {/* The position the running order is read by, and the mat it sits on,
+                        both in the figure face so a column of them lines up. */}
+                    <span className="shrink-0 t2 text-gray-10">
+                      <span className="sr-only">Match </span>
+                      <span className="fig">{line.position}</span>
+                    </span>
+                    <span className="min-w-0 flex-1 truncate t3">{name(line.row.athleteAId)} vs {name(line.row.athleteBId)}</span>
+                    <span className="shrink-0 t2 text-gray-10">
+                      {line.matNumber === null ? 'No mat' : <>Mat <span className="fig">{line.matNumber}</span></>}
+                    </span>
+                    {line.row.why && <span className="t2 text-gray-10">{line.row.why}</span>}
+                    <Button size="sm" variant="secondary" onClick={() => use(line.row)}>Use</Button>
                   </ListRow>
                 ))}
               </List>
+              {/* The remainder still states the depth, at a bounded height, and names the
+                  screen that holds the rest rather than leaving the desk to find it. */}
+              {pendingRest > 0 && (
+                <p className="t2 text-gray-10">and <span className="fig">{pendingRest}</span> more on the Matches tab</p>
+              )}
             </section>
           )}
         </div>
