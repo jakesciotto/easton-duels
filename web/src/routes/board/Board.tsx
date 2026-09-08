@@ -112,6 +112,10 @@ export function Board({ snapshot, connected, lastSuccessAt = null, screenMaySlee
   const settled = useSettleTimer(settleIds(snapshot, held, entryRows), snapshot !== null)
 
   const winner = snapshot && plan.comp === 'done' ? winningTeam(snapshot.teams) : null
+  // 7.3's team edge is read off the snapshot's own teams, so a row can only ever paint a
+  // colour the board is already showing in the hero.
+  const teamColors = new Map((snapshot?.teams ?? []).map(t => [t.id, t.color]))
+  const teamColor = (teamId: number | null) => (teamId === null ? null : teamColors.get(teamId) ?? null)
 
   return (
     <main className="b-frame">
@@ -146,13 +150,14 @@ export function Board({ snapshot, connected, lastSuccessAt = null, screenMaySlee
               held={held}
               settled={settled}
               serverNow={snapshot.now}
+              teamColor={teamColor}
               nextCount={budget.queue}
               lastSuccessAt={lastSuccessAt}
               pollIntervalMs={pollIntervalMs}
             />
           )}
           {snapshot !== null && plan.comp === 'entry' && (
-            <ResultsBand results={entryRows} total={done.length} settled={settled} />
+            <ResultsBand results={entryRows} total={done.length} settled={settled} teamColor={teamColor} />
           )}
           {snapshot !== null && plan.comp === 'done' && (
             <DoneBand teams={snapshot.teams} matches={done.length} />

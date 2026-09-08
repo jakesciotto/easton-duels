@@ -273,6 +273,38 @@ describe('the mat ledger row', () => {
     expect(rowTracks('.b-row-clock', 0.85).fixed).toBeCloseTo(clock.fixed * 0.85, 6)
   })
 
+  /**
+   * G34 / 7.3. The row carried one gutter, it was reserved for the live cue, and only
+   * position said whose side is whose, which is the one thing a parent at the door cannot
+   * infer. The team edge is a 1.2cqh full height bar per competitor line, absolutely
+   * positioned so the row keeps every track and every number in 6.15's arithmetic.
+   */
+  it('carries a team edge per competitor line that costs no track', () => {
+    const vars = boardVars(1)
+    expect(px('var(--b-edge-w)', vars)).toBeCloseTo(1.2 * CQH, 6)
+    // One token for the live gutter and the team edges, so the three cannot drift apart.
+    expect(decl('.b-gut', 'width')).toBe('var(--b-edge-w)')
+    expect(decl('.b-edge', 'width')).toBe('var(--b-edge-w)')
+    expect(decl('.b-edge', 'position')).toBe('absolute')
+    expect(decl('.b-edge', 'top')).toBe('0')
+    expect(decl('.b-edge', 'bottom')).toBe('0')
+    expect(decl('.b-edge', 'background')).toBe('var(--team)')
+
+    // Section 8 keeps the leading half of the padding for --live, so team A takes the
+    // second half, which the 2.4cqh indent already reserved and nothing else uses.
+    expect(decl('.b-gut', 'left')).toBe('0')
+    expect(decl('.b-edge-a', 'left')).toBe('var(--b-edge-w)')
+    expect(decl('.b-edge-b', 'right')).toBe('0')
+    expect(px(decl('.b-row', 'padding-left'), vars)).toBeCloseTo(2 * px('var(--b-edge-w)', vars), 6)
+
+    // The one cost, and it is inside a track rather than beside it, so no column moves.
+    expect(decl('.b-name-b', 'padding-right')).toBe('var(--b-edge-w)')
+    expect(ruleFor('.b-name-a')).not.toMatch(/padding/)
+
+    // Section 8 drops the team colour with everything else after the ten second hold.
+    expect(decl('.b-row-settled .b-edge', 'background')).toBe('transparent')
+  })
+
   it('steps a row down to the room it has rather than clipping it', () => {
     // At six mats the panel is 96.3px and a fixed b2 score line box is 140.4px, so 22px
     // came off each end of every digit.

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { ClockState, MatchSide } from '@shared/types'
 import { formatClock, remainingMs as remainingAt } from '@shared/clock'
+import { teamStyle } from '@/lib/format'
 import { useClock, useServerOffset } from '@/lib/useClock'
 import { POLL_CLOCK_RUNNING_MS } from '@/lib/pollInterval'
 import { cn } from '@/lib/utils'
@@ -113,6 +114,10 @@ export interface MatRowProps {
   winnerAthleteId?: number | null
   /** What a row with no pair at all says, in the name track: "Mat 3 complete" (7.10). */
   note?: string | null
+  /** 7.3's room register: a full height team edge per competitor line, in that team's own
+      colour. Null on a row with no pair, and on a board that cannot name the team. */
+  colorA?: string | null
+  colorB?: string | null
   /** Reserves the clock track. Held independently of `clock` so a row keeps its column
       geometry when the match on it finishes and the clock stops being shown. */
   withClock?: boolean
@@ -131,7 +136,7 @@ export interface MatRowProps {
  */
 export function MatRow({
   a, b, matNumber, scores = true, live = false, settled = false, upcoming = false,
-  winnerAthleteId = null, note = null,
+  winnerAthleteId = null, note = null, colorA = null, colorB = null,
   withClock = false, clock = null, serverNow = null,
   lastSuccessAt = null, pollIntervalMs = POLL_CLOCK_RUNNING_MS,
 }: MatRowProps) {
@@ -156,6 +161,8 @@ export function MatRow({
       )}
     >
       <span className="b-gut" aria-hidden />
+      {a && colorA && <span aria-hidden style={teamStyle(colorA)} className="b-edge b-edge-a" />}
+      {b && colorB && <span aria-hidden style={teamStyle(colorB)} className="b-edge b-edge-b" />}
       {matNumber !== undefined && <span className="b-mat">{matNumber}</span>}
       {/* 7.10: a mat with nothing on it and nothing left to call says so. Before this it
           rendered the gutter and the numeral alone, so after a reload every mat that had

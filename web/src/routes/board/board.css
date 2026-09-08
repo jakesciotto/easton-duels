@@ -49,6 +49,10 @@
   --b-code: calc(5.6cqh * var(--far));
   --b-round: 0.6cqh;
   --b-indent: calc(2.4cqh * var(--far));
+  /* Section 8 and 7.3 give the live gutter and the team edge the same 1.2cqh, unscaled
+     by --far the way every other board width is: one token, so the two cannot drift and
+     the leading padding stays exactly two of them wide. */
+  --b-edge-w: 1.2cqh;
 
   /* The row's gaps are stated against the type, not against the stage. A gap in cqw
      beside a track in cqh scales one and not the other, and at far 1.2 that put the
@@ -342,6 +346,11 @@
    which leaves each name track (1728 - fixed) / 2: 640.8px at far 0.85, 601.5px at
    far 1 and 548.9px at far 1.2 on the ledger, and 497.6 / 433.0 / 346.8 with the clock.
 
+   G34's two team edges cost no track and no padding, exactly like the live gutter:
+   the leading padding is 2.4cqh and the gutter is 1.2cqh, so its second half is a
+   gutter sized slot already reserved, and team A's edge takes it. Team B's sits at the
+   row's own trailing edge, and only name B pays for it, in its own padding.
+
    The mat track is stated rather than written as 1ch because 1ch resolves against the
    row's own score step and would reserve a score sized slot for a numeral that renders
    at the name step. */
@@ -375,12 +384,41 @@
   left: 0;
   top: 0;
   bottom: 0;
-  width: 1.2cqh;
+  width: var(--b-edge-w);
   border-radius: var(--b-round);
   background: transparent;
 }
 .b-row-live .b-gut {
   background: var(--live);
+}
+
+/* 7.3's room register: a 1.2cqh full height team edge per competitor line. Before this
+   the row carried one gutter, it was reserved for the live cue, and only position said
+   whose side is whose, which is the one thing a parent at the door cannot infer.
+
+   Absolutely positioned, like the live cue, so the grid keeps every track it had and the
+   6.15 arithmetic is untouched. Team A's edge takes the second half of the leading
+   padding, which is a gutter sized slot the row already reserves: section 8 keeps the
+   first half leading and gives it to --live alone. Team B's sits at the row's own
+   trailing edge, which is that name's outer edge, and name B carries the one padding
+   that keeps its ellipsis off it. Both clip to the row's radius. */
+.b-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: var(--b-edge-w);
+  background: var(--team);
+}
+.b-edge-a {
+  left: var(--b-edge-w);
+}
+.b-edge-b {
+  right: 0;
+}
+/* Section 8: the team colour is dropped after the ten second hold, with everything else
+   on a settled row. The edge holds its place and stops carrying identity. */
+.b-row-settled .b-edge {
+  background: transparent;
 }
 
 .b-mat {
@@ -418,6 +456,11 @@
 }
 .b-name-a {
   justify-content: flex-end;
+}
+/* The only cost of G34's trailing edge, and it is inside a track rather than beside it,
+   so no column moves: name B truncates one edge width early instead of running under it. */
+.b-name-b {
+  padding-right: var(--b-edge-w);
 }
 /* --fig-lead and --fig-trail are 7.5's score tones and stay on the scores. A name here is
    the largest text in the room, and the trailing one at --gray-10 was the quietest thing

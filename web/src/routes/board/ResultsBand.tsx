@@ -14,10 +14,11 @@ export const RESULTS_EMPTY = 'First results go up as they come off the mats.'
  * biggest hero in the app. The newest row carries its change cue, then joins a
  * monotone list.
  */
-export function ResultsBand({ results, total, settled }: {
+export function ResultsBand({ results, total, settled, teamColor }: {
   results: MatchView[]
   total: number
   settled: ReadonlySet<number>
+  teamColor: (teamId: number | null) => string | null
 }) {
   return (
     <>
@@ -34,6 +35,8 @@ export function ResultsBand({ results, total, settled }: {
                 b={match.b}
                 settled={settled.has(match.id)}
                 winnerAthleteId={match.result?.winnerAthleteId ?? null}
+                colorA={teamColor(match.a.teamId)}
+                colorB={teamColor(match.b.teamId)}
               />
             </section>
           ))}

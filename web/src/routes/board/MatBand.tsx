@@ -5,10 +5,11 @@ import { MatRow, NextLine } from './MatRow'
 
 // One mat, one panel, in the same position for the whole event: mat 1 is the top row
 // whether it is live, idle or finished.
-function MatPanel({ mat, held, settled, serverNow, nextCount, withClock, lastSuccessAt, pollIntervalMs, everCarried }: {
+function MatPanel({ mat, held, settled, serverNow, nextCount, withClock, lastSuccessAt, pollIntervalMs, everCarried, teamColor }: {
   mat: MatView
   /** Whether any match on the event was ever put on this mat. */
   everCarried: boolean
+  teamColor: (teamId: number | null) => string | null
   held: MatchView | undefined
   settled: boolean
   serverNow: string | null
@@ -40,6 +41,10 @@ function MatPanel({ mat, held, settled, serverNow, nextCount, withClock, lastSuc
         // recorded winner. By score a submission at 0 to 0 gave both sides the lead tone
         // and the row showed no winner at all.
         winnerAthleteId={finished ? showing.result?.winnerAthleteId ?? null : null}
+        // 7.3's room register: a team edge per competitor line, so the row says whose
+        // side is whose without the reader working it out from position.
+        colorA={subject === null ? null : teamColor(subject.a.teamId)}
+        colorB={subject === null ? null : teamColor(subject.b.teamId)}
         // 7.10 / 7.3: nothing on the mat and nothing left to call is a sentence, not a
         // blank. After a reload every finished mat was an empty row for the afternoon. A mat
         // created after Start that nothing was ever put on is not complete, it is empty.
@@ -70,9 +75,10 @@ function MatPanel({ mat, held, settled, serverNow, nextCount, withClock, lastSuc
  * is not a fixed 56cqh once --far moves, so four next lines under a single mat fit at
  * far 1 and two of them fit at far 1.2.
  */
-export function MatBand({ mats, matches, held, settled, serverNow, nextCount = 0, lastSuccessAt = null, pollIntervalMs = POLL_CLOCK_RUNNING_MS }: {
+export function MatBand({ mats, matches, held, settled, serverNow, teamColor, nextCount = 0, lastSuccessAt = null, pollIntervalMs = POLL_CLOCK_RUNNING_MS }: {
   mats: MatView[]
   matches: MatchView[]
+  teamColor: (teamId: number | null) => string | null
   held: ReadonlyMap<number, MatchView>
   settled: ReadonlySet<number>
   serverNow: string | null
@@ -91,6 +97,7 @@ export function MatBand({ mats, matches, held, settled, serverNow, nextCount = 0
             mat={mat}
             held={held.get(mat.id)}
             everCarried={matches.some(m => m.matId === mat.id)}
+            teamColor={teamColor}
             settled={showing !== null && settled.has(showing.id)}
             serverNow={serverNow}
             nextCount={nextCount}

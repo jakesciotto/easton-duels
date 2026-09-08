@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve as resolvePath } from 'node:path'
 import { act, render, screen, within, waitFor } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router'
-import type { EventMode, EventStatus, MatView, MatchView, Snapshot } from '@shared/types'
+import { TEAM_COLORS, type EventMode, type EventStatus, type MatView, type MatchView, type Snapshot } from '@shared/types'
 import { routes } from '@/router'
 import { Board, FIRST_CONTACT_MS, NOTE_NO_CONTACT } from '@/routes/board/Board'
 import { RESULTS_EMPTY } from '@/routes/board/ResultsBand'
@@ -377,6 +377,47 @@ describe('Board compositions', () => {
     render(<Board snapshot={snapshot} connected />)
     expect(screen.getByText('Mat 1 first up')).toBeInTheDocument()
     expect(screen.queryByText('Up next')).not.toBeInTheDocument()
+  })
+
+  /**
+   * G34 / 7.3. The row carried one gutter, reserved for the live cue, so only position
+   * said whose side is whose. Each competitor line now carries its own team edge, painted
+   * from the snapshot's own teams so the row can never show a colour the hero does not.
+   */
+  it('paints a team edge at each end of a live mat row', () => {
+    const { container } = render(<Board snapshot={liveBoard(1)} connected />)
+    const edges = Array.from(row('Mat 1').querySelectorAll('.b-edge')) as HTMLElement[]
+    expect(edges).toHaveLength(2)
+    expect(edges[0].className).toContain('b-edge-a')
+    expect(edges[1].className).toContain('b-edge-b')
+    expect(edges[0].style.getPropertyValue('--team')).toBe(TEAM_COLORS.red)
+    expect(edges[1].style.getPropertyValue('--team')).toBe(TEAM_COLORS.blue)
+    // The live gutter is still its own element, and it is still the leading one.
+    expect(container.querySelectorAll('.b-gut').length).toBeGreaterThan(0)
+  })
+
+  it('paints a team edge on every desk result row', () => {
+    const done = pair(1, 'Mateo Rivera', 'Lucas Ferreira', {
+      status: 'done', result: { winnerAthleteId: 100, winType: 'points' },
+    })
+    const snapshot = sampleSnapshot({
+      event: event('live', 'entry'),
+      mats: [],
+      matches: [done],
+    })
+    render(<Board snapshot={snapshot} connected />)
+    const result = screen.getByRole('region', { name: 'Result 1' })
+    expect(result.querySelectorAll('.b-edge')).toHaveLength(2)
+  })
+
+  it('draws no team edge on a row with no pair on it', () => {
+    const snapshot = sampleSnapshot({
+      event: event('live', 'live'),
+      mats: [mat(1, { current: null, onDeck: [] })],
+      matches: [],
+    })
+    render(<Board snapshot={snapshot} connected />)
+    expect(row('Mat 1').querySelectorAll('.b-edge')).toHaveLength(0)
   })
 
   it('names are first name plus last initial at every mat count', () => {
