@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { createApp } from './app.js'
-import { createDb, initDb, migrateDb, getOrCreateSecret, dbUrlFromEnv } from './db/client.js'
+import { autoMigrates, createDb, initDb, migrateDb, getOrCreateSecret, dbUrlFromEnv } from './db/client.js'
 import { validateAdminPin } from './auth/pin.js'
 import { rosterFromEnv } from './roster/config.js'
 import { lanIp } from './lib/lanIp.js'
@@ -18,7 +18,8 @@ const main = async () => {
   const dbOpts = dbUrlFromEnv(process.env)
   const db = createDb(dbOpts)
   await initDb(db, dbOpts)
-  await migrateDb(db)
+  if (autoMigrates(dbOpts.url)) await migrateDb(db)
+  else console.warn(`remote database ${new URL(dbOpts.url).host}: migrations are not applied at boot. Run npm run db:migrate when the release calls for it.`)
 
   const roster = rosterFromEnv(process.env)
   if (!roster.wl) console.warn('WL_CLIENT_ID, WL_CLIENT_SECRET, or WL_BUSINESS not set; roster sync disabled')

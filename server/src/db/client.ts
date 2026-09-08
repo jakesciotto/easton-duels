@@ -93,6 +93,20 @@ export async function initDb(db: Db, opts: { url: string }): Promise<void> {
 
 const defaultMigrations = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../drizzle')
 
+/**
+ * Whether a server boot may apply pending migrations itself. Only a file database: that is
+ * the gym box in LAN mode, where the process that owns the file is the one thing that can
+ * migrate it. A remote database is shared with every other build that reads it, and a
+ * migration that drops a column the deployed build still selects takes production down
+ * the moment it lands. On 2026-09-08 a dev server in a checkout with the Turso credentials
+ * in .env did exactly that, hours before the build that stopped reading the columns went
+ * live. Remote targets are migrated on purpose, with `npm run db:migrate`, in the order
+ * the release calls for.
+ */
+export function autoMigrates(url: string): boolean {
+  return url.startsWith('file:')
+}
+
 export async function migrateDb(db: Db, folder = defaultMigrations): Promise<void> {
   await migrate(db, { migrationsFolder: folder })
 }

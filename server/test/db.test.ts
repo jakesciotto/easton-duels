@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { createDb, dbUrlFromEnv, getOrCreateSecret } from '../src/db/client.js'
+import { autoMigrates, createDb, dbUrlFromEnv, getOrCreateSecret } from '../src/db/client.js'
 import { events, teams, athletes, settings } from '../src/db/schema.js'
 import { eq } from 'drizzle-orm'
 import { freshDb } from './fixtures.js'
@@ -68,5 +68,19 @@ describe('createDb retry wiring', () => {
     const db = createDb({ url: 'libsql://example.invalid', authToken: 't', fetchFn: always401 })
     await expect(db.select().from(settings).all()).rejects.toThrow()
     expect(calls).toBe(3)
+  })
+})
+
+// A boot may migrate the one database it owns, the file on the gym box. A remote database
+// is shared with the deployed build, and the dev server that dropped two columns on
+// production hours before the release that stopped reading them is why this exists.
+describe('autoMigrates', () => {
+  it('migrates a file database at boot', () => {
+    expect(autoMigrates('file:./data/duels.db')).toBe(true)
+    expect(autoMigrates('file::memory:')).toBe(true)
+  })
+  it('never migrates a remote database at boot', () => {
+    expect(autoMigrates('libsql://duels-example.turso.io')).toBe(false)
+    expect(autoMigrates('https://duels-example.turso.io')).toBe(false)
   })
 })
