@@ -176,4 +176,25 @@ describe('scoring flow', () => {
     expect((await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)).body.snapshot.mats[0].current.id).toBe(second)
     expect((await call(app, 'POST', `/api/matches/${first}/skip`, undefined, matToken(s.eventId, s.matIds[0]))).status).toBe(403)
   })
+
+  it('takes a double-fired skip and a double-fired result once', async () => {
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db, { matCount: 1, live: true })
+    const [first, second] = s.matchIds
+    const one = await call(app, 'POST', `/api/matches/${first}/skip`, { id: 'skip-0001' }, adminToken)
+    const two = await call(app, 'POST', `/api/matches/${first}/skip`, { id: 'skip-0001' }, adminToken)
+    expect(one.status).toBe(200)
+    expect(two.status).toBe(200)
+    expect(two.body.match.orderIndex).toBe(one.body.match.orderIndex)
+    expect(two.body.version).toBe(one.body.version)
+    expect((await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)).body.snapshot.mats[0].current.id).toBe(second)
+
+    await call(app, 'POST', `/api/matches/${second}/end`, { id: 'end-0002', lastSeq: 0, winnerAthleteId: s.a2 }, adminToken)
+    const edit = { id: 'result-0001', winnerAthleteId: s.b2, winType: 'decision' }
+    const firstEdit = await call(app, 'POST', `/api/matches/${second}/result`, edit, adminToken)
+    const replay = await call(app, 'POST', `/api/matches/${second}/result`, edit, adminToken)
+    expect(replay.body.match.lastSeq).toBe(firstEdit.body.match.lastSeq)
+    expect(replay.body.version).toBe(firstEdit.body.version)
+    expect((await call(app, 'POST', `/api/matches/${second}/skip`, { id: 'no' }, adminToken)).status).toBe(422)
+  })
 })

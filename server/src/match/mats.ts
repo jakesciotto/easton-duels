@@ -19,6 +19,21 @@ function adminEventId(matchId: number, seq: number): string {
   return `admin:${matchId}:${seq}`
 }
 
+// Skip and edit result are single taps on gym wifi, so the same press can arrive twice.
+// A client id makes the second arrival a read: without it a double-fired Skip moved the
+// match to the end of the order twice and advanced the mat past a pair nobody fought.
+function clientAdminEventId(id: string): string {
+  return `admin:${id}`
+}
+
+export interface AdminWriteResult { duplicate: boolean; match: MatchRow }
+
+async function replayedAdmin(db: DbLike, id: string | undefined): Promise<AdminWriteResult | null> {
+  if (id === undefined) return null
+  const row = await db.select({ matchId: matchEvents.matchId }).from(matchEvents).where(eq(matchEvents.id, clientAdminEventId(id))).get()
+  return row ? { duplicate: true, match: await loadMatch(db, row.matchId) } : null
+}
+
 export async function startEvent(db: DbLike, eventId: number): Promise<void> {
   await db.transaction(async tx => {
     const ev = await tx.select().from(events).where(eq(events.id, eventId)).get()
@@ -79,33 +94,37 @@ export async function reopenMatch(db: DbLike, matchId: number): Promise<MatchRow
   })
 }
 
-export async function setResult(db: DbLike, matchId: number, result: { winnerAthleteId: number; winType: WinType }): Promise<MatchRow> {
+export async function setResult(db: DbLike, matchId: number, result: { winnerAthleteId: number; winType: WinType }, id?: string): Promise<AdminWriteResult> {
   return db.transaction(async tx => {
+    const replay = await replayedAdmin(tx, id)
+    if (replay) return replay
     const match = await loadMatch(tx, matchId)
     if (match.status !== 'done') throw new MatchStateError('only a done match can have its result edited')
     if (result.winnerAthleteId !== match.athleteAId && result.winnerAthleteId !== match.athleteBId) throw new MatchStateError('athlete not in match')
     const seq = match.lastSeq + 1
     await tx.insert(matchEvents).values({
-      id: adminEventId(match.id, seq), matchId: match.id, seq, type: 'admin', athleteId: result.winnerAthleteId,
+      id: id === undefined ? adminEventId(match.id, seq) : clientAdminEventId(id), matchId: match.id, seq, type: 'admin', athleteId: result.winnerAthleteId,
       payload: { kind: 'edit_result', ...result }, at: new Date().toISOString(),
     }).run()
-    return recompute(tx, match.id)
+    return { duplicate: false, match: await recompute(tx, match.id) }
   })
 }
 
-export async function skipMatch(db: DbLike, matchId: number): Promise<MatchRow> {
+export async function skipMatch(db: DbLike, matchId: number, id?: string): Promise<AdminWriteResult> {
   return db.transaction(async tx => {
+    const replay = await replayedAdmin(tx, id)
+    if (replay) return replay
     const match = await loadMatch(tx, matchId)
     if (match.status === 'done') throw new MatchStateError('cannot skip a done match')
     if (await hasScoringEvents(tx, match.id)) throw new MatchStateError('match has events; undo them before skipping')
     const max = await tx.select({ m: sql<number>`coalesce(max(${matches.orderIndex}), 0)` }).from(matches).where(eq(matches.eventId, match.eventId)).get()
     const seq = match.lastSeq + 1
-    await tx.insert(matchEvents).values({ id: adminEventId(match.id, seq), matchId: match.id, seq, type: 'admin', payload: { kind: 'skip' }, at: new Date().toISOString() }).run()
+    await tx.insert(matchEvents).values({ id: id === undefined ? adminEventId(match.id, seq) : clientAdminEventId(id), matchId: match.id, seq, type: 'admin', payload: { kind: 'skip' }, at: new Date().toISOString() }).run()
     await tx.update(matches).set({ status: 'pending', orderIndex: (max?.m ?? 0) + 1, lastSeq: seq }).where(eq(matches.id, match.id)).run()
     if (match.matId !== null) {
       const mat = await loadMat(tx, match.matId)
       if (mat.currentMatchId === match.id) await advanceMat(tx, mat.id)
     }
-    return loadMatch(tx, match.id)
+    return { duplicate: false, match: await loadMatch(tx, match.id) }
   })
 }

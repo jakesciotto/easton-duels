@@ -185,20 +185,33 @@ scoringRoutes.post('/matches/:matchId/reopen', requireAdmin, async c => {
   }))
 })
 
+// Older clients send no body at all, so an absent one parses as an empty object and the
+// write keeps its server-minted event id.
+const optionalClientId = z.object({ id: clientEventId.optional() }).optional()
+
+async function clientIdOf(c: Context<Env>): Promise<{ id?: string } | Response> {
+  const parsed = optionalClientId.safeParse(await c.req.json().catch(() => undefined))
+  if (!parsed.success) return errorJson(c, 422, 'validation', parsed.error.issues.map(i => `${i.path.join('.') || 'body'}: ${i.message}`).join('; '))
+  return parsed.data ?? {}
+}
+
 scoringRoutes.post('/matches/:matchId/skip', requireAdmin, async c => {
   const { db } = c.get('ctx')
+  const body = await clientIdOf(c)
+  if (body instanceof Response) return body
   return respond(c, await db.transaction(async tx => {
-    const match = await skipMatch(tx, Number(c.req.param('matchId')))
-    await bumpVersion(tx, match.eventId)
-    return match
+    const r = await skipMatch(tx, Number(c.req.param('matchId')), body.id)
+    if (!r.duplicate) await bumpVersion(tx, r.match.eventId)
+    return r.match
   }))
 })
 
-scoringRoutes.post('/matches/:matchId/result', requireAdmin, validate('json', z.object({ winnerAthleteId: z.number().int(), winType: z.enum(['submission', 'points', 'decision']) })), async c => {
+scoringRoutes.post('/matches/:matchId/result', requireAdmin, validate('json', z.object({ id: clientEventId.optional(), winnerAthleteId: z.number().int(), winType: z.enum(['submission', 'points', 'decision']) })), async c => {
   const { db } = c.get('ctx')
+  const { id, ...result } = c.req.valid('json')
   return respond(c, await db.transaction(async tx => {
-    const match = await setResult(tx, Number(c.req.param('matchId')), c.req.valid('json'))
-    await bumpVersion(tx, match.eventId)
-    return match
+    const r = await setResult(tx, Number(c.req.param('matchId')), result, id)
+    if (!r.duplicate) await bumpVersion(tx, r.match.eventId)
+    return r.match
   }))
 })
