@@ -217,7 +217,13 @@ function EventBody({ eventId }: { eventId: number }) {
       return n
     }, { replace: true })
   }
-  const tab = step ?? picked ?? (mode === 'entry' ? 'entry' : 'roster')
+  // The stored mode decides which tab a freshly opened event lands on, and it decides it
+  // ONCE. Deriving the tab from the live mode every render would move an operator who never
+  // touched the rail onto another tab the moment somebody switched the event from a phone at
+  // the same desk, which is what `defaultValue` used to rule out.
+  const landing = mode === 'entry' ? 'entry' : 'roster'
+  if (picked === null) setPicked(landing)
+  const tab = step ?? picked ?? landing
 
   return (
     <AdminShell
@@ -235,11 +241,9 @@ function EventBody({ eventId }: { eventId: number }) {
     >
       <SnapshotStreamContext value={shared}>
         {/*
-          The tab follows, in order: the open setup step, then whatever the operator last
-          clicked, then the stored mode (in entry mode the Entry tab is the product, so a
-          freshly opened event lands on it). Controlled only so a step can select the tab
-          it stands over; a mode change mid event still cannot throw the operator off the
-          tab they are on, because `picked` outlives it.
+          The tab follows the open setup step, and otherwise whatever the rail was last set
+          to, which starts at the landing tab pinned above. Controlled only so a step can
+          select the tab it stands over.
         */}
         <Tabs value={tab} onValueChange={v => setPicked(String(v))} className="gap-0">
           <TabsList className="px-4 sm:px-6">

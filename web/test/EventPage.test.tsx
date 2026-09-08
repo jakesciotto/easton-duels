@@ -3,7 +3,7 @@ import { act, createEvent, fireEvent, render, screen, within } from '@testing-li
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createMemoryRouter, RouterProvider } from 'react-router'
-import type { Snapshot } from '@shared/types'
+import type { EventMode, Snapshot } from '@shared/types'
 import EventPage from '@/routes/EventPage'
 import { qk } from '@/lib/queries'
 import { ENGAGEMENT_RECHECK_MS } from '@/lib/operatorEngaged'
@@ -225,6 +225,30 @@ describe('EventPage: how the event runs is one stored setting on the shell', () 
     expect(await screen.findByRole('tab', { name: 'Entry' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tab', { name: /Roster/ })).toHaveAttribute('aria-selected', 'false')
   })
+
+  /**
+   * The mode decides the landing tab ONCE. The tab rail is controlled now, so that it can
+   * be selected by an open setup step, and deriving its value from the live mode on every
+   * render would move an operator who never touched the rail onto another tab the moment
+   * somebody switched the event from a phone at the same desk. The uncontrolled defaultValue
+   * ruled that out and so does the pin that replaced it.
+   */
+  it('keeps the tab it landed on when another device changes how the event runs', async () => {
+    let mode: EventMode = 'live'
+    // One mat and no clock is the 3s rung, so the switch lands on the next tick.
+    const idle = (m: EventMode) => sampleSnapshot({
+      event: { id: 7, name: 'Fall Duels', date: '2026-10-03', status: 'setup', mode: m, matCount: 1, contact: null, certifiedAt: null },
+      mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: false }],
+      matches: [],
+    })
+    mount(url => snapshotReply(url, idle(mode)) ?? (url === '/api/events/7' ? { json: withEvent({ mode: 'live' }) } : undefined))
+    expect(await screen.findByRole('tab', { name: /Roster/ })).toHaveAttribute('aria-selected', 'true')
+
+    mode = 'entry'
+    await vi.waitFor(() => expect(deskOption()).toBeChecked(), { timeout: 6000 })
+    expect(screen.getByRole('tab', { name: /Roster/ })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: 'Entry' })).toHaveAttribute('aria-selected', 'false')
+  }, 10_000)
 
   // The same exported option list the New event dialog renders, so the two screens cannot
   // drift into different words or the opposite order again.
