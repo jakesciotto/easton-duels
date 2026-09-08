@@ -310,6 +310,18 @@ describe('GET /api/matches/:matchId/history', () => {
     expect((await call(app, 'GET', `/api/matches/${s.matchIds[1]}/history`, undefined, adminToken)).body).toEqual([])
   })
 
+  it('serves the event-level rows a match history cannot, in reading order', async () => {
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db, { matCount: 1, live: true })
+    await call(app, 'PATCH', `/api/events/${s.eventId}/teams/${s.teamA}`, { name: 'Ridgeline BJJ' }, adminToken)
+    await call(app, 'PATCH', `/api/events/${s.eventId}`, { status: 'done' }, adminToken)
+    const r = await call(app, 'GET', `/api/events/${s.eventId}/history`, undefined, adminToken)
+    expect(r.status).toBe(200)
+    expect(r.body.map((row: { action: string }) => row.action)).toEqual(['team_edit', 'finish'])
+    expect(Object.keys(r.body[0])).toEqual(['id', 'at', 'actor', 'action', 'detail'])
+    expect((await call(app, 'GET', `/api/events/${s.eventId}/history`)).status).toBe(401)
+  })
+
   it('needs an admin token, and answers an unknown match with nothing', async () => {
     const { app, db, adminToken } = await createTestApp()
     const s = await seedEvent(db, { live: true })

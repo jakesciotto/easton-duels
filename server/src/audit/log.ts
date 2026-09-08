@@ -4,6 +4,10 @@ import { auditLog, mats } from '../db/schema.js'
 import type { TokenPayload } from '../auth/tokens.js'
 import type { AuditAction, AuditActor, AuditDetail } from '../shared/types.js'
 
+// A match carries a few dozen audit rows at most, so this is a guard against a bug
+// rather than a page size.
+export const HISTORY_LIMIT = 500
+
 export interface AuditInput {
   eventId: number
   matchId?: number | null

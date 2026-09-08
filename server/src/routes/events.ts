@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { asc, count, desc, eq } from 'drizzle-orm'
 import type { Env } from '../context.js'
 import type { DbLike } from '../db/client.js'
-import { events, teams, athletes, rulesets, mats, matches, rosterCandidates } from '../db/schema.js'
+import { auditLog, events, teams, athletes, rulesets, mats, matches, rosterCandidates } from '../db/schema.js'
 import { validate } from '../lib/validate.js'
 import { lanIp } from '../lib/lanIp.js'
 import { clientIp, errorJson, requireAdmin } from '../auth/middleware.js'
@@ -12,10 +12,10 @@ import { checkLimit, recordFailure } from '../auth/dbRateLimit.js'
 import { pinMatches, randomMatCode } from '../auth/pin.js'
 import { advanceMat, startEvent } from '../match/mats.js'
 import { MatchStateError, bumpVersion, endedAtByMatch } from '../match/events.js'
-import { recordAudit } from '../audit/log.js'
+import { recordAudit, HISTORY_LIMIT } from '../audit/log.js'
 import { assertNotCertified } from '../audit/certify.js'
 import { eventContact } from '../live/snapshot.js'
-import { CORRECTION_REASON_MAX, DEFAULT_ACTIONS, DEFAULT_TERMINALS, DEFAULT_LENGTH_SEC, TEAM_COLOR_KEYS, type AuditAction, type TeamColor } from '../shared/types.js'
+import { CORRECTION_REASON_MAX, DEFAULT_ACTIONS, DEFAULT_TERMINALS, DEFAULT_LENGTH_SEC, TEAM_COLOR_KEYS, type AuditAction, type AuditEntry, type TeamColor } from '../shared/types.js'
 
 const colorSchema = z.enum(TEAM_COLOR_KEYS as [TeamColor, ...TeamColor[]])
 export const teamSchema = z.object({ name: z.string().trim().min(1).max(40), color: colorSchema })
@@ -252,6 +252,19 @@ eventRoutes.post('/events/:eventId/uncertify', requireAdmin, validate('json', un
     await bumpVersion(tx, eventId)
   })
   return c.json(await eventDetail(db, eventId))
+})
+
+// The companion to a match's history, for the rows that belong to no match: certify,
+// unlock, Start, Finish, the roster and the running order. It takes the newest rows
+// rather than the oldest, because an event's log only grows and the end of it is what a
+// person is looking at, and hands them back in reading order.
+eventRoutes.get('/events/:eventId/history', requireAdmin, async c => {
+  const { db } = c.get('ctx')
+  const rows = await db.select({
+    id: auditLog.id, at: auditLog.at, actor: auditLog.actor, action: auditLog.action, detail: auditLog.detail,
+  }).from(auditLog).where(eq(auditLog.eventId, Number(c.req.param('eventId')))).orderBy(desc(auditLog.id)).limit(HISTORY_LIMIT).all()
+  const body: AuditEntry[] = rows.reverse()
+  return c.json(body)
 })
 
 eventRoutes.get('/events/:eventId/connect', requireAdmin, async c => {

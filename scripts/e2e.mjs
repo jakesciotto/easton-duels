@@ -105,6 +105,69 @@ async function entryArm(admin) {
   assert(final.teams[0].points === 8 && final.teams[1].points === 2, 'typed points on the board')
 }
 
+// The record after the afternoon: the organizer finishes, signs it off, and everything
+// stops moving until somebody unlocks it with a reason.
+async function certifyArm(admin) {
+  const created = await j('POST', '/api/events', {
+    name: 'E2E Certify', date: '2026-10-05', matCount: 1,
+    teams: [{ name: 'Ridge', color: 'red' }, { name: 'Lake', color: 'blue' }],
+  }, admin)
+  assert(created.status === 201, 'certify event created')
+  const eventId = created.body.event.id
+  const [teamA, teamB] = created.body.teams
+  const matId = created.body.mats[0].id
+  for (const [last, teamId] of [['Echo', teamA.id], ['Foxtrot', teamB.id]]) {
+    assert((await j('POST', `/api/events/${eventId}/athletes`, { manual: { firstName: 'Cert', lastName: last, age: 9, weightLbs: 66, belt: 'grey', gender: 'M', teamId } }, admin)).status === 201, `certify athlete ${last}`)
+  }
+  assert((await j('POST', `/api/events/${eventId}/matches/generate`, undefined, admin)).body.created === 1, 'certify match generated')
+  assert((await j('PATCH', `/api/events/${eventId}`, { status: 'live' }, admin)).status === 200, 'certify event live')
+
+  const { matCode } = (await j('GET', `/api/events/${eventId}/connect`, undefined, admin)).body
+  const mat = (await j('POST', `/api/events/${eventId}/mats/${matId}/bind`, { code: matCode })).body.token
+  const snap = (await pollSnapshot(eventId)).snapshot
+  const matchId = snap.mats[0].current.id
+  const athleteA = snap.mats[0].current.a.athleteId
+  assert((await j('POST', `/api/matches/${matchId}/events`, { id: 'e2e-cert-score-1', type: 'score', athleteId: athleteA, actionKey: 'mount', lastSeq: 0 }, mat)).status === 200, 'certify arm scored')
+  assert((await j('POST', `/api/matches/${matchId}/end`, { id: 'e2e-cert-end-1', lastSeq: 1 }, mat)).status === 200, 'certify arm match ended')
+  assert((await j('PATCH', `/api/events/${eventId}`, { status: 'done' }, admin)).status === 200, 'certify arm event finished')
+
+  const wrongPin = await j('POST', `/api/events/${eventId}/certify`, { pin: '000000' }, admin)
+  assert(wrongPin.status === 401, 'certify asks for the PIN again')
+  const certified = await j('POST', `/api/events/${eventId}/certify`, { pin: '123456' }, admin)
+  assert(certified.status === 200, 'event certified')
+  assert(certified.body.event.status === 'certified', 'the event reads as certified')
+  assert(typeof certified.body.event.certifiedAt === 'string', 'the detail carries certifiedAt')
+
+  const locked = (await j('GET', `/api/events/${eventId}/snapshot`)).body.snapshot
+  assert(locked.event.status === 'certified', 'the snapshot reads as certified')
+  assert(locked.event.certifiedAt === certified.body.event.certifiedAt, 'the snapshot carries certifiedAt')
+
+  const refusedScore = await j('POST', `/api/matches/${matchId}/events`, { id: 'e2e-cert-score-2', type: 'score', athleteId: athleteA, actionKey: 'mount', lastSeq: 2 }, mat)
+  assert(refusedScore.status === 409 && refusedScore.body.error.message === 'event is certified', 'a certified event refuses a scoring write')
+  const refusedEntry = await j('POST', `/api/matches/${matchId}/entry`, { entryId: 'e2e-cert-entry-1', pointsA: 1, pointsB: 0, winnerAthleteId: athleteA, winType: 'points' }, admin)
+  assert(refusedEntry.status === 409 && refusedEntry.body.error.message === 'event is certified', 'a certified event refuses a typed result')
+  const refusedRoster = await j('POST', `/api/events/${eventId}/matches/reorder`, { ids: [matchId] }, admin)
+  assert(refusedRoster.status === 409 && refusedRoster.body.error.message === 'event is certified', 'a certified event refuses the running order too')
+
+  const unlocked = await j('POST', `/api/events/${eventId}/uncertify`, { pin: '123456', reason: 'mat 1 score was called wrong' }, admin)
+  assert(unlocked.status === 200, 'event unlocked')
+  assert(unlocked.body.event.status === 'done' && unlocked.body.event.certifiedAt === null, 'an unlock returns the event to done')
+  const reordered = await j('POST', `/api/events/${eventId}/matches/reorder`, { ids: [matchId] }, admin)
+  assert(reordered.status === 200, 'the running order moves again once unlocked')
+  // An unlock lifts the certification lock only. A typed result stays refused by the rule
+  // Finish has carried since batch 1, which is a separate decision.
+  const afterUnlock = await j('POST', `/api/matches/${matchId}/entry`, { entryId: 'e2e-cert-entry-2', pointsA: 1, pointsB: 0, winnerAthleteId: athleteA, winType: 'points' }, admin)
+  assert(afterUnlock.body.error.message === 'event is done', 'the certification refusal is gone')
+
+  const matchHistory = (await j('GET', `/api/matches/${matchId}/history`, undefined, admin)).body
+  assert(matchHistory.map(r => r.action).join() === 'score,end', 'the match history lists what the mat did')
+  assert(matchHistory.every(r => r.actor === 'mat:1'), 'the match history names the mat')
+  const eventHistory = (await j('GET', `/api/events/${eventId}/history`, undefined, admin)).body
+  const signed = eventHistory.filter(r => r.action === 'certify' || r.action === 'uncertify')
+  assert(signed.map(r => r.action).join() === 'certify,uncertify', 'the history lists the certify and uncertify rows')
+  assert(signed[1].detail.reason === 'mat 1 score was called wrong', 'the unlock carries its reason')
+}
+
 try {
   await waitForHealth()
   const admin = (await j('POST', '/api/auth/admin', { pin: '123456' })).body.token
@@ -140,6 +203,7 @@ try {
   assert(poll.snapshot.teams[0].wins === 1, 'team win in snapshot')
 
   await entryArm(admin)
+  await certifyArm(admin)
   console.log('e2e ok')
 } finally {
   server.kill()

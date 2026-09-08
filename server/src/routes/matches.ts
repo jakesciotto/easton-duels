@@ -9,7 +9,7 @@ import { generateMatches } from '../matchmaker/generate.js'
 import { resolvePair, leastLoadedMat } from '../match/pairs.js'
 import { eventDetail } from './events.js'
 import { bumpVersion } from '../match/events.js'
-import { recordAudit } from '../audit/log.js'
+import { recordAudit, HISTORY_LIMIT } from '../audit/log.js'
 import { assertNotCertified } from '../audit/certify.js'
 import type { AuditEntry } from '../shared/types.js'
 import { advanceMat } from '../match/mats.js'
@@ -25,13 +25,9 @@ const patchSchema = createSchema.partial()
 
 export const matchRoutes = new Hono<Env>()
 
-// A match carries a few dozen audit rows at most, so the cap is a guard against a bug
-// rather than a page size, and it takes the oldest rows because the sheet reads downwards.
-export const HISTORY_LIMIT = 500
-
 // No existence check: the audit log outlives the rows it describes, so the history of a
 // match somebody deleted is exactly the history worth reading. An unknown id has no rows
-// and answers with none.
+// and answers with none. Oldest first, because the sheet reads downwards.
 matchRoutes.get('/matches/:matchId/history', requireAdmin, async c => {
   const { db } = c.get('ctx')
   const rows: AuditEntry[] = await db.select({
