@@ -10,10 +10,15 @@ import { errorJson, requireAdmin } from '../auth/middleware.js'
 import { randomMatCode } from '../auth/pin.js'
 import { startEvent } from '../match/mats.js'
 import { MatchStateError, bumpVersion, endedAtByMatch } from '../match/events.js'
+import { eventContact } from '../live/snapshot.js'
 import { DEFAULT_ACTIONS, DEFAULT_TERMINALS, DEFAULT_LENGTH_SEC, TEAM_COLOR_KEYS, type TeamColor } from '../shared/types.js'
 
 const colorSchema = z.enum(TEAM_COLOR_KEYS as [TeamColor, ...TeamColor[]])
 export const teamSchema = z.object({ name: z.string().trim().min(1).max(40), color: colorSchema })
+// Empty clears the field. A contact with only one half reads as absent everywhere, so
+// there is nothing to gain from refusing a half-filled pair at the edge.
+const contactName = z.string().trim().max(60)
+const contactPhone = z.string().trim().max(30)
 const maxAgeGap = z.number().int().min(0).max(10)
 const maxWeightGap = z.number().int().min(0).max(100)
 const sameGender = z.boolean()
@@ -23,6 +28,8 @@ const createEventSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   matCount: z.number().int().min(1).max(8),
   mode: z.enum(['live', 'entry']).optional(),
+  contactName: contactName.optional(),
+  contactPhone: contactPhone.optional(),
   teams: z.tuple([teamSchema, teamSchema]),
   maxAgeGap: maxAgeGap.optional(),
   maxWeightGap: maxWeightGap.optional(),
@@ -35,10 +42,14 @@ const patchEventSchema = z.object({
   matCount: z.number().int().min(1).max(8).optional(),
   status: z.enum(['live', 'done']).optional(),
   mode: z.enum(['live', 'entry']).optional(),
+  contactName: contactName.optional(),
+  contactPhone: contactPhone.optional(),
   maxAgeGap: maxAgeGap.optional(),
   maxWeightGap: maxWeightGap.optional(),
   sameGender: sameGender.optional(),
 })
+
+const blankToNull = (v: string | undefined) => v === undefined || v === '' ? null : v
 
 export async function eventDetail(db: DbLike, eventId: number) {
   const ev = await db.select().from(events).where(eq(events.id, eventId)).get()
@@ -49,7 +60,7 @@ export async function eventDetail(db: DbLike, eventId: number) {
   // reload and reads the same on a second desk device.
   const endedAtById = await endedAtByMatch(db, matchRows.map(m => m.id))
   return {
-    event: ev,
+    event: { ...ev, contact: eventContact(ev) },
     teams: await db.select().from(teams).where(eq(teams.eventId, eventId)).orderBy(asc(teams.position)).all(),
     athletes: await db.select().from(athletes).where(eq(athletes.eventId, eventId)).orderBy(asc(athletes.lastName), asc(athletes.firstName)).all(),
     rulesets: await db.select().from(rulesets).where(eq(rulesets.eventId, eventId)).orderBy(asc(rulesets.id)).all(),
@@ -89,6 +100,7 @@ eventRoutes.post('/events', requireAdmin, validate('json', createEventSchema), a
     const ev = await tx.insert(events).values({
       name: body.name, date: body.date, matCount: body.matCount, matCode: randomMatCode(),
       mode: body.mode ?? 'live',
+      contactName: blankToNull(body.contactName), contactPhone: blankToNull(body.contactPhone),
       maxAgeGap: body.maxAgeGap ?? 1, maxWeightGap: body.maxWeightGap ?? 10, sameGender: body.sameGender ?? false,
       createdAt: new Date().toISOString(),
     }).returning().get()
@@ -112,7 +124,10 @@ eventRoutes.patch('/events/:eventId', requireAdmin, validate('json', patchEventS
   const eventId = Number(c.req.param('eventId'))
   const ev = await db.select().from(events).where(eq(events.id, eventId)).get()
   if (!ev) return errorJson(c, 404, 'not_found', 'event not found')
-  const { status, matCount, ...fields } = c.req.valid('json')
+  const { status, matCount, contactName: name, contactPhone: phone, ...rest } = c.req.valid('json')
+  const fields: Partial<typeof events.$inferInsert> = { ...rest }
+  if (name !== undefined) fields.contactName = blankToNull(name)
+  if (phone !== undefined) fields.contactPhone = blankToNull(phone)
   await db.transaction(async tx => {
     if (Object.keys(fields).length > 0) await tx.update(events).set(fields).where(eq(events.id, eventId)).run()
     if (matCount !== undefined && matCount !== ev.matCount) await setMatCount(tx, eventId, matCount)

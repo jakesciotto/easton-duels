@@ -8,7 +8,7 @@ export type EventStatus = 'setup' | 'live' | 'done'
  * from whether a mat happens to be bound at this instant.
  */
 export type EventMode = 'live' | 'entry'
-export type MatchEventType = 'score' | 'set_score' | 'clock_start' | 'clock_pause' | 'terminal' | 'end' | 'admin'
+export type MatchEventType = 'score' | 'set_score' | 'clock_start' | 'clock_pause' | 'clock_extend' | 'terminal' | 'end' | 'admin'
 
 export interface RulesetAction { key: string; label: string; points: number }
 export interface RulesetTerminal { key: string; label: string; winType: WinType }
@@ -18,6 +18,7 @@ export type MatchEventPayload =
   | { kind: 'reopen' }
   | { kind: 'edit_result'; winnerAthleteId: number; winType: WinType }
   | { kind: 'skip' }
+  | { kind: 'clock_extend'; addMs: number }
 
 export interface ClockState { elapsedMs: number; startedAt: string | null; lengthMs: number }
 export interface MatchResult { winnerAthleteId: number; winType: WinType }
@@ -53,10 +54,14 @@ export interface TeamView { id: number; name: string; color: TeamColor; position
 export interface RulesetView { id: number; name: string; defaultLengthSec: number; actions: RulesetAction[]; terminals: RulesetTerminal[] }
 export interface MatView { id: number; number: number; current: MatchView | null; onDeck: MatchView[]; bound: boolean }
 
+// Null unless both halves are filled: a name with no number, or a number with no name,
+// gives a volunteer nothing to act on, so the line is not printed at all.
+export interface EventContact { name: string; phone: string }
+
 export interface Snapshot {
   version: number
   now: string
-  event: { id: number; name: string; date: string; status: EventStatus; mode: EventMode; matCount: number }
+  event: { id: number; name: string; date: string; status: EventStatus; mode: EventMode; matCount: number; contact: EventContact | null }
   teams: TeamView[]
   rulesets: RulesetView[]
   mats: MatView[]

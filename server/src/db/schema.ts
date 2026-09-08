@@ -20,6 +20,10 @@ export const events = sqliteTable('events', {
   maxAgeGap: integer('max_age_gap').notNull().default(1),
   maxWeightGap: integer('max_weight_gap').notNull().default(10),
   sameGender: integer('same_gender', { mode: 'boolean' }).notNull().default(false),
+  // Who a volunteer calls when something goes wrong. Every surface prints the pair, so a
+  // half-filled contact is worse than none and reads as absent.
+  contactName: text('contact_name'),
+  contactPhone: text('contact_phone'),
   createdAt: text('created_at').notNull(),
   version: integer('version').notNull().default(0),
 })
@@ -88,6 +92,9 @@ export const mats = sqliteTable('mats', {
   currentMatchId: integer('current_match_id'),
   lastHeartbeatAt: text('last_heartbeat_at'),
   bound: integer('bound', { mode: 'boolean' }).notNull().default(false),
+  // Bumped every time a tablet binds this mat, so the token an earlier tablet still holds
+  // stops being accepted the moment a second one takes the mat over.
+  bindEpoch: integer('bind_epoch').notNull().default(0),
 }, t => [uniqueIndex('mats_event_number_idx').on(t.eventId, t.number)])
 
 export const matches = sqliteTable('matches', {
@@ -97,6 +104,10 @@ export const matches = sqliteTable('matches', {
   orderIndex: integer('order_index').notNull(),
   rulesetId: integer('ruleset_id').notNull().references(() => rulesets.id),
   lengthSec: integer('length_sec').notNull(),
+  // The sum of the clock_extend events, kept as a cache because the clock's real length is
+  // read on every poll and by the expiry sweep, which never load the event log. lengthSec
+  // stays the designed length so a recompute can rebuild this from the log alone.
+  extensionMs: integer('extension_ms').notNull().default(0),
   athleteAId: integer('athlete_a_id').notNull().references(() => athletes.id),
   athleteBId: integer('athlete_b_id').notNull().references(() => athletes.id),
   status: text('status', { enum: ['pending', 'live', 'done'] }).notNull().default('pending'),
@@ -126,7 +137,7 @@ export const matchEvents = sqliteTable('match_events', {
   id: text('id').primaryKey(),
   matchId: integer('match_id').notNull().references(() => matches.id, { onDelete: 'cascade' }),
   seq: integer('seq').notNull(),
-  type: text('type', { enum: ['score', 'set_score', 'clock_start', 'clock_pause', 'terminal', 'end', 'admin'] }).notNull(),
+  type: text('type', { enum: ['score', 'set_score', 'clock_start', 'clock_pause', 'clock_extend', 'terminal', 'end', 'admin'] }).notNull(),
   athleteId: integer('athlete_id'),
   actionKey: text('action_key'),
   points: integer('points'),

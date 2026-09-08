@@ -43,6 +43,13 @@
       "when": 1788289588830,
       "tag": "0005_little_quasar",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1788825733906,
+      "tag": "0006_public_the_liberteens",
+      "breakpoints": true
     }
   ]
 }

@@ -1,11 +1,17 @@
 import { asc, eq } from 'drizzle-orm'
 import type { DbLike } from '../db/client.js'
-import { events, teams, athletes, rulesets, mats, matches, type MatchRow, type AthleteRow } from '../db/schema.js'
-import { ON_DECK_DEPTH, type Snapshot, type MatchView, type MatchSide, type MatView, type TeamView, type TeamColor } from '../shared/types.js'
+import { events, teams, athletes, rulesets, mats, matches, type MatchRow, type AthleteRow, type EventRow } from '../db/schema.js'
+import { ON_DECK_DEPTH, type Snapshot, type MatchView, type MatchSide, type MatView, type TeamView, type TeamColor, type EventContact } from '../shared/types.js'
 import { MatchStateError, endedAtByMatch } from '../match/events.js'
 
 export interface SnapshotOptions {
   nowMs: number
+}
+
+export function eventContact(ev: Pick<EventRow, 'contactName' | 'contactPhone'>): EventContact | null {
+  const name = ev.contactName?.trim() ?? ''
+  const phone = ev.contactPhone?.trim() ?? ''
+  return name && phone ? { name, phone } : null
 }
 
 export function toMatchView(m: MatchRow, athleteById: Map<number, AthleteRow>, endedAt: string | null): MatchView {
@@ -79,7 +85,7 @@ export async function buildSnapshot(db: DbLike, eventId: number, opts: SnapshotO
   return {
     version: ev.version,
     now: new Date(opts.nowMs).toISOString(),
-    event: { id: ev.id, name: ev.name, date: ev.date, status: ev.status, mode: ev.mode, matCount: ev.matCount },
+    event: { id: ev.id, name: ev.name, date: ev.date, status: ev.status, mode: ev.mode, matCount: ev.matCount, contact: eventContact(ev) },
     teams: teamViews,
     rulesets: rulesetRows.map(r => ({ id: r.id, name: r.name, defaultLengthSec: r.defaultLengthSec, actions: r.actions, terminals: r.terminals })),
     mats: matViews,

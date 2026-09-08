@@ -56,6 +56,29 @@ describe('events', () => {
     expect(bad.status).toBe(422)
   })
 
+  it('carries the organizer contact on create, patch, detail, and the snapshot', async () => {
+    const { app, adminToken } = await createTestApp()
+
+    const blank = await call(app, 'POST', '/api/events', body, adminToken)
+    expect(blank.body.event.contact).toBeNull()
+
+    const named = await call(app, 'POST', '/api/events', { ...body, contactName: '  Dana Whitlock  ', contactPhone: '555-0142' }, adminToken)
+    expect(named.body.event.contact).toEqual({ name: 'Dana Whitlock', phone: '555-0142' })
+    expect((await call(app, 'GET', `/api/events/${named.body.event.id}/snapshot`)).body.snapshot.event.contact).toEqual({ name: 'Dana Whitlock', phone: '555-0142' })
+
+    const half = await call(app, 'PATCH', `/api/events/${blank.body.event.id}`, { contactName: 'Dana Whitlock' }, adminToken)
+    expect(half.body.event.contact).toBeNull()
+    const whole = await call(app, 'PATCH', `/api/events/${blank.body.event.id}`, { contactPhone: '555-0142' }, adminToken)
+    expect(whole.body.event.contact).toEqual({ name: 'Dana Whitlock', phone: '555-0142' })
+
+    const cleared = await call(app, 'PATCH', `/api/events/${blank.body.event.id}`, { contactPhone: '' }, adminToken)
+    expect(cleared.body.event.contact).toBeNull()
+    expect(cleared.body.event.contactPhone).toBeNull()
+
+    expect((await call(app, 'PATCH', `/api/events/${blank.body.event.id}`, { contactName: 'x'.repeat(61) }, adminToken)).status).toBe(422)
+    expect((await call(app, 'POST', '/api/events', { ...body, contactPhone: '5'.repeat(31) }, adminToken)).status).toBe(422)
+  })
+
   it('counts the cached candidate pool on event detail', async () => {
     const { app, db, adminToken } = await createTestApp()
     const s = await seedEvent(db, { matches: 0 })
