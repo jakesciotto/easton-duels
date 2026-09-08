@@ -33,8 +33,15 @@ export interface PanelModel {
    * the rest of the afternoon is the information-free blank with a border around it.
    */
   control: PanelControl | null
-  // The NOW lane's sentence when nothing is bound. It says why, and why differs by mode.
-  nowNote: string
+  /**
+   * The NOW lane's sentences when it has no pair to show, one fact per line.
+   *
+   * "Bound" carried two meanings on one panel: a missing tablet printed "No scorer", a
+   * missing match printed "Nothing bound", and a mat with neither printed the second and
+   * lost the first. Section 8 wants one word per fact, so each fact is its own line and a
+   * mat missing both says both.
+   */
+  nowNotes: string[]
   /** The line under a pair the panel is showing but cannot score, or null. */
   nowHint: string | null
   // The NEXT lane never renders an information-free blank: with nothing on deck it
@@ -43,6 +50,11 @@ export interface PanelModel {
 }
 
 const inert = (label: string): PanelControl => ({ label, tone: 'secondary', disabled: true, action: null })
+
+/** One fact each, and a panel prints as many of them as are true. */
+export const NO_MATCH_NOTE = 'No match on this mat'
+export const NO_SCORER_NOTE = 'No scorer'
+export const NO_MATCH_WORD = 'No match'
 
 // A tie with no terminal on the board cannot be ended without a person naming the
 // winner (the server answers 422 decision_required), so the desk asks first.
@@ -66,7 +78,7 @@ function everCarried(matches: MatchView[], matId: number): boolean {
 /**
  * @param mode how the event runs. In desk mode no tablet ever binds and no match ever
  * goes live, so every bound check would report a fault that is the configuration working
- * as designed: the rack read amber "No scorer" or "Nothing bound" on every panel for the
+ * as designed: the rack read amber "No scorer" or "No match" on every panel for the
  * whole afternoon. The rack still earns its place there, because the running order per
  * mat is how the desk answers when a child is up, so the panel keeps its lanes and drops
  * only the parts that belong to a tablet.
@@ -88,7 +100,7 @@ export function matPanelModel(
       tone: 'neutral',
       word: midMatch ? DESK_MID_MATCH_WORD : DESK_PANEL_WORD,
       control: null,
-      nowNote: deskMatNote(mat.number),
+      nowNotes: [deskMatNote(mat.number)],
       nowHint: midMatch ? DESK_MID_MATCH_NOTE : null,
       queueNote: mat.onDeck.length > 0 ? null
         : midMatch ? `Nothing else queued on mat ${mat.number}`
@@ -100,13 +112,13 @@ export function matPanelModel(
     return {
       tone: expired || !mat.bound ? 'attend' : running ? 'live' : 'neutral',
       word: expired ? 'Time expired'
-        : !mat.bound ? 'No scorer'
+        : !mat.bound ? NO_SCORER_NOTE
         : running ? 'Live'
         : current.clock.elapsedMs > 0 ? 'Paused' : 'Ready',
       control: expired
         ? { label: 'Time expired. Record result', tone: 'attend', disabled: false, action: 'end' }
         : { label: 'End match', tone: 'secondary', disabled: false, action: 'end' },
-      nowNote: 'No match bound',
+      nowNotes: [],
       nowHint: null,
       queueNote: mat.onDeck.length > 0 ? null : `Nothing else queued on mat ${mat.number}`,
     }
@@ -116,7 +128,7 @@ export function matPanelModel(
       tone: 'neutral',
       word: 'Not started',
       control: inert('Waiting for the event to start'),
-      nowNote: 'No match bound',
+      nowNotes: [NO_MATCH_NOTE],
       nowHint: null,
       queueNote: mat.onDeck.length > 0 ? null : `Nothing queued on mat ${mat.number} yet`,
     }
@@ -128,9 +140,12 @@ export function matPanelModel(
   if (mat.onDeck.length > 0) {
     return {
       tone: 'attend',
-      word: 'Nothing bound',
+      word: NO_MATCH_WORD,
       control: { label: 'Call the next match', tone: 'attend', disabled: false, action: 'advance' },
-      nowNote: 'No match bound',
+      // Both facts, each on its own line. The scorer line is gated on the mat still having
+      // something to run: a mat whose queue has emptied is finished, not missing a tablet,
+      // and asking somebody to walk to it would be the amber that means nothing.
+      nowNotes: mat.bound ? [NO_MATCH_NOTE] : [NO_MATCH_NOTE, NO_SCORER_NOTE],
       nowHint: null,
       queueNote: null,
     }
@@ -139,7 +154,7 @@ export function matPanelModel(
     tone: 'neutral',
     word: everCarried(matches, mat.id) ? 'Complete' : 'Empty',
     control: null,
-    nowNote: 'No match bound',
+    nowNotes: [NO_MATCH_NOTE],
     nowHint: null,
     queueNote: emptyNote,
   }

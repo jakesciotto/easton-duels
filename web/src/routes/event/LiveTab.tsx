@@ -579,7 +579,9 @@ function MatPanel({ mat, view, mode, paused, lastSuccessAt, pollIntervalMs, busy
       <div className="min-w-0">
         <Lane label="Now">
           {current === null
-            ? <p className="t3 text-gray-10">{model.nowNote}</p>
+            // One fact per line: a mat with neither a tablet nor a match says both, and
+            // neither sentence has to carry the other's meaning.
+            ? model.nowNotes.map(note => <p key={note} className="t3 text-gray-10">{note}</p>)
             : (
               <div className={NOW_COLS}>
                 {[current.a, current.b].map(side => (

@@ -128,7 +128,7 @@ describe('LiveTab', () => {
     }))
     await vi.waitFor(() => expect(within(screen.getByRole('region', { name: 'Mat 2' })).getByText('Mateo Rivera')).toBeInTheDocument(), { timeout: 3000 })
     expect(screen.getAllByRole('region').map(r => r.getAttribute('aria-label'))).toEqual(['Mat 1', 'Mat 2'])
-    expect(within(screen.getByRole('region', { name: 'Mat 1' })).getByText('No match bound')).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: 'Mat 1' })).getByText('No match on this mat')).toBeInTheDocument()
   })
 
   it('holds all three lanes and says what each empty one is missing', async () => {
@@ -138,7 +138,7 @@ describe('LiveTab', () => {
     expect(within(one).getByText('Now')).toBeInTheDocument()
     expect(within(one).getByText('Next')).toBeInTheDocument()
     expect(within(one).getByText('Last result')).toBeInTheDocument()
-    expect(within(one).getByText('No match bound')).toBeInTheDocument()
+    expect(within(one).getByText('No match on this mat')).toBeInTheDocument()
     expect(within(one).getByText('Mat 1 complete')).toBeInTheDocument()
     // 7.10 / 6.9: an exhausted mat gets no primary control at all. A disabled button on
     // every panel for the rest of the afternoon is the information-free blank with a
@@ -229,10 +229,43 @@ describe('LiveTab', () => {
     const f = mount(url => feed.handle(url) ?? connectOnly(url))
     const one = await panel(1)
     expect(one).toHaveAttribute('data-state', 'attend')
-    expect(within(one).getByText('Nothing bound')).toBeInTheDocument()
+    expect(within(one).getByText('No match')).toBeInTheDocument()
 
     await userEvent.setup().click(within(one).getByRole('button', { name: 'Call the next match' }))
     await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/mats/1/advance' && c.init?.method === 'POST')).toBe(true))
+  })
+
+  /**
+   * G18. "Bound" meant two things on one panel: a missing tablet printed "No scorer", a
+   * missing match printed "Nothing bound", and a mat with neither printed the second and
+   * lost the first. Each fact is now its own line and a mat missing both says both.
+   */
+  it('prints the missing match and the missing scorer as separate facts', async () => {
+    const deck = [onDeckMatch(11, 'Ava Park', 'Noah Tran')]
+    const feed = snapshotFeed(oneMat({ current: null, onDeck: deck, bound: false }, [settled, ...deck]))
+    mount(url => feed.handle(url) ?? connectOnly(url))
+    const one = await panel(1)
+    expect(within(one).getByText('No match on this mat')).toBeInTheDocument()
+    expect(within(one).getByText('No scorer')).toBeInTheDocument()
+    expect(within(one).queryByText('Nothing bound')).not.toBeInTheDocument()
+  })
+
+  it('drops the scorer line once the mat has nothing left to run', async () => {
+    const feed = snapshotFeed(oneMat({ current: null, bound: false }, [settled]))
+    mount(url => feed.handle(url) ?? connectOnly(url))
+    const one = await panel(1)
+    expect(within(one).getByText('No match on this mat')).toBeInTheDocument()
+    expect(within(one).queryByText('No scorer')).not.toBeInTheDocument()
+    expect(within(one).getByText('Complete')).toBeInTheDocument()
+  })
+
+  it('prints the missing match alone while a scorer is bound', async () => {
+    const deck = [onDeckMatch(11, 'Ava Park', 'Noah Tran')]
+    const feed = snapshotFeed(oneMat({ current: null, onDeck: deck, bound: true }, [settled, ...deck]))
+    mount(url => feed.handle(url) ?? connectOnly(url))
+    const one = await panel(1)
+    expect(within(one).getByText('No match on this mat')).toBeInTheDocument()
+    expect(within(one).queryByText('No scorer')).not.toBeInTheDocument()
   })
 
   it('prints the server reason when the mat is already showing a match', async () => {
@@ -747,7 +780,7 @@ describe('LiveTab in entry mode', () => {
   /**
    * G10. No tablet ever binds in desk mode and no match ever goes live, so every bound
    * check reported a fault that is the configuration working as designed: the rack read
-   * amber "No scorer" or "Nothing bound" on every panel, all afternoon. The panel keeps
+   * amber "No scorer" or "No match" on every panel, all afternoon. The panel keeps
    * its lanes, because the running order per mat is how the desk answers when a child is
    * up, and drops only the parts that belong to a tablet.
    */
@@ -763,8 +796,8 @@ describe('LiveTab in entry mode', () => {
     expect(within(one).getByText(DESK_PANEL_WORD)).toBeInTheDocument()
     expect(within(one).getByText(deskMatNote(1))).toBeInTheDocument()
     expect(within(one).queryByText('No scorer')).not.toBeInTheDocument()
-    expect(within(one).queryByText('Nothing bound')).not.toBeInTheDocument()
-    expect(within(one).queryByText('No match bound')).not.toBeInTheDocument()
+    expect(within(one).queryByText('No match')).not.toBeInTheDocument()
+    expect(within(one).queryByText('No match on this mat')).not.toBeInTheDocument()
 
     // The NEXT lane still carries that mat's designed order, and the LAST RESULT lane
     // still carries what the desk typed.
