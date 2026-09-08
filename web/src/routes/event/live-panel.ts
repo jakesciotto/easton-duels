@@ -1,5 +1,5 @@
 import type { EventMode, EventStatus, MatView, MatchView } from '@shared/types'
-import { DESK_PANEL_WORD, deskMatNote } from '@/lib/eventMode'
+import { DESK_MID_MATCH_NOTE, DESK_MID_MATCH_WORD, DESK_PANEL_WORD, deskMatNote } from '@/lib/eventMode'
 import { winTypeLabel } from '@/lib/format'
 
 // 6.9 / 7.3. The Live tab is N permanent mat panels whose geometry never moves, so
@@ -34,6 +34,8 @@ export interface PanelModel {
   control: PanelControl | null
   // The NOW lane's sentence when nothing is bound. It says why, and why differs by mode.
   nowNote: string
+  /** The line under a pair the panel is showing but cannot score, or null. */
+  nowHint: string | null
   // The NEXT lane never renders an information-free blank: with nothing on deck it
   // names the mat and says what is missing.
   queueNote: string | null
@@ -47,6 +49,19 @@ export function needsDecision(match: MatchView): boolean {
   return match.pendingTerminal === null && match.a.score === match.b.score
 }
 
+/** 7.10 / M12: one form for the finished mat, on the panel, the board and the scorer. */
+export const matCompleteNote = (matNumber: number): string => `Mat ${matNumber} complete`
+
+/**
+ * A mat no match has ever been designed onto reads nothing like a mat whose queue has
+ * emptied, and both were saying "Mat 4 complete". Growing the mat count after Start is
+ * how the second mat of a busy afternoon appears, and the panel announced it finished
+ * before anything had ever been put on it.
+ */
+function everCarried(matches: MatchView[], matId: number): boolean {
+  return matches.some(m => m.matId === matId)
+}
+
 /**
  * @param mode how the event runs. In desk mode no tablet ever binds and no match ever
  * goes live, so every bound check would report a fault that is the configuration working
@@ -54,16 +69,29 @@ export function needsDecision(match: MatchView): boolean {
  * whole afternoon. The rack still earns its place there, because the running order per
  * mat is how the desk answers when a child is up, so the panel keeps its lanes and drops
  * only the parts that belong to a tablet.
+ * @param matches every match on the event, which is the only way to tell a mat that has
+ * finished its queue from one that never had one.
  */
-export function matPanelModel(mat: MatView, eventStatus: EventStatus, expired: boolean, mode: EventMode): PanelModel {
+export function matPanelModel(
+  mat: MatView, eventStatus: EventStatus, expired: boolean, mode: EventMode, matches: MatchView[],
+): PanelModel {
   const current = mat.current
+  const emptyNote = everCarried(matches, mat.id) ? matCompleteNote(mat.number) : `Nothing queued on mat ${mat.number}`
   if (mode === 'entry') {
+    // A switch to the desk leaves whatever was on a mat exactly where it is, and the
+    // panel used to return before it ever read mat.current: it printed the desk sentence
+    // over two children who were still on the mat, and called the mat complete one lane
+    // down. The pair stays on screen until the desk types its result.
+    const midMatch = current !== null && current.status !== 'done'
     return {
       tone: 'neutral',
-      word: DESK_PANEL_WORD,
+      word: midMatch ? DESK_MID_MATCH_WORD : DESK_PANEL_WORD,
       control: null,
       nowNote: deskMatNote(mat.number),
-      queueNote: mat.onDeck.length > 0 ? null : `Mat ${mat.number} complete`,
+      nowHint: midMatch ? DESK_MID_MATCH_NOTE : null,
+      queueNote: mat.onDeck.length > 0 ? null
+        : midMatch ? `Nothing else queued on mat ${mat.number}`
+        : emptyNote,
     }
   }
   if (current !== null) {
@@ -78,6 +106,7 @@ export function matPanelModel(mat: MatView, eventStatus: EventStatus, expired: b
         ? { label: 'Time expired. Record result', tone: 'attend', disabled: false, action: 'end' }
         : { label: 'End match', tone: 'secondary', disabled: false, action: 'end' },
       nowNote: 'No match bound',
+      nowHint: null,
       queueNote: mat.onDeck.length > 0 ? null : `Nothing else queued on mat ${mat.number}`,
     }
   }
@@ -87,6 +116,7 @@ export function matPanelModel(mat: MatView, eventStatus: EventStatus, expired: b
       word: 'Not started',
       control: inert('Waiting for the event to start'),
       nowNote: 'No match bound',
+      nowHint: null,
       queueNote: mat.onDeck.length > 0 ? null : `Nothing queued on mat ${mat.number} yet`,
     }
   }
@@ -100,15 +130,17 @@ export function matPanelModel(mat: MatView, eventStatus: EventStatus, expired: b
       word: 'Nothing bound',
       control: { label: 'Call the next match', tone: 'attend', disabled: false, action: 'advance' },
       nowNote: 'No match bound',
+      nowHint: null,
       queueNote: null,
     }
   }
   return {
     tone: 'neutral',
-    word: 'Complete',
+    word: everCarried(matches, mat.id) ? 'Complete' : 'Empty',
     control: null,
     nowNote: 'No match bound',
-    queueNote: `Mat ${mat.number} complete`,
+    nowHint: null,
+    queueNote: emptyNote,
   }
 }
 

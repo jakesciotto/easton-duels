@@ -1,4 +1,4 @@
-import type { EventMode, Snapshot } from '@shared/types'
+import type { EventMode, EventStatus, Snapshot } from '@shared/types'
 import type { SegmentOption } from '@/components/ui/segment'
 
 /**
@@ -138,8 +138,28 @@ export const MAT_NOTE = 'The mats own the results in this event. Type a result h
  */
 export const deskMatNote = (matNumber: number): string => `${DESK_LEAD}, so nothing scores mat ${matNumber}.`
 
+/**
+ * The event status as the room reports it, with the stored value until the first snapshot
+ * lands. The detail is a react-query cache that nothing invalidates when a tablet ends a
+ * match or a second device presses Finish, so a surface that decides "done" off it can
+ * keep a scoreable form up over an event that is already over.
+ */
+export function statusOf(live: Snapshot | null, fallback: EventStatus): EventStatus {
+  return live?.event.status ?? fallback
+}
+
 /** The state word beside the mat number when the desk owns the results. */
 export const DESK_PANEL_WORD = 'From the desk'
+
+/**
+ * The state word and the line under the pair on a mat the desk took over mid-bout.
+ *
+ * Switching to the desk leaves whatever was already on a mat exactly where it is, so the
+ * panel has to name the pair and say where its result goes. The rack said "nothing scores
+ * mat 2" and, one lane down, "Mat 2 complete", over two children who were still on it.
+ */
+export const DESK_MID_MATCH_WORD = 'Mid-match'
+export const DESK_MID_MATCH_NOTE = 'Type this result on the Entry tab.'
 
 /** 6.7: a ruleset is the tablet's vocabulary, and in desk mode no tablet reads it. */
 export const DESK_RULESET_NOTE = 'Rulesets apply when tablets score the mats, and this event runs from the desk.'

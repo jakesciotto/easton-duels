@@ -366,6 +366,32 @@ describe('EventPage: how the event runs is one stored setting on the shell', () 
     await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Switch to the desk' }))
     await vi.waitFor(() => expect(patchIndex(f)).toBeGreaterThan(-1))
     expect(f.body(patchIndex(f))).toEqual({ mode: 'entry' })
+    // M15: the dialog stays up for the round trip and closes on success.
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  // M15: a refused switch is read where it was asked for, inside the dialog, which stays
+  // open rather than closing on the same tick as the write and reporting nothing.
+  it('keeps the confirm dialog open and shows the reason when the switch is refused', async () => {
+    const base = slowSnapshot({ status: 'live' })
+    const paused = sampleMatch({ id: 10, clock: { elapsedMs: 40_000, startedAt: null, lengthMs: 300_000 } })
+    mount((url, init) => {
+      if (url === '/api/events/7' && init?.method === 'PATCH') {
+        return { status: 409, json: { error: { code: 'match_state', message: 'Mat 2 has a clock running.' } } }
+      }
+      return snapshotReply(url, {
+        ...base,
+        mats: [{ id: 1, number: 2, current: paused, onDeck: [], bound: true }],
+      }) ?? (url === '/api/events/7' ? { json: detailWith(IN_ORDER) } : undefined)
+    })
+    const user = userEvent.setup()
+    await screen.findByRole('radiogroup', { name: MODE_GROUP_LABEL })
+    await vi.waitFor(() => expect(deskOption()).not.toHaveAttribute('aria-disabled'))
+    await user.click(deskOption())
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Switch to the desk' }))
+    expect(await within(dialog).findByText('Mat 2 has a clock running.')).toBeInTheDocument()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
 
   // 7.12 / the Alert primitive: a failed write says what failed, in a titled band with a

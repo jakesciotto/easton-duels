@@ -522,9 +522,10 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
         </Alert>
       )}
 
-      {/* Nothing runs a clock in desk mode, so a "Live now" strip there is a lane that
-          can only ever be empty. The pending field is the whole screen instead. */}
-      {!entryMode && live.length > 0 && (
+      {/* In desk mode nothing starts a match, so this strip is normally empty there. The one
+          exception is a switch to the desk taken mid-bout: that match stays live on its mat
+          until the desk types its result, and hiding it here hid the only list that named it. */}
+      {live.length > 0 && (
         <section aria-label="Live now" className="grid gap-3">
           {live.map(l => (
             <LiveStrip

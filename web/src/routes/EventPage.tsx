@@ -48,9 +48,10 @@ const PANEL = 'px-4 pt-6 pb-10 sm:px-6'
  * board repaints, and that is a consequence an organizer has to be told once rather than
  * per mat. Both buttons say what they do.
  */
-function DeskSwitchDialog({ mats, pending, onCancel, onConfirm }: {
+function DeskSwitchDialog({ mats, pending, error, onCancel, onConfirm }: {
   mats: MidMatchMat[]
   pending: boolean
+  error: Error | null
   onCancel: () => void
   onConfirm: () => void
 }) {
@@ -70,6 +71,12 @@ function DeskSwitchDialog({ mats, pending, onCancel, onConfirm }: {
               ))}
             </List>
             <p className="t2 text-gray-10">The board drops the mat rack as soon as the desk takes over.</p>
+            {error && (
+              <Alert>
+                <AlertTitle>How this event runs was not changed</AlertTitle>
+                <AlertDescription>{error.message}</AlertDescription>
+              </Alert>
+            )}
           </div>
         </DialogBody>
         <DialogFooter className={dialogFooter}>
@@ -143,17 +150,20 @@ function EventMeta({ eventId, detail, mode, refusal, snapshot }: {
         </Field.Root>
       </div>
       {refusal !== null && <p className="t2 text-gray-10">{refusal}</p>}
-      {set.error && (
+      {set.error && confirming.length === 0 && (
         <Alert>
           <AlertTitle>How this event runs was not changed</AlertTitle>
           <AlertDescription>{set.error.message}</AlertDescription>
         </Alert>
       )}
+      {/* The dialog stays up for the round trip and closes on success, so its own control
+          reports the write and a refused switch is read where it was asked for. */}
       <DeskSwitchDialog
         mats={confirming}
         pending={set.isPending}
-        onCancel={() => setConfirming([])}
-        onConfirm={() => { setConfirming([]); set.mutate('entry') }}
+        error={set.error}
+        onCancel={() => { setConfirming([]); set.reset() }}
+        onConfirm={() => set.mutate('entry', { onSuccess: () => setConfirming([]) })}
       />
       <ContactDialog open={contactOpen} onOpenChange={setContactOpen} detail={detail} />
     </div>

@@ -4,7 +4,7 @@ import { teamCode, type WinType } from '@shared/types'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import { focusWithoutEngaging } from '@/lib/operatorEngaged'
 import { sortDoneMatches } from '@/lib/matchOrder'
-import { MAT_NOTE, modeOf } from '@/lib/eventMode'
+import { MAT_NOTE, modeOf, statusOf } from '@/lib/eventMode'
 import { useSnapshot } from '@/lib/useSnapshot'
 import { newEventId } from '@/lib/ids'
 import type { AthleteRow, EventDetail, MatchRow, TeamRow } from '@/lib/types'
@@ -72,7 +72,11 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   // One fact, one source: the stream the event body already polls, with the stored value
   // as the fallback until the first snapshot lands. The newest snapshot rather than a
   // frozen one, because this is a statement about the room and not about a picture.
-  const mode = modeOf(useSnapshot(eventId).live, detail.event.mode)
+  const stream = useSnapshot(eventId).live
+  const mode = modeOf(stream, detail.event.mode)
+  // The status the same way: Finish pressed on a second device reaches this form through
+  // the stream, and a form left up over a finished event is a form that still says Save.
+  const eventStatus = statusOf(stream, detail.event.status)
   // One read of storage for the three things a restored draft decides: the form, the
   // banner over it, and the payload the id it carries is already bound to.
   const [restored] = useState(() => {
@@ -367,11 +371,11 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   const startError = start.error
   // 6.9: a finished event stops taking results, so the form and every path back into it
   // go rather than sit there disabled. Nothing left on the screen says it can be scored.
-  const finished = detail.event.status === 'done'
+  const finished = eventStatus === 'done'
   const closeFinish = () => { setFinishOpen(false); finish.reset() }
   const band = finished
     ? EVENT_DONE_LINE
-    : detail.event.status === 'setup'
+    : eventStatus === 'setup'
       ? 'The board shows this event as in progress once you start it.'
       : 'The board switches to the final result when you finish the event.'
 
@@ -393,10 +397,10 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
 
       <div className="flex flex-wrap items-center gap-3 rounded-lg bg-gray-1 px-4 py-3">
         <p className="t2 text-gray-11">{band}</p>
-        {detail.event.status === 'setup' && (
+        {eventStatus === 'setup' && (
           <Button size="sm" variant="secondary" className="ml-auto" onClick={() => start.mutate()} disabled={start.isPending}>Start event</Button>
         )}
-        {detail.event.status === 'live' && (
+        {eventStatus === 'live' && (
           <Button size="sm" variant="destructive" className="ml-auto" onClick={() => setFinishOpen(true)} disabled={finish.isPending}>Finish event</Button>
         )}
       </div>
@@ -549,6 +553,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
         open={finishOpen}
         onOpenChange={o => { if (o) setFinishOpen(true); else closeFinish() }}
         detail={detail}
+        snapshot={stream}
         pending={finish.isPending}
         error={finish.error}
         onFinish={() => finish.mutate(undefined, { onSuccess: () => setFinishOpen(false) })}

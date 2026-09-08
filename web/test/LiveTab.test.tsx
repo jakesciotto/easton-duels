@@ -331,6 +331,9 @@ describe('LiveTab', () => {
     await openMenu(user, 1)
     await user.click(await screen.findByRole('menuitem', { name: 'Skip this match' }))
     await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/matches/10/skip' && c.init?.method === 'POST')).toBe(true))
+    // I4: the press carries a client id, so the server dedupes a press that arrives twice.
+    const skip = f.calls.find(c => c.url === '/api/matches/10/skip')!
+    expect(JSON.parse(String(skip.init?.body)).id).toMatch(/^[A-Za-z0-9-]{8,64}$/)
   })
 
   it('reopens the last result from the panel overflow', async () => {
@@ -375,7 +378,9 @@ describe('LiveTab', () => {
   })
 
   it('starts the event', async () => {
-    const feed = snapshotFeed(oneMat({ current: null, bound: false }, [settled]))
+    // The stream is the source for the status (I5), so the snapshot says setup too.
+    const base = oneMat({ current: null, bound: false }, [settled])
+    const feed = snapshotFeed({ ...base, event: { ...base.event, status: 'setup' } })
     const f = mount(url => feed.handle(url) ?? connectOnly(url), { ...detail, event: { ...detail.event, status: 'setup' } })
     await userEvent.setup().click(await screen.findByRole('button', { name: 'Start event' }))
     await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/events/1' && c.init?.method === 'PATCH')).toBe(true))
@@ -595,5 +600,58 @@ describe('LiveTab dialogs, 6.18', () => {
     mount(url => feed.handle(url) ?? connectOnly(url))
     await userEvent.setup().click(await screen.findByRole('button', { name: 'Finish event' }))
     goesFullScreenBelow640(await screen.findByRole('dialog'))
+  })
+})
+
+describe('LiveTab after the whole-branch review', () => {
+  // C3: a switch to the desk leaves whatever was on a mat exactly where it is, and the
+  // panel used to print the desk sentence over two children who were still on the mat and
+  // call the mat complete one lane down.
+  it('keeps a mid-match pair on a desk event panel and says where its result goes', async () => {
+    const paused = scored({ clock: { elapsedMs: 40_000, startedAt: null, lengthMs: 300_000 } })
+    const feed = snapshotFeed(atMode(oneMat({ current: paused, bound: false }, [settled, paused]), 'entry'))
+    mount(url => feed.handle(url) ?? connectOnly(url), entryDetail)
+    const one = await panel(1)
+    expect(within(one).getByText('Mid-match')).toBeInTheDocument()
+    expect(within(one).getByText('Mateo Rivera')).toBeInTheDocument()
+    expect(within(one).getByText('Type this result on the Entry tab.')).toBeInTheDocument()
+    expect(within(one).queryByText('Mat 1 complete')).not.toBeInTheDocument()
+    expect(within(one).queryByRole('button', { name: 'End match' })).not.toBeInTheDocument()
+  })
+
+  // M10: a mat created after Start that nothing was ever put on is empty, not finished.
+  it('calls a mat empty, not complete, when no match was ever put on it', async () => {
+    const feed = snapshotFeed(oneMat({ current: null, bound: false }, [{ ...settled, matId: 2 }]))
+    mount(url => feed.handle(url) ?? connectOnly(url))
+    const one = await panel(1)
+    expect(within(one).getByText('Empty')).toBeInTheDocument()
+    expect(within(one).getByText('Nothing queued on mat 1')).toBeInTheDocument()
+    expect(within(one).queryByText('Mat 1 complete')).not.toBeInTheDocument()
+  })
+
+  // M9: the panel repaints the instant the advance succeeds, so a second tap in that gap
+  // was refused for a press that worked. The control stays busy until the stream carries
+  // the version the write returned.
+  it('keeps Call the next match busy until the stream carries the advance', async () => {
+    const next = onDeckMatch(11, 'Emma Cole', 'Ben Ortiz')
+    const feed = snapshotFeed(oneMat({ current: null, onDeck: [next], bound: false }))
+    mount((url, init) => {
+      if (url === '/api/mats/1/advance' && init?.method === 'POST') return { json: { match: null, version: 50 } }
+      return feed.handle(url) ?? connectOnly(url)
+    })
+    const user = userEvent.setup()
+    const one = await panel(1)
+    await user.click(within(one).getByRole('button', { name: 'Call the next match' }))
+    await vi.waitFor(() => expect(within(one).getByRole('button', { name: 'Call the next match' })).toBeDisabled())
+  })
+
+  // I5: a Finish pressed on a second device reaches this tab through the stream and never
+  // through the detail cache, which nothing invalidates.
+  it('reads the event status off the stream, not the detail cache', async () => {
+    const base = oneMat({ current: null, bound: false }, [settled])
+    const feed = snapshotFeed({ ...base, event: { ...base.event, status: 'done' } })
+    mount(url => feed.handle(url) ?? connectOnly(url))
+    expect(await screen.findByText('Final result')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Finish event' })).not.toBeInTheDocument()
   })
 })

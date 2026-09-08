@@ -8,7 +8,7 @@ import { ApiError } from '@/lib/api'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import { newEventId } from '@/lib/ids'
 import { useSnapshot } from '@/lib/useSnapshot'
-import { DESK_NOTE, DESK_NOTE_DETAIL, modeOf } from '@/lib/eventMode'
+import { DESK_NOTE, DESK_NOTE_DETAIL, modeOf, statusOf } from '@/lib/eventMode'
 import { useClock } from '@/lib/useClock'
 import { pollIntervalForSnapshot } from '@/lib/pollInterval'
 import { teamStyle } from '@/lib/format'
@@ -64,6 +64,9 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
   // reading it here left this laptop showing the mat rack and its connect card while the
   // television in the same room had already repainted as the Final Score panel.
   const entryMode = modeOf(live, detail.event.mode) === 'entry'
+  // The status the same way: a Finish pressed on a second device, or a match a tablet just
+  // ended, reaches this tab through the stream and never through the detail cache.
+  const eventStatus = statusOf(live, detail.event.status)
 
   useEffect(() => {
     if (entryMode) return
@@ -73,9 +76,17 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
   }, [eventId, entryMode])
 
   const status = useAdminMutation(eventId, (s: 'live' | 'done') => adminApi(`/api/events/${eventId}`, { method: 'PATCH', body: { status: s } }))
-  const act = useAdminMutation(eventId, (v: { id: number; action: 'reopen' | 'skip' }) => adminApi(`/api/matches/${v.id}/${v.action}`, { method: 'POST' }))
+  // A skip carries a client id so a press that arrives twice moves the match once; the
+  // server dedupes on it. Reopen writes its own admin event and takes no id.
+  const act = useAdminMutation(eventId, (v: { id: number; action: 'reopen' | 'skip'; clientId?: string }) =>
+    adminApi(`/api/matches/${v.id}/${v.action}`, { method: 'POST', body: v.action === 'skip' ? { id: v.clientId } : undefined }))
+  const skipIds = useRef<Record<number, string>>({})
   // G02: an idle mat has nothing to trigger its own advance, so the panel calls it.
-  const advance = useAdminMutation(eventId, (matId: number) => adminApi(`/api/mats/${matId}/advance`, { method: 'POST' }))
+  const advance = useAdminMutation(eventId, (matId: number) => adminApi<{ version: number }>(`/api/mats/${matId}/advance`, { method: 'POST' }))
+  // The panel repaints the instant the advance succeeds, and a second tap in that gap is
+  // refused for a press that worked. The control stays busy until the stream carries the
+  // version the write returned.
+  const [awaitingAdvance, setAwaitingAdvance] = useState<{ matId: number; version: number } | null>(null)
   const end = useAdminMutation(eventId, (v: { id: number; entryId: string; lastSeq: number; winnerAthleteId?: number }) =>
     adminApi(`/api/matches/${v.id}/end`, {
       method: 'POST',
@@ -86,8 +97,15 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
 
   // Only the most recently started action's error stays visible.
   const runStart = () => { act.reset(); end.reset(); advance.reset(); status.mutate('live') }
-  const runAct = (v: { id: number; action: 'reopen' | 'skip' }) => { status.reset(); end.reset(); advance.reset(); act.mutate(v) }
-  const runAdvance = (matId: number) => { status.reset(); act.reset(); end.reset(); advance.mutate(matId) }
+  const runAct = (v: { id: number; action: 'reopen' | 'skip' }) => {
+    status.reset(); end.reset(); advance.reset()
+    const clientId = v.action === 'skip' ? (skipIds.current[v.id] ?? (skipIds.current[v.id] = newEventId())) : undefined
+    act.mutate({ ...v, clientId }, { onSuccess: () => { if (v.action === 'skip') delete skipIds.current[v.id] } })
+  }
+  const runAdvance = (matId: number) => {
+    status.reset(); act.reset(); end.reset()
+    advance.mutate(matId, { onSuccess: r => setAwaitingAdvance({ matId, version: r.version }) })
+  }
   const closeFinish = () => {
     setFinishOpen(false)
     status.reset()
@@ -139,7 +157,7 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
 
   const mats = [...(view?.mats ?? [])].sort((a, b) => a.number - b.number)
   const allBound = mats.length > 0 && mats.every(m => m.bound)
-  const done = detail.event.status === 'done'
+  const done = eventStatus === 'done'
 
   return (
     <div className="grid gap-6">
@@ -161,8 +179,8 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
                 : 'Pause updates'}
             </Button>
           )}
-          {detail.event.status === 'setup' && <Button size="sm" onClick={runStart} disabled={status.isPending}>Start event</Button>}
-          {detail.event.status === 'live' && (
+          {eventStatus === 'setup' && <Button size="sm" onClick={runStart} disabled={status.isPending}>Start event</Button>}
+          {eventStatus === 'live' && (
             <Button size="sm" variant="destructive" onClick={() => setFinishOpen(true)} disabled={status.isPending}>Finish event</Button>
           )}
         </div>
@@ -201,7 +219,8 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
                   lastSuccessAt={lastSuccessAt}
                   pollIntervalMs={pollIntervalMs}
                   busy={(end.isPending && mat.current !== null && end.variables?.id === mat.current.id)
-                    || (advance.isPending && advance.variables === mat.id)}
+                    || (advance.isPending && advance.variables === mat.id)
+                    || (awaitingAdvance !== null && awaitingAdvance.matId === mat.id && (live?.version ?? -1) < awaitingAdvance.version)}
                   teamColor={teamColor}
                   onPrimary={onPrimary}
                   onAdvance={runAdvance}
@@ -221,6 +240,7 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
         open={finishOpen}
         onOpenChange={o => { if (o) setFinishOpen(true); else closeFinish() }}
         detail={detail}
+        snapshot={live}
         pending={status.isPending}
         error={status.error}
         onFinish={runFinish}
@@ -316,7 +336,7 @@ function MatPanel({ mat, view, mode, paused, lastSuccessAt, pollIntervalMs, busy
   const remaining = paused ? held : live.remainingMs
   const expired = clock !== null && remaining <= 0
 
-  const model = matPanelModel(mat, view.event.status, expired, mode)
+  const model = matPanelModel(mat, view.event.status, expired, mode, view.matches)
   const last = lastResultOf(view.matches, mat.id)
   // Finding 1 / 6.9: capped at four pairs so a deep rack cannot push the panel's
   // primary control below the fold; the remainder line still states the depth, counted
@@ -369,6 +389,7 @@ function MatPanel({ mat, view, mode, paused, lastSuccessAt, pollIntervalMs, busy
                 ))}
               </div>
             )}
+          {model.nowHint !== null && <p className="mt-2 t2 text-gray-10">{model.nowHint}</p>}
         </Lane>
 
         <Lane label="Next">

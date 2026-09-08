@@ -1004,3 +1004,16 @@ describe('EntryTab', () => {
     await vi.waitFor(() => expect(within(score).getByText('2')).toBeInTheDocument())
   })
 })
+
+// I5: a Finish pressed on a second device reaches this form through the stream, and the
+// detail is a cache that nothing invalidates; a form left up over a finished event is a
+// form that still says Save.
+describe('EntryTab reads the event status off the stream', () => {
+  it('shows the done state when the room says finished and the cache still says live', () => {
+    const view = sampleSnapshot()
+    mount(detail, { ...view, event: { ...view.event, status: 'done' } })
+    expect(screen.queryByRole('button', { name: /^Sav/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Finish event' })).not.toBeInTheDocument()
+    expect(screen.getByText(/This event is finished/)).toBeInTheDocument()
+  })
+})

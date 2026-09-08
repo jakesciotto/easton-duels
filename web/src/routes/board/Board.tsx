@@ -125,6 +125,7 @@ export function Board({ snapshot, connected, lastSuccessAt = null, screenMaySlee
           {snapshot !== null && plan.comp === 'mats' && (
             <MatBand
               mats={snapshot.mats.slice(0, budget.matsShown)}
+              matches={snapshot.matches}
               held={held}
               settled={settled}
               serverNow={snapshot.now}

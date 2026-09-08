@@ -219,8 +219,11 @@ describe('Board compositions', () => {
       // G05: and every one of those four rows says something. A mat with nothing on it
       // and nothing left to call used to render the gutter and the numeral alone, so a
       // reload left the room reading four blank rows for the rest of the afternoon.
-      for (const n of [1, 2, 3, 4]) {
-        expect(row(`Mat ${n}`), String(bound)).toHaveTextContent(`Mat ${n} complete`)
+      // M10: mat 1 carried the finished match, so it is complete. The other three never
+      // carried anything, and a mat nothing was ever put on is empty, not finished.
+      expect(row('Mat 1'), String(bound)).toHaveTextContent('Mat 1 complete')
+      for (const n of [2, 3, 4]) {
+        expect(row(`Mat ${n}`), String(bound)).toHaveTextContent(`Nothing on mat ${n} yet`)
       }
       unmount()
     }
@@ -232,14 +235,18 @@ describe('Board compositions', () => {
    */
   it('says complete only on the mat that has nothing left', () => {
     const live = pair(10, 'Mateo Rivera', 'Lucas Ferreira', { clock: RUNNING })
-    const next = pair(11, 'Kai Nakamura', 'Rosa Oliveira', { status: 'pending' })
+    const next = pair(11, 'Kai Nakamura', 'Rosa Oliveira', { status: 'pending', matId: 2 })
+    // Mat 3 carried a match earlier in the afternoon, so with nothing left it is complete.
+    const finished = pair(12, 'Ava Park', 'Sofia Diaz', {
+      status: 'done', matId: 3, endedAt: '2026-10-03T15:50:00.000Z', result: { winnerAthleteId: 100, winType: 'points' },
+    })
     const snapshot = atMode(sampleSnapshot({
       mats: [
         mat(1, { current: live, bound: true }),
         mat(2, { onDeck: [next] }),
         mat(3, {}),
       ],
-      matches: [live, next],
+      matches: [live, next, finished],
     }), 'live')
     render(<Board snapshot={snapshot} connected />)
     expect(row('Mat 1')).not.toHaveTextContent('complete')
