@@ -18,7 +18,7 @@ afterEach(() => vi.unstubAllGlobals())
 const SERVER_NOW = '2026-10-03T16:00:00.000Z'
 
 const detail: EventDetail = {
-  event: { id: 1, name: 'Fall Duels', date: '2026-10-03', matCount: 1, matCode: '0420', status: 'live', mode: 'live', maxAgeGap: 1, maxWeightGap: 10, sameGender: false, createdAt: 'x' },
+  event: { id: 1, name: 'Fall Duels', date: '2026-10-03', matCount: 1, matCode: '0420', status: 'live', mode: 'live', sameGender: false, createdAt: 'x' },
   teams: [{ id: 1, eventId: 1, name: 'Ridgeline', color: 'red', position: 0 }, { id: 2, eventId: 1, name: 'Lakeside', color: 'blue', position: 1 }],
   athletes: [], rulesets: [], mats: [{ id: 1, eventId: 1, number: 1, currentMatchId: 10 }], matches: [], candidateCount: 0,
 }
