@@ -64,6 +64,48 @@ describe('ConnectPage', () => {
     expect(screen.queryByText(/Guided Access/)).not.toBeInTheDocument()
   })
 
+  /**
+   * G09. A volunteer holding a tablet at a mat has no way to reach the desk except by
+   * walking there. The line is printed in the same words on the two screens that volunteer
+   * sees, this one before they walk over and the scorer once they are there, and it is
+   * printed in both modes, because a desk event still has a desk.
+   */
+  describe('the desk contact line', () => {
+    const withContact = (mode: 'live' | 'entry') => sampleSnapshot({
+      event: {
+        id: 7, name: 'Fall Duels', date: '2026-10-03', status: 'live', mode, matCount: 1,
+        contact: { name: 'Dana Whitfield', phone: '555 0147' },
+      },
+    })
+
+    const serve = (snapshot: ReturnType<typeof sampleSnapshot>) => fakeFetch(url => (
+      /\/snapshot(\?|$)/.test(url)
+        ? { json: { version: 1, snapshot } }
+        : { json: { url: 'http://192.168.1.20:8422', matCode: '0420' } }
+    ))
+
+    it('prints it under the connection instructions', async () => {
+      serve(withContact('live'))
+      mount('/connect?event=7')
+      expect(await screen.findByText('Questions at the desk: Dana Whitfield, 555 0147.')).toBeInTheDocument()
+    })
+
+    it('prints it on a desk event too', async () => {
+      serve(withContact('entry'))
+      mount('/connect?event=7')
+      expect(await screen.findByText('Questions at the desk: Dana Whitfield, 555 0147.')).toBeInTheDocument()
+    })
+
+    // Half a contact gives nobody anything to act on, so the server sends null and the
+    // line is not printed at all rather than printed with a hole in it.
+    it('prints nothing when the event carries no contact', async () => {
+      serve(sampleSnapshot())
+      mount('/connect?event=7')
+      expect(await screen.findByText('0420')).toBeInTheDocument()
+      expect(screen.queryByText(/Questions at the desk/)).toBeNull()
+    })
+  })
+
   it('shows an error rather than a silent fallback when the connect info cannot be fetched', async () => {
     fakeFetch(() => ({ status: 500, json: { error: { code: 'internal', message: 'internal error' } } }))
     mount('/connect?event=7')

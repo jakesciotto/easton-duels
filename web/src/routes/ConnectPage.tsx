@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router'
 import { ApiError } from '@/lib/api'
 import { adminApi } from '@/lib/queries'
 import { DESK_NOTE, DESK_NOTE_DETAIL, modeOf } from '@/lib/eventMode'
+import { contactLine } from '@/lib/format'
 import { useSnapshot } from '@/lib/useSnapshot'
 import { PinGate } from '@/components/PinGate'
 import { QrCode } from '@/components/QrCode'
@@ -36,6 +37,11 @@ function Connect({ eventId }: { eventId: number }) {
   }, [eventId])
 
   const target = info ? `${info.url}/mat?event=${eventId}` : ''
+  // 6.4: the same footer line the scorer prints, in the same words, because this is the
+  // screen a volunteer reads before they walk to a mat and that one is what they hold when
+  // something goes wrong there.
+  const contact = contactLine(snapshot?.event.contact ?? null)
+  const footer = contact && <p className="t2 text-gray-10">{contact}</p>
 
   // The same two sentences the Live tab prints, from the same constants: one screen must
   // not describe the afternoon differently from the other. The code is fetched either way
@@ -46,6 +52,7 @@ function Connect({ eventId }: { eventId: number }) {
       <div className="grid max-w-sm justify-items-center gap-2 text-center">
         <p className="t3 text-gray-11">{DESK_NOTE}</p>
         <p className="t2 text-gray-10">{DESK_NOTE_DETAIL}</p>
+        {footer}
       </div>
     )
   }
@@ -74,6 +81,7 @@ function Connect({ eventId }: { eventId: number }) {
         <p>Run the iPad in Guided Access: Settings, Accessibility, Guided Access, set a passcode, triple-click the side button, Start.</p>
         <p>Plug it in. A screen held awake for four hours will not finish the afternoon on a charge.</p>
       </div>
+      {footer}
     </div>
   )
 }
