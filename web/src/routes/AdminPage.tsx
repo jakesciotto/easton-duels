@@ -20,6 +20,7 @@ const STATE_RULE: Record<EventSummary['status'], string> = {
   live: 'bg-live',
   setup: 'bg-gray-7',
   done: 'bg-transparent',
+  certified: 'bg-transparent',
 }
 
 // Finding 5: `ch` (and so var(--col-num-s)) resolves against each element's own

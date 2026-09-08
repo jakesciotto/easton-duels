@@ -1,5 +1,5 @@
 import { sqliteTable, text, integer, real, index, uniqueIndex, primaryKey } from 'drizzle-orm/sqlite-core'
-import type { RulesetAction, RulesetTerminal, MatchEventPayload } from '../shared/types.js'
+import type { RulesetAction, RulesetTerminal, MatchEventPayload, AuditAction, AuditActor, AuditDetail } from '../shared/types.js'
 
 export const settings = sqliteTable('settings', {
   key: text('key').primaryKey(),
@@ -12,7 +12,7 @@ export const events = sqliteTable('events', {
   date: text('date').notNull(),
   matCount: integer('mat_count').notNull(),
   matCode: text('mat_code').notNull(),
-  status: text('status', { enum: ['setup', 'live', 'done'] }).notNull().default('setup'),
+  status: text('status', { enum: ['setup', 'live', 'done', 'certified'] }).notNull().default('setup'),
   // How the event is run, decided at the walkthrough two weeks out. 'entry' means the
   // desk types every result and no tablet scores a mat. 'live' means the mats drive it.
   // Existing events default to 'live', which is the behaviour they were created under.
@@ -24,6 +24,9 @@ export const events = sqliteTable('events', {
   // half-filled contact is worse than none and reads as absent.
   contactName: text('contact_name'),
   contactPhone: text('contact_phone'),
+  // Set when an admin certifies the event and cleared when one unlocks it, so the board
+  // and the console can print the time the record was signed off rather than only a status.
+  certifiedAt: text('certified_at'),
   createdAt: text('created_at').notNull(),
   version: integer('version').notNull().default(0),
 })
@@ -144,6 +147,21 @@ export const matchEvents = sqliteTable('match_events', {
   payload: text('payload', { mode: 'json' }).$type<MatchEventPayload>(),
   at: text('at').notNull(),
 }, t => [uniqueIndex('match_events_match_seq_idx').on(t.matchId, t.seq)])
+
+// Append only, and deliberately free of foreign keys: the trail of what was done to an
+// event has to outlive the rows it describes, including the event itself.
+export const auditLog = sqliteTable('audit_log', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  eventId: integer('event_id').notNull(),
+  matchId: integer('match_id'),
+  actor: text('actor').$type<AuditActor>().notNull(),
+  action: text('action').$type<AuditAction>().notNull(),
+  detail: text('detail', { mode: 'json' }).$type<AuditDetail>().notNull().default({}),
+  at: text('at').notNull(),
+}, t => [
+  index('audit_log_event_idx').on(t.eventId, t.id),
+  index('audit_log_match_idx').on(t.matchId),
+])
 
 export type EventRow = typeof events.$inferSelect
 export type TeamRow = typeof teams.$inferSelect

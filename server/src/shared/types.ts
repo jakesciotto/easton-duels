@@ -1,6 +1,10 @@
 export type WinType = 'submission' | 'points' | 'decision'
 export type MatchStatus = 'pending' | 'live' | 'done'
-export type EventStatus = 'setup' | 'live' | 'done'
+/**
+ * 'certified' is the record the organizer signed off on. It reads as done everywhere a
+ * status is displayed, and it refuses every write on the event until an admin unlocks it.
+ */
+export type EventStatus = 'setup' | 'live' | 'done' | 'certified'
 /**
  * How the event is run. 'entry' means the desk types every result and no tablet scores a
  * mat; 'live' means the mats drive it and the desk corrects. The walkthrough two weeks
@@ -16,9 +20,44 @@ export interface RulesetTerminal { key: string; label: string; winType: WinType 
 export type MatchEventPayload =
   | { kind: 'end'; winnerAthleteId: number; winType: WinType }
   | { kind: 'reopen' }
-  | { kind: 'edit_result'; winnerAthleteId: number; winType: WinType }
+  | { kind: 'edit_result'; winnerAthleteId: number; winType: WinType; reason?: string }
   | { kind: 'skip' }
   | { kind: 'clock_extend'; addMs: number }
+
+// Why a result was changed after the fact. The desk types it into the Result dialog, and
+// it travels with the correction in both the match log and the audit row.
+export const CORRECTION_REASON_MAX = 120
+
+/**
+ * Who made a write, as it is stored in the audit log. `mat:3` is the tablet scoring mat 3,
+ * `desk` is the Entry tab, `admin` is any other console write, and `system` is the server's
+ * own sweeps (a clock that ran out, a tablet that stopped answering).
+ */
+export type AuditActor = 'admin' | 'desk' | 'system' | 'mat' | `mat:${number}`
+
+export type AuditAction =
+  | 'score' | 'terminal' | 'clock_start' | 'clock_pause' | 'clock_extend'
+  | 'end' | 'undo' | 'skip' | 'reopen' | 'entry' | 'correction'
+  | 'bind' | 'takeover' | 'unbind' | 'advance'
+  | 'create' | 'event_edit' | 'mode' | 'contact' | 'mat_count' | 'start' | 'finish' | 'delete'
+  | 'certify' | 'uncertify'
+  | 'team_edit'
+  | 'roster_add' | 'roster_edit' | 'roster_assign' | 'roster_remove' | 'roster_sync'
+  | 'match_create' | 'match_edit' | 'match_delete' | 'generate' | 'reorder'
+  | 'ruleset_create' | 'ruleset_edit' | 'ruleset_delete'
+  // Backfilled rows carry the match event's own type, and two of those are not verbs any
+  // live write records: a desk entry's absolute score, and the pre-0007 admin event kind.
+  | 'set_score' | 'admin'
+
+export type AuditDetail = Record<string, unknown>
+
+export interface AuditEntry {
+  id: number
+  at: string
+  actor: AuditActor
+  action: AuditAction
+  detail: AuditDetail
+}
 
 export interface ClockState { elapsedMs: number; startedAt: string | null; lengthMs: number }
 export interface MatchResult { winnerAthleteId: number; winType: WinType }
@@ -61,7 +100,7 @@ export interface EventContact { name: string; phone: string }
 export interface Snapshot {
   version: number
   now: string
-  event: { id: number; name: string; date: string; status: EventStatus; mode: EventMode; matCount: number; contact: EventContact | null }
+  event: { id: number; name: string; date: string; status: EventStatus; mode: EventMode; matCount: number; contact: EventContact | null; certifiedAt: string | null }
   teams: TeamView[]
   rulesets: RulesetView[]
   mats: MatView[]

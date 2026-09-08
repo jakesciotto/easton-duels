@@ -33,6 +33,7 @@ const STATUS: Record<EventStatus, { label: string; variant: 'default' | 'live' |
   setup: { label: 'Setup', variant: 'default' },
   live: { label: 'Live', variant: 'live' },
   done: { label: 'Done', variant: 'done' },
+  certified: { label: 'Certified', variant: 'done' },
 }
 
 // 6.18: one column with 16px gutters below 640px. The panel gutter matches the shell's.

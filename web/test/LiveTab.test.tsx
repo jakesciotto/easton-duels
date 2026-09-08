@@ -441,7 +441,7 @@ describe('LiveTab', () => {
   it('replaces the rack with the record once the event is finished', async () => {
     const feed = snapshotFeed(sampleSnapshot({
       now: SERVER_NOW,
-      event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'done', mode: 'live', matCount: 1, contact: null },
+      event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'done', mode: 'live', matCount: 1, contact: null, certifiedAt: null },
       teams: [
         { id: 1, name: 'Ridgeline', color: 'red', position: 0, wins: 7, points: 42 },
         { id: 2, name: 'Lakeside', color: 'blue', position: 1, wins: 5, points: 31 },
@@ -465,7 +465,7 @@ describe('LiveTab', () => {
   it('lands the final result head and rows on the same fixed track', async () => {
     const feed = snapshotFeed(sampleSnapshot({
       now: SERVER_NOW,
-      event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'done', mode: 'live', matCount: 1, contact: null },
+      event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'done', mode: 'live', matCount: 1, contact: null, certifiedAt: null },
       teams: [
         { id: 1, name: 'Ridgeline', color: 'red', position: 0, wins: 7, points: 42 },
         { id: 2, name: 'Lakeside', color: 'blue', position: 1, wins: 5, points: 31 },
