@@ -1,5 +1,5 @@
 import { ApiError } from '@/lib/api'
-import { athleteName } from '@/lib/format'
+import { athleteName, winTypeLabel } from '@/lib/format'
 import type { AthleteRow, MatchRow } from '@/lib/types'
 import type { WinType } from '@shared/types'
 
@@ -102,6 +102,80 @@ export function restoreDraft(eventId: number): EntryDraft | null {
 
 export function pairKey(a: number, b: number): string {
   return a < b ? `${a}-${b}` : `${b}-${a}`
+}
+
+/**
+ * Everything about a draft that the server is told, so two attempts can be compared.
+ *
+ * 7.12 holds one entryId through every retry, and the server dedupes on it. That is
+ * right for a plain resend and wrong for a corrected one: an operator who fixed a
+ * number after a failure and pressed Save again had the ORIGINAL result replayed and
+ * the corrected one reported. A retry that carries a different shape gets a new id.
+ */
+export function entryShape(d: EntryDraft): string {
+  const points = (v: string) => String(v === '' ? 0 : Number(v))
+  return [d.editingId ?? 'new', d.aId, d.bId, points(d.pointsA), points(d.pointsB), d.winner ?? '', d.winType].join('|')
+}
+
+// What the client reads off a save's response. Typed as what it checks rather than as
+// the full match view, because a response that is missing a field is a case this has to
+// survive rather than a case the compiler can rule out.
+export interface EntrySide { athleteId?: number; name?: string; score?: number }
+export interface EntryMatch {
+  id?: number
+  a?: EntrySide
+  b?: EntrySide
+  result?: { winnerAthleteId?: number; winType?: WinType } | null
+}
+
+export interface StoredOutcome {
+  winnerAthleteId: number
+  winType: WinType
+  scores: Record<number, number>
+  /** "Ava Park beat Noah Tran on points, 5 to 2", with no leading verb. */
+  sentence: string
+}
+
+/**
+ * 6.6: Save confirms from its own response. The sentence used to be built from the form,
+ * which reports what was typed rather than what was stored, and a deduped resend stores
+ * neither.
+ */
+export function storedOutcome(match: EntryMatch | null | undefined): StoredOutcome | null {
+  const { a, b, result } = match ?? {}
+  if (!a || !b || !result) return null
+  const { winnerAthleteId, winType } = result
+  if (typeof winnerAthleteId !== 'number' || !winType) return null
+  if (typeof a.athleteId !== 'number' || typeof b.athleteId !== 'number') return null
+  const aWon = winnerAthleteId === a.athleteId
+  const won = aWon ? a : b
+  const lost = aWon ? b : a
+  return {
+    winnerAthleteId,
+    winType,
+    scores: { [a.athleteId]: a.score ?? 0, [b.athleteId]: b.score ?? 0 },
+    sentence: `${won.name ?? 'Unknown'} beat ${lost.name ?? 'Unknown'} ${winTypeLabel(winType)}, ${a.score ?? 0} to ${b.score ?? 0}`,
+  }
+}
+
+/** Whether the result on file is the one this attempt sent. */
+export function outcomeMatches(
+  outcome: StoredOutcome,
+  sent: { winnerAthleteId: number; winType: WinType; scores: Record<number, number> },
+): boolean {
+  if (outcome.winnerAthleteId !== sent.winnerAthleteId || outcome.winType !== sent.winType) return false
+  return Object.entries(sent.scores).every(([id, points]) => outcome.scores[Number(id)] === points)
+}
+
+// A replay is not a failure, so it never wears the fault band. It does have to be read,
+// because the result the desk just typed is not the result on file.
+export function duplicateCopy(outcome: StoredOutcome | null): SaveErrorCopy {
+  return {
+    title: 'This entry was already saved',
+    body: outcome === null
+      ? 'The server had it already, so nothing was added. Check the ledger.'
+      : `The result on file is ${outcome.sentence}. Edit that row in the ledger to change it.`,
+  }
 }
 
 export function isRepeatPair(log: Record<string, number>, key: string, now: number): boolean {

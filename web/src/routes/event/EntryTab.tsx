@@ -11,8 +11,9 @@ import { cn } from '@/lib/utils'
 import { defaultOutcome } from './entry-defaults'
 import {
   CUE_MS, LEDGER_LIMIT, RESTORED_NEW_ENTRY, SAVED_LABEL_MS, SAVE_TIMEOUT_MS,
-  clearDraft, clockLabel, isRepeatPair, ledgerTime, loadDraft, pairKey, restoreDraft, restoredBannerCopy, saveDraft, saveErrorCopy, teamWins,
-  type EntryDraft, type SaveErrorCopy,
+  clearDraft, clockLabel, duplicateCopy, entryShape, isRepeatPair, ledgerTime, loadDraft, outcomeMatches, pairKey,
+  restoreDraft, restoredBannerCopy, saveDraft, saveErrorCopy, storedOutcome, teamWins,
+  type EntryDraft, type EntryMatch, type SaveErrorCopy,
 } from './entry-state'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -56,19 +57,26 @@ const LEDGER_COLS =
 
 interface NewEntryBody { entryId: string; athleteAId: number; athleteBId: number; pointsA: number; pointsB: number; winnerAthleteId: number; winType: WinType }
 interface CorrectionBody { entryId: string; pointsA: number; pointsB: number; winnerAthleteId: number; winType: WinType }
-interface EntryResponse { match?: { id?: number } | null; version?: number }
+interface EntryResponse { match?: EntryMatch | null; version?: number }
+// The POST answers 201 for a write it made and 200 for one it deduped.
+interface EntryResult { res: EntryResponse; duplicate: boolean }
 
 export function EntryTab({ detail }: { detail: EventDetail }) {
   const eventId = detail.event.id
   const [teamA, teamB] = detail.teams
-  const [f, setF] = useState<Form>(() => {
+  // One read of storage for the three things a restored draft decides: the form, the
+  // banner over it, and the payload the id it carries is already bound to.
+  const [restored] = useState(() => {
     const draft = restoreDraft(eventId)
-    return draft ? { ...draft, touched: draft.winner !== null } : fresh()
+    return {
+      form: draft ? { ...draft, touched: draft.winner !== null } : fresh(),
+      banner: draft ? restoredBannerCopy(draft, detail.matches, detail.athletes) : null,
+      shape: draft ? entryShape(draft) : null,
+    }
   })
-  const [failure, setFailure] = useState<SaveErrorCopy | null>(() => {
-    const restored = restoreDraft(eventId)
-    return restored ? restoredBannerCopy(restored, detail.matches, detail.athletes) : null
-  })
+  const [f, setF] = useState<Form>(restored.form)
+  const [failure, setFailure] = useState<SaveErrorCopy | null>(restored.banner)
+  const [dupe, setDupe] = useState<SaveErrorCopy | null>(null)
   const [pairPrompt, setPairPrompt] = useState<string | null>(null)
   const [savedLabel, setSavedLabel] = useState(false)
   const [announce, setAnnounce] = useState('')
@@ -76,6 +84,9 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   const [savedAt, setSavedAt] = useState<Record<number, number>>({})
   const [cue, setCue] = useState<{ id: number; on: boolean } | null>(null)
   const pairLog = useRef<Record<string, number>>({})
+  // The payload the current entryId has already been sent with, so a plain retry keeps
+  // the id and a corrected one mints a new one.
+  const sentShape = useRef<string | null>(restored.shape)
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
   const watchdog = useRef<ReturnType<typeof setTimeout> | null>(null)
   const formRef = useRef<HTMLFormElement>(null)
@@ -104,8 +115,15 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   // 7.12's deadline and 6.6's confirmation both belong to the POST. The refetch that
   // repaints the ledger runs behind them, so a slow one can no longer spend the desk's
   // eight seconds and report a saved result as a failure.
-  const create = useAdminMutation(eventId, (body: NewEntryBody) => adminApi<EntryResponse>(`/api/events/${eventId}/entries`, { method: 'POST', body }), { awaitRefetch: false })
-  const correct = useAdminMutation(eventId, (v: { id: number; body: CorrectionBody }) => adminApi<EntryResponse>(`/api/matches/${v.id}/entry`, { method: 'POST', body: v.body }), { awaitRefetch: false })
+  const create = useAdminMutation(eventId, async (body: NewEntryBody): Promise<EntryResult> => {
+    let status = 0
+    const res = await adminApi<EntryResponse>(`/api/events/${eventId}/entries`, { method: 'POST', body, onStatus: s => { status = s } })
+    return { res, duplicate: status === 200 }
+  }, { awaitRefetch: false })
+  // A correction answers 200 either way, so a replay is read off the result it returns
+  // rather than off the status.
+  const correct = useAdminMutation(eventId, async (v: { id: number; body: CorrectionBody }): Promise<EntryResult> =>
+    ({ res: await adminApi<EntryResponse>(`/api/matches/${v.id}/entry`, { method: 'POST', body: v.body }), duplicate: false }), { awaitRefetch: false })
   const start = useAdminMutation<void>(eventId, () => adminApi(`/api/events/${eventId}`, { method: 'PATCH', body: { status: 'live' } }))
 
   // Every terminal outcome re-enables Save, the watchdog included, because a POST
@@ -152,17 +170,25 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     if (!kept) {
       setF(fresh())
       setFailure(null)
+      sentShape.current = null
       return
     }
     setF({ ...kept, touched: kept.winner !== null })
     setFailure(RESTORED_NEW_ENTRY)
+    sentShape.current = entryShape(kept)
   }
 
-  const onSaved = (res: EntryResponse | undefined, key: string, sentence: string, payload: Form) => {
+  interface Sent { winnerAthleteId: number; winType: WinType; scores: Record<number, number> }
+
+  const onSaved = (out: EntryResult | undefined, key: string, typed: string, sent: Sent, payload: Form) => {
     settle()
     clearDraft(eventId, payload.editingId)
     pairLog.current[key] = Date.now()
-    const id = res?.match?.id
+    const outcome = storedOutcome(out?.res.match)
+    // A replay carries the result the server already had, which is the one the desk needs
+    // to read: it is not what was just typed, and only the ledger can change it now.
+    const replayed = out?.duplicate === true || (outcome !== null && !outcomeMatches(outcome, sent))
+    const id = out?.res.match?.id
     if (typeof id === 'number') {
       const at = Date.now()
       setSavedAt(s => ({ ...s, [id]: at }))
@@ -171,7 +197,8 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     setPairPrompt(null)
     setTimedOut(false)
     setSavedLabel(true)
-    setAnnounce(sentence)
+    setDupe(replayed ? duplicateCopy(outcome) : null)
+    setAnnounce(outcome === null ? typed : `${replayed ? 'Already saved.' : 'Saved.'} ${outcome.sentence}.`)
     later(() => setSavedLabel(false), SAVED_LABEL_MS)
     resume(payload.editingId)
     focusFirstField()
@@ -194,9 +221,20 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     const winnerAthleteId = winner === 'a' ? a.id : b.id
     const won = winner === 'a' ? a : b
     const lost = winner === 'a' ? b : a
-    const sentence = `Saved. ${athleteName(won)} beat ${athleteName(lost)} ${winTypeLabel(winType)}, ${pA} to ${pB}.`
-    const payload = f
+    // The fallback only. The confirmation is read off the response wherever the response
+    // carries a result, because that is what is on file.
+    const typed = `Saved. ${athleteName(won)} beat ${athleteName(lost)} ${winTypeLabel(winType)}, ${pA} to ${pB}.`
+    const sent: Sent = { winnerAthleteId, winType, scores: { [a.id]: pA, [b.id]: pB } }
 
+    // 7.12 holds one id through a retry so a resend is deduped. A retry whose payload the
+    // operator has corrected is a different write and must not be.
+    const shape = entryShape(draftOf({ ...f, winner, winType }))
+    const entryId = sentShape.current !== null && sentShape.current !== shape ? newEventId() : f.entryId
+    sentShape.current = shape
+    const payload: Form = { ...f, entryId, winner, winType, touched: true }
+    if (entryId !== f.entryId) setF(s => ({ ...s, entryId }))
+
+    setDupe(null)
     setTimedOut(false)
     settle()
     watchdog.current = setTimeout(() => {
@@ -205,15 +243,15 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     }, SAVE_TIMEOUT_MS)
 
     if (f.editingId !== null) {
-      const body: CorrectionBody = { entryId: f.entryId, pointsA: pA, pointsB: pB, winnerAthleteId, winType }
+      const body: CorrectionBody = { entryId, pointsA: pA, pointsB: pB, winnerAthleteId, winType }
       correct.mutate({ id: f.editingId, body }, {
-        onSuccess: res => onSaved(res, key, sentence, payload),
+        onSuccess: out => onSaved(out, key, typed, sent, payload),
         onError: err => onFailed(payload, err),
       })
     } else {
-      const body: NewEntryBody = { entryId: f.entryId, athleteAId: a.id, athleteBId: b.id, pointsA: pA, pointsB: pB, winnerAthleteId, winType }
+      const body: NewEntryBody = { entryId, athleteAId: a.id, athleteBId: b.id, pointsA: pA, pointsB: pB, winnerAthleteId, winType }
       create.mutate(body, {
-        onSuccess: res => onSaved(res, key, sentence, payload),
+        onSuccess: out => onSaved(out, key, typed, sent, payload),
         onError: err => onFailed(payload, err),
       })
     }
@@ -263,8 +301,10 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
       touched: true, editingId: m.id, entryId: newEventId(),
     })
     setFailure(null)
+    setDupe(null)
     setPairPrompt(null)
     setAnnounce('')
+    sentShape.current = null
     focusPoints()
   }
   // The other door out of a correction, and it strands the same way load did:
@@ -274,7 +314,9 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     if (f.editingId !== null) clearDraft(eventId, f.editingId)
     setPairPrompt(null)
     setFailure(null)
+    setDupe(null)
     setF({ ...fresh(), aId: String(m.athleteAId), bId: String(m.athleteBId) })
+    sentShape.current = null
     focusPoints()
   }
   // Cancelling an edit drops that correction's own draft: a correction sets one
@@ -284,6 +326,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   const cancelEdit = () => {
     clearDraft(eventId, f.editingId)
     setPairPrompt(null)
+    setDupe(null)
     resume(f.editingId)
   }
 
@@ -388,6 +431,12 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
               <Alert variant="attend" className="mt-4">
                 <AlertTitle variant="attend">These two were just entered</AlertTitle>
                 <AlertDescription>{a && b ? `${athleteName(a)} and ${athleteName(b)} have a result from the last minute. Press Save again to record a second one.` : 'Press Save again to record a second result.'}</AlertDescription>
+              </Alert>
+            )}
+            {dupe && (
+              <Alert variant="attend" className="mt-4">
+                <AlertTitle variant="attend">{dupe.title}</AlertTitle>
+                <AlertDescription>{dupe.body}</AlertDescription>
               </Alert>
             )}
             {failure && (

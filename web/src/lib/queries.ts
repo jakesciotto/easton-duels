@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, ApiError } from './api'
+import { api, ApiError, type ApiOptions } from './api'
 import { clearAdminToken, getAdminToken } from './auth'
 import { useHeldWhileEngaged } from './operatorEngaged'
 import type { EventDetail, EventSummary } from './types'
@@ -10,7 +10,7 @@ export const qk = {
 }
 
 // Admin request: injects the token; a 401 clears it so PinGate asks again.
-export async function adminApi<T = unknown>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
+export async function adminApi<T = unknown>(path: string, opts: Omit<ApiOptions, 'token'> = {}): Promise<T> {
   try {
     return await api<T>(path, { ...opts, token: getAdminToken() })
   } catch (e) {

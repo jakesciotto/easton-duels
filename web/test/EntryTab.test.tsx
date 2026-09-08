@@ -587,6 +587,119 @@ describe('EntryTab', () => {
     expect(within(results).getByText('2:07')).toBeInTheDocument()
   })
 
+  // G17. The id is held so a resend is deduped, which is right until the operator fixes
+  // the payload and presses Save again: then the server replays the original result and
+  // the client reports the corrected one.
+  it('mints a new entryId for a retry the operator has corrected', async () => {
+    let broken = true
+    const f = fakeFetch(() => broken
+      ? { status: 500, json: { error: { code: 'internal', message: 'boom' } } }
+      : { status: 201, json: { match: { id: 9 }, version: 3 } })
+    mount()
+    const user = userEvent.setup()
+    await pick(user, 'Ridgeline competitor', 'Ava Park')
+    await pick(user, 'Lakeside competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('Ridgeline points'), '6')
+    await user.click(saveButton())
+    await screen.findByText('The server had a problem')
+    const first = f.body(0).entryId as string
+
+    broken = false
+    await user.clear(screen.getByLabelText('Ridgeline points'))
+    await user.type(screen.getByLabelText('Ridgeline points'), '8')
+    await user.click(saveButton())
+    await vi.waitFor(() => expect(f.calls.length).toBe(2))
+    expect(f.body(1)).toMatchObject({ pointsA: 8 })
+    expect(f.body(1).entryId).not.toBe(first)
+  })
+
+  it('keeps the entryId for a retry the operator has not touched', async () => {
+    let broken = true
+    const f = fakeFetch(() => broken
+      ? { status: 500, json: { error: { code: 'internal', message: 'boom' } } }
+      : { status: 201, json: { match: { id: 9 }, version: 3 } })
+    mount()
+    const user = userEvent.setup()
+    await pick(user, 'Ridgeline competitor', 'Ava Park')
+    await pick(user, 'Lakeside competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('Ridgeline points'), '6')
+    await user.click(saveButton())
+    await screen.findByText('The server had a problem')
+    const first = f.body(0).entryId as string
+
+    broken = false
+    await user.click(saveButton())
+    await vi.waitFor(() => expect(f.calls.length).toBe(2))
+    expect(f.body(1).entryId).toBe(first)
+  })
+
+  // A reload rebuilds the form from storage, so the id it carries has to be bound to the
+  // payload it was stored with or a correction typed after the reload is deduped away.
+  it('mints a new entryId when the payload changes after a reload', async () => {
+    const f = fakeFetch(() => ({ status: 201, json: { match: { id: 9 }, version: 3 } }))
+    saveDraft(7, { entryId: 'e-restored-0001', aId: '101', bId: '201', pointsA: '6', pointsB: '1', winner: 'a', winType: 'points', editingId: null })
+    mount()
+    const user = userEvent.setup()
+    expect(screen.getByText('This entry never sent')).toBeInTheDocument()
+    await user.clear(screen.getByLabelText('Ridgeline points'))
+    await user.type(screen.getByLabelText('Ridgeline points'), '9')
+    await user.click(saveButton())
+    await vi.waitFor(() => expect(f.calls.length).toBe(1))
+    expect(f.body(0).entryId).not.toBe('e-restored-0001')
+  })
+
+  it('reads the confirmation off the response rather than off the form', async () => {
+    const f = fakeFetch(() => ({
+      status: 201,
+      json: {
+        match: {
+          id: 9,
+          a: { athleteId: 101, name: 'Ava Park', score: 5 },
+          b: { athleteId: 201, name: 'Noah Tran', score: 2 },
+          result: { winnerAthleteId: 101, winType: 'points' },
+        },
+        version: 3,
+      },
+    }))
+    mount()
+    const user = userEvent.setup()
+    await pick(user, 'Ridgeline competitor', 'Ava Park')
+    await pick(user, 'Lakeside competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+    await user.type(screen.getByLabelText('Lakeside points'), '2')
+    await user.click(saveButton())
+    await vi.waitFor(() => expect(f.calls.length).toBe(1))
+    expect(await screen.findByText('Saved. Ava Park beat Noah Tran on points, 5 to 2.')).toBeInTheDocument()
+    expect(screen.queryByText('This entry was already saved')).not.toBeInTheDocument()
+  })
+
+  it('says a deduped save stored the earlier result, and names it', async () => {
+    // 200 rather than 201: the server matched the id and returned the match it already had.
+    const f = fakeFetch(() => ({
+      status: 200,
+      json: {
+        match: {
+          id: 9,
+          a: { athleteId: 101, name: 'Ava Park', score: 6 },
+          b: { athleteId: 201, name: 'Noah Tran', score: 1 },
+          result: { winnerAthleteId: 101, winType: 'submission' },
+        },
+        version: 3,
+      },
+    }))
+    mount()
+    const user = userEvent.setup()
+    await pick(user, 'Ridgeline competitor', 'Ava Park')
+    await pick(user, 'Lakeside competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+    await user.type(screen.getByLabelText('Lakeside points'), '2')
+    await user.click(saveButton())
+    await vi.waitFor(() => expect(f.calls.length).toBe(1))
+    expect(await screen.findByText('This entry was already saved')).toBeInTheDocument()
+    expect(screen.getByText(/The result on file is Ava Park beat Noah Tran by submission, 6 to 1\./)).toBeInTheDocument()
+    expect(screen.getByText('Already saved. Ava Park beat Noah Tran by submission, 6 to 1.')).toBeInTheDocument()
+  })
+
   // G14. The eight second deadline is written for the POST. It used to cover the POST
   // plus the refetch the mutation ran on success, so a save that landed in a second and
   // a refetch that took nine reported a saved result as a network failure.

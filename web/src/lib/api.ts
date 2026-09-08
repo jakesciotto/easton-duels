@@ -12,13 +12,20 @@ export class ApiError extends Error {
   }
 }
 
-export interface ApiOptions { method?: string; body?: unknown; token?: string | null }
+export interface ApiOptions {
+  method?: string
+  body?: unknown
+  token?: string | null
+  /** The status itself, for the one caller that has to tell a fresh write from a replay. */
+  onStatus?: (status: number) => void
+}
 
 export async function api<T = unknown>(path: string, opts: ApiOptions = {}): Promise<T> {
   const headers: Record<string, string> = {}
   if (opts.body !== undefined) headers['content-type'] = 'application/json'
   if (opts.token) headers.authorization = `Bearer ${opts.token}`
   const res = await fetch(path, { method: opts.method ?? 'GET', headers, body: opts.body === undefined ? undefined : JSON.stringify(opts.body) })
+  opts.onStatus?.(res.status)
   if (res.status === 204) return undefined as T
   const json = await res.json().catch(() => null)
   if (!res.ok) {
