@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEven
 import { PencilLine } from 'lucide-react'
 import { teamCode, type WinType } from '@shared/types'
 import { adminApi, useAdminMutation } from '@/lib/queries'
+import { focusWithoutEngaging } from '@/lib/operatorEngaged'
 import { newEventId } from '@/lib/ids'
 import type { AthleteRow, EventDetail, MatchRow, TeamRow } from '@/lib/types'
 import { athleteName, winTypeLabel } from '@/lib/format'
@@ -125,7 +126,9 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   })
   const pickType = (t: WinType) => setF(s => ({ ...s, winner, winType: t, touched: true }))
 
-  const focusFirstField = () => formRef.current?.querySelector<HTMLElement>('#entry-a-competitor')?.focus()
+  // The save's own focus, announced to 4.4's gate so the refetch it triggered is not
+  // held behind it. The grant ends the moment the operator touches the field.
+  const focusFirstField = () => focusWithoutEngaging(formRef.current?.querySelector<HTMLElement>('#entry-a-competitor'))
   const focusPoints = () => {
     const well = formRef.current?.querySelector<HTMLInputElement>('#entry-a-points')
     well?.focus()

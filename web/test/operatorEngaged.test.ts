@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
-import { ENGAGEMENT_RECHECK_MS, operatorEngaged, useHeldWhileEngaged } from '@/lib/operatorEngaged'
+import { ENGAGEMENT_RECHECK_MS, focusWithoutEngaging, operatorEngaged, useHeldWhileEngaged } from '@/lib/operatorEngaged'
 
 afterEach(() => {
   document.body.innerHTML = ''
@@ -74,6 +74,51 @@ describe('operatorEngaged', () => {
     document.body.innerHTML = '<div role="listbox"><div role="option" tabindex="0"></div></div>'
     const option = document.querySelector('[role="option"]') as HTMLElement
     option.focus()
+    expect(operatorEngaged()).toBe(true)
+  })
+
+  // base-ui leaves a closed popup in its portal, so the bare role match went on matching
+  // for the life of the page and one pick from one Select held the screen for ever.
+  it('is false once a Select listbox has closed but stayed in the portal', () => {
+    document.body.innerHTML =
+      '<div data-closed hidden><div data-slot="select-content" data-closed><div role="listbox"></div></div></div>'
+    expect(operatorEngaged()).toBe(false)
+  })
+
+  it('is true for an open listbox standing beside a closed one', () => {
+    document.body.innerHTML =
+      '<div data-closed hidden><div role="listbox"></div></div><div role="listbox"></div>'
+    expect(operatorEngaged()).toBe(true)
+  })
+})
+
+describe('focusWithoutEngaging', () => {
+  const trigger = () => {
+    document.body.innerHTML = '<button data-slot="select-trigger"></button>'
+    return document.querySelector('button') as HTMLButtonElement
+  }
+
+  it('leaves the field the app focused out of the count', () => {
+    const el = trigger()
+    focusWithoutEngaging(el)
+    expect(el).toHaveFocus()
+    expect(operatorEngaged()).toBe(false)
+  })
+
+  it('ends the grant at the operator first touch of that field', () => {
+    const el = trigger()
+    focusWithoutEngaging(el)
+    el.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }))
+    expect(operatorEngaged()).toBe(true)
+  })
+
+  it('grants one field at a time', () => {
+    const first = trigger()
+    focusWithoutEngaging(first)
+    const second = document.createElement('input')
+    document.body.appendChild(second)
+    focusWithoutEngaging(second)
+    first.focus()
     expect(operatorEngaged()).toBe(true)
   })
 })

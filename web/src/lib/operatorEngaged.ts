@@ -11,7 +11,7 @@ export function operatorEngaged(): boolean {
   if (dragging && dragging.getAttribute('data-dragging') !== 'false') return true
 
   const active = document.activeElement
-  if (active && active !== document.body) {
+  if (active && active !== document.body && active !== granted) {
     const tag = active.tagName
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return true
     if ((active as HTMLElement).isContentEditable) return true
@@ -23,6 +23,12 @@ export function operatorEngaged(): boolean {
   // Any open dialog, and any open listbox (the popup a Select trigger opens), counts as
   // engaged: an arriving snapshot must not rewrite the options under an open list.
   //
+  // Only an OPEN one. A closed base-ui popup stays in the portal carrying `data-closed`,
+  // with `hidden` on its positioner, so the bare `[role="listbox"]` this used to match
+  // went on matching for the life of the page: one pick from one Select left the whole
+  // screen permanently engaged, and 4.4's hold, which is meant to end on close, never
+  // released again.
+  //
   // One exception, and it has to be asked for by name. A dialog whose CONTENT IS the live
   // state cannot be held: holding it shows the operator a stale reading and lets them commit
   // against it. The scorer's confirm sheet is that case, and it carries its own check that
@@ -30,10 +36,42 @@ export function operatorEngaged(): boolean {
   // held, because everywhere else an arriving poll is an interruption rather than the point.
   const dialogs = document.querySelectorAll('[data-slot="dialog-content"][data-open], [role="dialog"], [role="listbox"]')
   for (const dialog of dialogs) {
-    if (!dialog.hasAttribute('data-poll-through')) return true
+    if (dialog.hasAttribute('data-poll-through')) continue
+    if (dialog.closest('[data-closed], [hidden]')) continue
+    return true
   }
 
   return false
+}
+
+/**
+ * The one field the app itself put the cursor in, which is not an operator gesture.
+ *
+ * 6.6 ends every save by parking focus on field one for the next entry. Counted as
+ * engagement, that focus held the refetch carrying the row the operator had just saved,
+ * so the ledger row and the running team score -- the whole confirmation the save
+ * exists to produce -- never landed while the desk stayed on the form.
+ *
+ * The grant covers exactly the element the app focused and ends at the operator's first
+ * touch of it, so 4.4's guarantee is untouched: nothing arrives under a real gesture.
+ */
+let granted: Element | null = null
+
+function releaseGrant(): void {
+  if (!granted) return
+  for (const type of GRANT_ENDERS) granted.removeEventListener(type, releaseGrant)
+  granted = null
+}
+
+const GRANT_ENDERS = ['keydown', 'pointerdown', 'blur'] as const
+
+export function focusWithoutEngaging(el: HTMLElement | null | undefined): void {
+  releaseGrant()
+  if (!el) return
+  el.focus()
+  if (document.activeElement !== el) return
+  granted = el
+  for (const type of GRANT_ENDERS) el.addEventListener(type, releaseGrant)
 }
 
 // How often a held value rechecks whether the operator has let go. Engagement ends on a

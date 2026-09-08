@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { EntryTab } from '@/routes/event/EntryTab'
 import { saveDraft } from '@/routes/event/entry-state'
 import { setAdminToken } from '@/lib/auth'
+import { useEventDetail } from '@/lib/queries'
 import type { EventDetail, MatchRow } from '@/lib/types'
 import { fakeFetch } from './fakes'
 
@@ -33,6 +34,19 @@ const detail: EventDetail = {
 function mount(d: EventDetail = detail) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(<QueryClientProvider client={qc}><EntryTab detail={d} /></QueryClientProvider>)
+}
+
+// The tab as the event body actually mounts it: the detail arrives through
+// useEventDetail, so a save's refetch has to travel back through 4.4's held commit
+// before the ledger and the running score can report it.
+function LiveEntry({ eventId }: { eventId: number }) {
+  const q = useEventDetail(eventId)
+  return q.data ? <EntryTab detail={q.data} /> : null
+}
+
+function mountLive() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(<QueryClientProvider client={qc}><LiveEntry eventId={7} /></QueryClientProvider>)
 }
 
 // The two competitor fields are the Select primitive, so a pick is a click on the
@@ -571,5 +585,38 @@ describe('EntryTab', () => {
     mount(reloaded)
     const results = screen.getByRole('region', { name: 'Results' })
     expect(within(results).getByText('2:07')).toBeInTheDocument()
+  })
+
+  // G12. The save parks focus on the first field for the next entry, and 4.4 counts a
+  // focused field as an operator gesture, so the refetch carrying the row the operator
+  // just saved was held behind the confirmation it exists to be.
+  it('lands the saved row and the new running score with focus where the save left it', async () => {
+    let matches = detail.matches
+    const f = fakeFetch(url => {
+      if (url === '/api/events/7') return { json: { ...detail, matches } }
+      if (url === '/api/events/7/entries') {
+        matches = [...matches, match(9, {
+          status: 'done', athleteAId: 101, athleteBId: 201, pointsA: 5, pointsB: 2,
+          winnerAthleteId: 101, winType: 'points', endedAt: new Date(2026, 9, 3, 14, 22).toISOString(),
+        })]
+        return { status: 201, json: { match: { id: 9 }, version: 2 } }
+      }
+      return { json: null }
+    })
+    mountLive()
+    const user = userEvent.setup()
+    await screen.findByRole('region', { name: 'Results' })
+    await pick(user, 'Ridgeline competitor', 'Ava Park')
+    await pick(user, 'Lakeside competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+    await user.type(screen.getByLabelText('Lakeside points'), '2{Enter}')
+    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/events/7/entries')).toBe(true))
+
+    // Where the app itself put focus, and the operator has touched nothing since.
+    await vi.waitFor(() => expect(screen.getByRole('combobox', { name: 'Ridgeline competitor' })).toHaveFocus())
+    const results = screen.getByRole('region', { name: 'Results' })
+    await vi.waitFor(() => expect(within(results).getByRole('button', { name: 'Edit Ava Park over Noah Tran' })).toBeInTheDocument())
+    const score = screen.getByRole('region', { name: 'Running team score' })
+    await vi.waitFor(() => expect(within(score).getByText('2')).toBeInTheDocument())
   })
 })
