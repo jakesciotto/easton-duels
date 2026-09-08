@@ -142,6 +142,29 @@
   /* box-shadow is dropped in forced-colors mode while outline is retained, so
      every focus ring needs both or the app has no visible focus there. */
   :focus-visible { outline: 2px solid transparent; outline-offset: 2px; }
+
+  /* Tailwind v4 preflight sets button { cursor: default }, so every control in the
+     app showed the arrow unless a component styled its own pointer. One rule for
+     every interactive role, so a new control never needs a cursor-pointer class of
+     its own. Text inputs and textareas keep the platform's text cursor. */
+  button,
+  a[href],
+  [role='button'],
+  [role='menuitem'],
+  [role='option'],
+  [role='tab'],
+  [role='radio'],
+  [role='checkbox'],
+  [role='switch'],
+  label[for],
+  summary {
+    cursor: pointer;
+  }
+
+  :disabled,
+  [aria-disabled='true'] {
+    cursor: default;
+  }
 }
 
 @layer utilities {
