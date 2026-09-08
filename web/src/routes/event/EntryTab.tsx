@@ -3,6 +3,7 @@ import { PencilLine } from 'lucide-react'
 import { teamCode, type WinType } from '@shared/types'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import { focusWithoutEngaging } from '@/lib/operatorEngaged'
+import { sortDoneMatches } from '@/lib/matchOrder'
 import { newEventId } from '@/lib/ids'
 import type { AthleteRow, EventDetail, MatchRow, TeamRow } from '@/lib/types'
 import { athleteName, winTypeLabel } from '@/lib/format'
@@ -293,7 +294,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     return () => { clearTimeout(on); clearTimeout(off) }
   }, [cue])
 
-  const done = useMemo(() => detail.matches.filter(m => m.status === 'done').sort((x, y) => y.id - x.id), [detail.matches])
+  const done = useMemo(() => sortDoneMatches(detail.matches.filter(m => m.status === 'done')), [detail.matches])
   const shown = done.slice(0, LEDGER_LIMIT)
   const pending = detail.matches.filter(m => m.status === 'pending').sort((x, y) => x.orderIndex - y.orderIndex)
   const name = (id: number) => { const k = byId.get(id); return k ? athleteName(k) : 'Unknown' }

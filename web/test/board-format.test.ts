@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { boardName, boardNameText } from '@/routes/board/names'
-import { boardPlan, sortDoneMatches } from '@/routes/board/plan'
+import { boardPlan } from '@/routes/board/plan'
+import { sortDoneMatches } from '@/lib/matchOrder'
 import type { EventMode, EventStatus, MatView, Snapshot } from '@shared/types'
 import { sampleMatch, sampleSnapshot } from './fakes'
 

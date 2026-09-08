@@ -587,6 +587,29 @@ describe('EntryTab', () => {
     expect(within(results).getByText('2:07')).toBeInTheDocument()
   })
 
+  // G13. The ledger sorted by id, so a result typed against a match the designer had
+  // already laid out landed mid list under a head that says newest first, and the
+  // arrival highlight fired off screen.
+  it('puts the newest finish at the top even when its match id is the lower one', () => {
+    const ordered: EventDetail = {
+      ...detail,
+      matches: [
+        match(5, {
+          status: 'done', athleteAId: 100, athleteBId: 200, pointsA: 3, pointsB: 1, winnerAthleteId: 100,
+          winType: 'points', endedAt: new Date(2026, 9, 3, 14, 5).toISOString(),
+        }),
+        match(2, {
+          status: 'done', athleteAId: 101, athleteBId: 201, pointsA: 6, pointsB: 0, winnerAthleteId: 101,
+          winType: 'points', endedAt: new Date(2026, 9, 3, 14, 40).toISOString(),
+        }),
+      ],
+    }
+    mount(ordered)
+    const results = screen.getByRole('region', { name: 'Results' })
+    const rows = within(results).getAllByRole('button', { name: /^Edit/ }).map(b => b.getAttribute('aria-label'))
+    expect(rows).toEqual(['Edit Ava Park over Noah Tran', 'Edit Mateo Rivera over Olivia Kim'])
+  })
+
   // G12. The save parks focus on the first field for the next entry, and 4.4 counts a
   // focused field as an operator gesture, so the refetch carrying the row the operator
   // just saved was held behind the confirmation it exists to be.

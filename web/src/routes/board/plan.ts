@@ -1,4 +1,4 @@
-import type { MatchView, Snapshot } from '@shared/types'
+import type { Snapshot } from '@shared/types'
 
 export type Composition = 'cold' | 'setup' | 'mats' | 'entry' | 'done'
 
@@ -8,18 +8,6 @@ export interface BoardPlan {
       from this rather than from a clamp, because the API accepts up to eight mats and a
       clamp meant every mat above the fourth was laid out off the bottom of the band. */
   mats: number
-}
-
-// Newest finish first. A match without an endedAt (finished before the field existed)
-// sorts after every match that has one, tie broken by id descending either way.
-export function sortDoneMatches(matches: MatchView[]): MatchView[] {
-  return [...matches].sort((x, y) => {
-    if (x.endedAt === null && y.endedAt === null) return y.id - x.id
-    if (x.endedAt === null) return 1
-    if (y.endedAt === null) return -1
-    if (x.endedAt !== y.endedAt) return x.endedAt < y.endedAt ? 1 : -1
-    return y.id - x.id
-  })
 }
 
 /**
