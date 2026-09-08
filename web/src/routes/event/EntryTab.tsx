@@ -11,8 +11,8 @@ import { cn } from '@/lib/utils'
 import { defaultOutcome } from './entry-defaults'
 import {
   CUE_MS, LEDGER_LIMIT, RESTORED_NEW_ENTRY, SAVED_LABEL_MS, SAVE_TIMEOUT_MS,
-  clearDraft, clockLabel, duplicateCopy, entryShape, isRepeatPair, ledgerTime, loadDraft, outcomeMatches, pairKey,
-  restoreDraft, restoredBannerCopy, saveDraft, saveErrorCopy, storedOutcome, teamWins,
+  EVENT_DONE_LINE, clearDraft, clockLabel, duplicateCopy, entryShape, isRepeatPair, ledgerTime, loadDraft, outcomeMatches,
+  pairKey, restoreDraft, restoredBannerCopy, saveDraft, saveErrorCopy, storedOutcome, teamWins,
   type EntryDraft, type EntryMatch, type SaveErrorCopy,
 } from './entry-state'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -23,6 +23,7 @@ import { List, ListRow } from '@/components/ui/list'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Toggle } from '@/components/ui/toggle'
 import { TeamPlate } from '@/components/TeamPlate'
+import { FinishEventDialog } from './FinishEventDialog'
 
 interface Form extends EntryDraft { touched: boolean }
 
@@ -77,6 +78,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   const [f, setF] = useState<Form>(restored.form)
   const [failure, setFailure] = useState<SaveErrorCopy | null>(restored.banner)
   const [dupe, setDupe] = useState<SaveErrorCopy | null>(null)
+  const [finishOpen, setFinishOpen] = useState(false)
   const [pairPrompt, setPairPrompt] = useState<string | null>(null)
   const [savedLabel, setSavedLabel] = useState(false)
   const [announce, setAnnounce] = useState('')
@@ -125,6 +127,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   const correct = useAdminMutation(eventId, async (v: { id: number; body: CorrectionBody }): Promise<EntryResult> =>
     ({ res: await adminApi<EntryResponse>(`/api/matches/${v.id}/entry`, { method: 'POST', body: v.body }), duplicate: false }), { awaitRefetch: false })
   const start = useAdminMutation<void>(eventId, () => adminApi(`/api/events/${eventId}`, { method: 'PATCH', body: { status: 'live' } }))
+  const finish = useAdminMutation<void>(eventId, () => adminApi(`/api/events/${eventId}`, { method: 'PATCH', body: { status: 'done' } }))
 
   // Every terminal outcome re-enables Save, the watchdog included, because a POST
   // that never answers must not leave a reload as the only way out.
@@ -345,6 +348,15 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   const pending = detail.matches.filter(m => m.status === 'pending').sort((x, y) => x.orderIndex - y.orderIndex)
   const name = (id: number) => { const k = byId.get(id); return k ? athleteName(k) : 'Unknown' }
   const startError = start.error
+  // 6.9: a finished event stops taking results, so the form and every path back into it
+  // go rather than sit there disabled. Nothing left on the screen says it can be scored.
+  const finished = detail.event.status === 'done'
+  const closeFinish = () => { setFinishOpen(false); finish.reset() }
+  const band = finished
+    ? EVENT_DONE_LINE
+    : detail.event.status === 'setup'
+      ? 'The board shows this event as in progress once you start it.'
+      : 'The board switches to the final result when you finish the event.'
 
   return (
     <div className="grid gap-6">
@@ -362,12 +374,15 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
         </div>
       </section>
 
-      {detail.event.status === 'setup' && (
-        <div className="flex items-center gap-3 rounded-lg bg-gray-1 px-4 py-3">
-          <p className="t2 text-gray-11">The board shows this event as in progress once you start it.</p>
+      <div className="flex flex-wrap items-center gap-3 rounded-lg bg-gray-1 px-4 py-3">
+        <p className="t2 text-gray-11">{band}</p>
+        {detail.event.status === 'setup' && (
           <Button size="sm" variant="secondary" className="ml-auto" onClick={() => start.mutate()} disabled={start.isPending}>Start event</Button>
-        </div>
-      )}
+        )}
+        {detail.event.status === 'live' && (
+          <Button size="sm" variant="destructive" className="ml-auto" onClick={() => setFinishOpen(true)} disabled={finish.isPending}>Finish event</Button>
+        )}
+      </div>
       {startError && (
         <Alert>
           <AlertTitle>The event did not start</AlertTitle>
@@ -375,7 +390,8 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
         </Alert>
       )}
 
-      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+      <div className={cn('grid items-start gap-6', !finished && 'lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]')}>
+        {!finished && (
         <div className="grid gap-6">
           <form ref={formRef} onSubmit={submit} onKeyDown={onKeyDown} className="rounded-lg bg-gray-2 p-4">
             <div className="mb-1 flex items-baseline gap-3">
@@ -470,6 +486,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
             </section>
           )}
         </div>
+        )}
 
         <section aria-label="Results" className="overflow-hidden rounded-lg bg-gray-2">
           <div className="flex items-baseline gap-3 px-4 pt-4 pb-3">
@@ -492,7 +509,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
             <span className="sr-only">Edit</span>
           </div>
           {shown.length === 0
-            ? <EmptyState message="No results yet. Type the first one on the left." />
+            ? <EmptyState message={finished ? 'This event finished with no results.' : 'No results yet. Type the first one on the left.'} />
             : shown.map(m => (
               <LedgerRow
                 key={m.id}
@@ -502,11 +519,20 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
                 at={ledgerTime(m.endedAt, savedAt[m.id])}
                 cued={cue?.id === m.id && cue.on}
                 cueing={cue?.id === m.id}
-                onEdit={() => load(m)}
+                onEdit={finished ? undefined : () => load(m)}
               />
             ))}
         </section>
       </div>
+
+      <FinishEventDialog
+        open={finishOpen}
+        onOpenChange={o => { if (o) setFinishOpen(true); else closeFinish() }}
+        detail={detail}
+        pending={finish.isPending}
+        error={finish.error}
+        onFinish={() => finish.mutate(undefined, { onSuccess: () => setFinishOpen(false) })}
+      />
     </div>
   )
 }
@@ -644,7 +670,8 @@ function LedgerRow({ match, nameA, nameB, at, cued, cueing, onEdit }: {
   at: Date | null
   cued: boolean
   cueing: boolean
-  onEdit: () => void
+  /** Absent once the event is finished: nothing on that screen may offer a way to score. */
+  onEdit?: () => void
 }) {
   const aWon = match.winnerAthleteId === match.athleteAId
   const winnerName = aWon ? nameA : nameB
@@ -675,16 +702,18 @@ function LedgerRow({ match, nameA, nameB, at, cued, cueing, onEdit }: {
         rows above and below. The vertical reach is clamped to the row; the
         horizontal reach keeps the full 44px.
       */}
-      <Button
-        variant="ghost"
-        size="xs"
-        title="Edit result"
-        aria-label={`Edit ${winnerName} over ${loserName}`}
-        onClick={onEdit}
-        className="before:-top-1.5 before:-bottom-1.5"
-      >
-        <PencilLine />
-      </Button>
+      {onEdit === undefined ? <span /> : (
+        <Button
+          variant="ghost"
+          size="xs"
+          title="Edit result"
+          aria-label={`Edit ${winnerName} over ${loserName}`}
+          onClick={onEdit}
+          className="before:-top-1.5 before:-bottom-1.5"
+        >
+          <PencilLine />
+        </Button>
+      )}
     </div>
   )
 }

@@ -216,6 +216,13 @@ export function restoredBannerCopy(draft: EntryDraft, matches: MatchRow[], athle
   return { title: `This correction to ${label} never sent`, body: 'It was kept on this device. Check it, then press Save.' }
 }
 
+// 6.9's done voice, in one place. The tab that has stopped taking results and the banner
+// that reports the server refusing one have to say the same thing, or the desk reads the
+// refusal as something that could be retried.
+const DONE_BODY = 'No result can be entered now, and the results here are the record.'
+export const EVENT_DONE_LINE = `This event is finished. ${DONE_BODY}`
+export const EVENT_DONE: SaveErrorCopy = { title: 'This event is finished', body: DONE_BODY }
+
 // 7.12: every failure states what happened and what to do next, mapped from the
 // server's own codes. The unreachable-server case is the one gym wifi produces.
 export function saveErrorCopy(error: unknown): SaveErrorCopy {
@@ -227,6 +234,9 @@ export function saveErrorCopy(error: unknown): SaveErrorCopy {
   if (error.status === 404) return { title: 'That match is no longer here', body: 'Reload the page, then enter the result again.' }
   if (error.status === 422) return { title: 'That result cannot be saved', body: error.message }
   if (error.code === 'sequence') return { title: 'Another device scored this mat first', body: 'The result on screen refreshes. Check it, then save again.' }
+  // The server refuses every write once the event is finished, and it says which of the
+  // two match_state refusals this is. Reopening a match cannot help with that one.
+  if (error.code === 'match_state' && /event is done/i.test(error.message)) return EVENT_DONE
   if (error.code === 'match_state') return { title: 'This match already ended', body: 'Reopen it from the Live tab to change the result.' }
   if (error.status >= 500) return { title: 'The server had a problem', body: 'Press Save to try again.' }
   return { title: 'That result was not saved', body: error.message }

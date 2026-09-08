@@ -587,6 +587,93 @@ describe('EntryTab', () => {
     expect(within(results).getByText('2:07')).toBeInTheDocument()
   })
 
+  // G15. Only the setup banner was conditional, so a finished event kept a live form and
+  // a Save that the server now refuses.
+  describe('once the event is finished', () => {
+    const finishedDetail: EventDetail = {
+      ...detail,
+      event: { ...detail.event, status: 'done' },
+      matches: [match(1, { status: 'done', pointsA: 4, pointsB: 2, winnerAthleteId: 100, winType: 'points' })],
+    }
+
+    it('takes the form, the save and the edits away and says why', () => {
+      mount(finishedDetail)
+      expect(screen.getByText(/^This event is finished\./)).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /^Sav/ })).not.toBeInTheDocument()
+      expect(screen.queryByLabelText('Ridgeline points')).not.toBeInTheDocument()
+      expect(screen.queryByRole('combobox', { name: 'Ridgeline competitor' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /^Edit/ })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Finish event' })).not.toBeInTheDocument()
+      // The record itself stays.
+      const results = screen.getByRole('region', { name: 'Results' })
+      expect(within(results).getByText('Mateo Rivera')).toBeInTheDocument()
+    })
+
+    it('says the same words when the server refuses a write on a finished event', async () => {
+      const f = fakeFetch(() => ({ status: 409, json: { error: { code: 'match_state', message: 'event is done' } } }))
+      mount()
+      const user = userEvent.setup()
+      await pick(user, 'Ridgeline competitor', 'Ava Park')
+      await pick(user, 'Lakeside competitor', 'Noah Tran')
+      await user.type(screen.getByLabelText('Ridgeline points'), '5')
+      await user.click(saveButton())
+      await vi.waitFor(() => expect(f.calls.length).toBe(1))
+      expect(await screen.findByText('This event is finished')).toBeInTheDocument()
+      expect(screen.getByText('No result can be entered now, and the results here are the record.')).toBeInTheDocument()
+      expect(screen.queryByText('This match already ended')).not.toBeInTheDocument()
+    })
+  })
+
+  // G32. Finish lived only on the Live tab, which the desk never opens in entry mode.
+  describe('finishing the event from the desk', () => {
+    const liveDetail: EventDetail = {
+      ...detail,
+      event: { ...detail.event, status: 'live' },
+      mats: [{ id: 11, eventId: 7, number: 1, currentMatchId: 2 }, { id: 12, eventId: 7, number: 2, currentMatchId: null }],
+      matches: [
+        match(1, { status: 'done', pointsA: 4, pointsB: 2, winnerAthleteId: 100, winType: 'points' }),
+        match(2, { athleteAId: 101, athleteBId: 201, status: 'live', matId: 11 }),
+      ],
+    }
+
+    it('names every mat still on a match, then finishes', async () => {
+      const f = fakeFetch(() => ({ json: null }))
+      mount(liveDetail)
+      const user = userEvent.setup()
+      await user.click(screen.getByRole('button', { name: 'Finish event' }))
+      const dialog = await screen.findByRole('dialog')
+      expect(within(dialog).getByText('Finish the event?')).toBeInTheDocument()
+      expect(dialog).toHaveTextContent('Mat 1')
+      expect(within(dialog).getByText('Ava Park vs Noah Tran')).toBeInTheDocument()
+      expect(dialog).not.toHaveTextContent('Mat 2')
+      // The sentence this replaces claimed a running match stays where it is, and a
+      // finished event refuses every write.
+      expect(within(dialog).queryByText(/stay where they are/)).not.toBeInTheDocument()
+
+      await user.click(within(dialog).getByRole('button', { name: 'Finish event' }))
+      await vi.waitFor(() => expect(f.calls.length).toBe(1))
+      expect(f.calls[0].url).toBe('/api/events/7')
+      expect(f.body(0)).toEqual({ status: 'done' })
+    })
+
+    it('leaves the event alone when the desk keeps scoring', async () => {
+      const f = fakeFetch(() => ({ json: null }))
+      mount(liveDetail)
+      const user = userEvent.setup()
+      await user.click(screen.getByRole('button', { name: 'Finish event' }))
+      const dialog = await screen.findByRole('dialog')
+      await user.click(within(dialog).getByRole('button', { name: 'Keep scoring' }))
+      await vi.waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      expect(f.calls).toHaveLength(0)
+    })
+
+    it('does not offer Finish before the event has started', () => {
+      mount()
+      expect(screen.getByRole('button', { name: 'Start event' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Finish event' })).not.toBeInTheDocument()
+    })
+  })
+
   // G17. The id is held so a resend is deduped, which is right until the operator fixes
   // the payload and presses Save again: then the server replays the original result and
   // the client reports the corrected one.
