@@ -348,14 +348,13 @@ describe('the settled row still names a winner', () => {
     expect(css.indexOf('.b-row-settled .b-fade')).toBeGreaterThan(css.indexOf('.b-row-settled .b-name'))
   })
 
-  // A name carries its score's tone, so a finished pair reads off either half. The two
-  // rules that must still beat it are the settled row's and the upcoming row's.
-  it('lets a name take a figure tone, and keeps the row rules above it', () => {
-    expect(decl('.b-name.b-lead', 'color')).toBe('var(--fig-lead)')
-    expect(decl('.b-name.b-trail', 'color')).toBe('var(--fig-trail)')
-    expect(css.indexOf('.b-name.b-lead')).toBeGreaterThan(css.indexOf('.b-name {'))
-    expect(css.indexOf('.b-row-settled .b-name')).toBeGreaterThan(css.indexOf('.b-name.b-lead'))
-    expect(css.indexOf('.b-row-upcoming .b-name')).toBeGreaterThan(css.indexOf('.b-name.b-lead'))
+  // 7.5 keeps the figure tones on the figures. A name never takes one, so the sheet
+  // carries no rule that would let it.
+  it('leaves the figure tones off the name track', () => {
+    expect(ruleFor('.b-name.b-lead')).toBeNull()
+    expect(ruleFor('.b-name.b-trail')).toBeNull()
+    expect(decl('.b-lead', 'color')).toBe('var(--fig-lead)')
+    expect(decl('.b-trail', 'color')).toBe('var(--fig-trail)')
   })
 })
 

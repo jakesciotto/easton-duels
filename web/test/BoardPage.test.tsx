@@ -599,13 +599,15 @@ describe('Board result tones', () => {
     return { ...view, after }
   }
 
+  // 7.5 keeps --fig-lead and --fig-trail on the score display, so the figures name the
+  // winner during the hold and the names stay at the row's own tone.
   it('names the winner at 0 to 0 before the row settles', () => {
     vi.useFakeTimers()
     holding(100)
     const r = row('Mat 1')
     expect(r).not.toHaveClass('b-row-settled')
-    expect(nameEl(r, 'Mateo')).toHaveClass('b-lead')
-    expect(nameEl(r, 'Lucas')).toHaveClass('b-trail')
+    expect(nameEl(r, 'Mateo').className).not.toMatch(/b-fade|b-lead|b-trail/)
+    expect(nameEl(r, 'Lucas').className).not.toMatch(/b-fade|b-lead|b-trail/)
     expect(scoreEl(r, 'b-score-a')).toHaveClass('b-lead')
     expect(scoreEl(r, 'b-score-b')).toHaveClass('b-trail')
   })
@@ -614,9 +616,7 @@ describe('Board result tones', () => {
     vi.useFakeTimers()
     holding(200)
     const r = row('Mat 1')
-    expect(nameEl(r, 'Mateo')).toHaveClass('b-trail')
     expect(scoreEl(r, 'b-score-a')).toHaveClass('b-trail')
-    expect(nameEl(r, 'Lucas')).toHaveClass('b-lead')
     expect(scoreEl(r, 'b-score-b')).toHaveClass('b-lead')
   })
 
@@ -647,6 +647,8 @@ describe('Board result tones', () => {
     const r = row('Mat 1')
     expect(scoreEl(r, 'b-score-a')).toHaveClass('b-trail')
     expect(scoreEl(r, 'b-score-b')).toHaveClass('b-lead')
+    expect(nameEl(r, 'Mateo').className).not.toMatch(/b-fade|b-lead|b-trail/)
+    expect(nameEl(r, 'Lucas').className).not.toMatch(/b-fade|b-lead|b-trail/)
   })
 
   // The desk board is the composition the pilot runs, and a reloaded one is settled from

@@ -398,11 +398,10 @@
 .b-name-a {
   justify-content: flex-end;
 }
-/* A name carries the same tone as the score beside it, so who is ahead reads off either
-   half of the pair. Declared after .b-name so the tone wins, and before the settled and
-   upcoming rules so those still win over it. */
-.b-name.b-lead { color: var(--fig-lead); }
-.b-name.b-trail { color: var(--fig-trail); }
+/* --fig-lead and --fig-trail are 7.5's score tones and stay on the scores. A name here is
+   the largest text in the room, and the trailing one at --gray-10 was the quietest thing
+   on the panel at the moment it mattered. The settled row still steps its loser's name
+   down, through .b-row-settled .b-fade below. */
 
 /* 7.10: a mat with nothing on it and nothing left to call says so, in the name track, at
    the floor step. Spanning to the end of the row rather than sitting in name A's own

@@ -44,7 +44,7 @@ export function figTone(mine: number, theirs: number): string {
 }
 
 /**
- * The tone for one side of a row, name and score together.
+ * The tone for one side of a row's score, and for its name once the row has settled.
  *
  * A live row is read by score, because the score is what the room is watching change. A
  * finished row is read by the recorded winner, because the score is not what settled it:
@@ -136,12 +136,15 @@ export function MatRow({
   lastSuccessAt = null, pollIntervalMs = POLL_CLOCK_RUNNING_MS,
 }: MatRowProps) {
   const showScores = scores && a !== null && b !== null && !upcoming
-  // The name takes the same tone as the score beside it, so who is ahead survives a
-  // glance at either half of the pair. An upcoming row has no figure to be ahead in and
-  // keeps its own quiet rule.
   const wonA = !showScores || winnerAthleteId === null || a === null ? null : a.athleteId === winnerAthleteId
   const toneA = !showScores || a === null || b === null ? null : rowTone(wonA, a.score, b.score, settled)
   const toneB = !showScores || a === null || b === null ? null : rowTone(wonA === null ? null : !wonA, b.score, a.score, settled)
+  // 7.5 scopes the lead and trail tones to the score display, and a name on this board is
+  // the largest text in the room: taking --fig-trail dropped the competitor who is behind
+  // to --gray-10 on the one line a parent across the gym is reading. Only the settled row
+  // tones its names, where the step down is what names the winner after the hold.
+  const nameToneA = settled ? toneA : null
+  const nameToneB = settled ? toneB : null
   return (
     <div
       className={cn(
@@ -158,7 +161,7 @@ export function MatRow({
           rendered the gutter and the numeral alone, so after a reload every mat that had
           finished was a blank row for the rest of the afternoon. */}
       {note !== null && <span className="b-row-note font-sans">{note}</span>}
-      {a && <BoardName full={a.name} side="a" className={toneA ?? undefined} />}
+      {a && <BoardName full={a.name} side="a" className={nameToneA ?? undefined} />}
       {showScores && a && b && <Fig className={cn('b-score b-score-a', toneA)} value={a.score} />}
       {clock && (
         <BoardClock
@@ -169,7 +172,7 @@ export function MatRow({
         />
       )}
       {showScores && a && b && <Fig className={cn('b-score b-score-b', toneB)} value={b.score} />}
-      {b && <BoardName full={b.name} side="b" className={toneB ?? undefined} />}
+      {b && <BoardName full={b.name} side="b" className={nameToneB ?? undefined} />}
     </div>
   )
 }
