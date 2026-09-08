@@ -9,7 +9,7 @@ import { EVENT_FINISHED } from '@/routes/scorer/actions'
 import { CenterColumn } from '@/routes/scorer/CenterColumn'
 import { ConfirmSheet } from '@/routes/scorer/ConfirmSheet'
 import type { Sheet as SheetState } from '@/routes/scorer/useScorer'
-import { setMatBinding } from '@/lib/auth'
+import { getMatBinding, setMatBinding } from '@/lib/auth'
 import { playExpired, playRejected } from '@/lib/sounds'
 import { fakeFetch, snapshotFeed, sampleMatch, sampleSnapshot } from './fakes'
 
@@ -548,6 +548,54 @@ describe('ScorerPage', () => {
       expect(await screen.findByRole('heading', { name: EVENT_FINISHED })).toBeInTheDocument()
       expect(f.calls.some(c => c.url === '/api/matches/10/events')).toBe(false)
     })
+  })
+
+  /**
+   * G04. A tablet bound at the rehearsal arrives at the pilot with a token a day past its
+   * life, and a tablet somebody took a mat off keeps a token the server has killed. Both
+   * go on showing a live match and failing every write, which is the worst possible shape
+   * for the failure: the screen looks right.
+   */
+  it('unbinds and goes back for the mat code when the server refuses its token', async () => {
+    setMatBinding({ eventId: 1, matId: 1, matNumber: 1, eventName: 'Fall Duels', token: 'stale-tok' })
+    const feed = snapshotFeed(sampleSnapshot())
+    fakeFetch(url => feed.handle(url) ?? {
+      status: 401,
+      json: { error: { code: 'token_stale', message: 'Another iPad took this mat over. Bind again to score from here.' } },
+    })
+    const router = createMemoryRouter(routes, { initialEntries: ['/mat/1'] })
+    render(<RouterProvider router={router} />)
+
+    // The heartbeat fires at mount, so nobody has to touch the screen for this to happen.
+    await vi.waitFor(() => expect(router.state.location.pathname).toBe('/mat'))
+    expect(router.state.location.search).toBe('?event=1&reason=taken')
+    expect(getMatBinding()).toBeNull()
+  })
+
+  /**
+   * G09. The one line on this screen that is not about the match: a volunteer at a mat has
+   * no way to reach the desk except by walking there.
+   */
+  it('prints the desk contact beside the match, and nothing when the event carries none', async () => {
+    const feed = snapshotFeed(sampleSnapshot({
+      event: {
+        id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'live', mode: 'live', matCount: 1,
+        contact: { name: 'Dana Whitfield', phone: '555 0147' },
+      },
+    }))
+    fakeFetch(url => feed.handle(url) ?? { json: {} })
+    await mount()
+    const line = await screen.findByText('Questions at the desk: Dana Whitfield, 555 0147.')
+    // It is reference, so it lives with the on deck and last action lines in the region
+    // that yields to the alarm rather than beside a control.
+    expect(referenceRegion().contains(line)).toBe(true)
+
+    cleanup()
+    const plain = snapshotFeed(sampleSnapshot())
+    fakeFetch(url => plain.handle(url) ?? { json: {} })
+    await mount()
+    await screen.findByRole('region', { name: 'Mateo Rivera' })
+    expect(screen.queryByText(/Questions at the desk/)).toBeNull()
   })
 
   /**
