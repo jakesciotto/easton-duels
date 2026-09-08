@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import type { MatchView } from '@shared/types'
 import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
@@ -11,8 +12,12 @@ import type { EventDetail, MatchRow, TeamRow } from '@/lib/types'
 import { athleteName, winTypeLabel } from '@/lib/format'
 import { moveId } from '@/lib/reorder'
 import { doubleBookedMatchIds } from '@/lib/doubleBooking'
+import { matchViewOf } from '@/lib/matchView'
 import { cn } from '@/lib/utils'
 import { KidPickerDialog } from './KidPickerDialog'
+import { MatchHistorySheet } from './MatchHistorySheet'
+import { matchHistorySource, type HistorySource } from './match-history'
+import { ResultDialog } from './ResultDialog'
 import { AddMatchDialog } from './AddMatchDialog'
 import {
   endedLabel, liveReason, matchLabel, matchLines, readyNote, regenerateBlockedReason, regenerateWarning,
@@ -21,6 +26,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Chip } from '@/components/ui/chip'
+import { OverflowMenu } from '@/components/OverflowMenu'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -306,12 +312,14 @@ function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, d
   )
 }
 
-function SettledRow({ line, teams, name, highlight, onHover }: {
+function SettledRow({ line, teams, name, highlight, onHover, onHistory, onEdit }: {
   line: MatchLine
   teams: TeamRow[]
   name: NameOf
   highlight: boolean
   onHover: Hover
+  onHistory: () => void
+  onEdit: () => void
 }) {
   const m = line.row
   const [teamA, teamB] = teams
@@ -348,6 +356,15 @@ function SettledRow({ line, teams, name, highlight, onHover }: {
       </TableCell>
       <TableCell className="w-[160px] t2 text-gray-10">{m.winType ? winTypeLabel(m.winType) : ''}</TableCell>
       <TableCell numeric className="w-[80px] text-gray-10">{endedLabel(line.endedAt)}</TableCell>
+      <TableCell className="w-px pl-0">
+        <OverflowMenu
+          label={`${matchLabel(line.position, name(m.athleteAId, teamA), name(m.athleteBId, teamB))} actions`}
+          items={[
+            { key: 'history', label: 'Match history', disabled: false, onSelect: onHistory },
+            { key: 'edit', label: 'Edit result', disabled: false, onSelect: onEdit },
+          ]}
+        />
+      </TableCell>
     </TableRow>
   )
 }
@@ -371,6 +388,8 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
   const [dragging, setDragging] = useState(false)
   const [hovered, setHovered] = useState<number | null>(null)
   const [showSettled, setShowSettled] = useState(false)
+  const [history, setHistory] = useState<HistorySource | null>(null)
+  const [editing, setEditing] = useState<MatchView | null>(null)
   // Which pending matches this browser has moved by hand, so Regenerate can state what it
   // is about to discard. The server stores an order, not who chose it.
   const [handOrdered, setHandOrdered] = useState<number[]>([])
@@ -490,6 +509,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
   const inMatch = new Set(detail.matches.flatMap(m => [m.athleteAId, m.athleteBId]))
   const unpaired = detail.teams.map(t => ({ team: t, kids: detail.athletes.filter(a => a.teamId === t.id && !inMatch.has(a.id)) }))
   const holds = (line: MatchLine) => hovered !== null && (line.row.athleteAId === hovered || line.row.athleteBId === hovered)
+  const viewOf = (line: MatchLine) => matchViewOf(line.row, detail, snapshot)
 
   // While the confirm dialog is open, a failed generate is shown inside the
   // dialog only; the outer banner picks it back up once the dialog is closed
@@ -559,6 +579,10 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
       </Dialog>
       <KidPickerDialog detail={detail} teamId={pick?.teamId ?? null} matchId={pick?.matchId ?? null} open={pick !== null} onOpenChange={o => { if (!o) setPick(null) }} onPick={onPicked} />
       <AddMatchDialog detail={detail} open={addOpen} onOpenChange={setAddOpen} />
+      {/* The one correction dialog, reached from the settled field as well as from the
+          Live tab's panel overflow and the Entry tab's ledger. */}
+      <ResultDialog detail={detail} match={editing} open={editing !== null} onOpenChange={o => { if (!o) setEditing(null) }} />
+      <MatchHistorySheet source={history} open={history !== null} onOpenChange={o => { if (!o) setHistory(null) }} />
 
       <section aria-label="Pending matches" className="grid gap-3">
         <div className="flex flex-wrap items-baseline gap-3">
@@ -630,11 +654,17 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
                     <TableHead>Result</TableHead>
                     <TableHead className="w-[160px]">Win by</TableHead>
                     <TableHead numeric className="w-[80px]"><span className="font-sans">At</span></TableHead>
+                    <TableHead className="w-px"><span className="sr-only">Actions</span></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {settled.map(l => (
-                    <SettledRow key={l.row.id} line={l} teams={detail.teams} name={nameOf} highlight={holds(l)} onHover={setHovered} />
+                    <SettledRow
+                      key={l.row.id} line={l} teams={detail.teams} name={nameOf}
+                      highlight={holds(l)} onHover={setHovered}
+                      onHistory={() => setHistory(matchHistorySource(viewOf(l), l.matNumber, detail))}
+                      onEdit={() => setEditing(viewOf(l))}
+                    />
                   ))}
                 </TableBody>
               </Table>

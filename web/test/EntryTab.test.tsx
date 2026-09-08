@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { EntryTab } from '@/routes/event/EntryTab'
 import { saveDraft } from '@/routes/event/entry-state'
 import { setAdminToken } from '@/lib/auth'
+import { HISTORY_NOTE } from '@/routes/event/MatchHistorySheet'
 import { useEventDetail } from '@/lib/queries'
 import { SnapshotStreamContext, type StreamState } from '@/lib/useSnapshot'
 import type { Snapshot } from '@shared/types'
@@ -655,6 +656,15 @@ describe('EntryTab', () => {
       // The record itself stays.
       const results = screen.getByRole('region', { name: 'Results' })
       expect(within(results).getByText('Mateo Rivera')).toBeInTheDocument()
+    })
+
+    it('opens the match history from the ledger', async () => {
+      const f = fakeFetch(() => ({ json: [] }))
+      mount(finishedDetail)
+      const user = userEvent.setup()
+      await user.click(screen.getByRole('button', { name: /^History of / }))
+      expect(await screen.findByRole('dialog')).toHaveTextContent(HISTORY_NOTE)
+      expect(f.calls.some(c => c.url === '/api/matches/1/history')).toBe(true)
     })
 
     it('says the same words when the server refuses a write on a finished event', async () => {

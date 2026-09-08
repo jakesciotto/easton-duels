@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { MatchView, Snapshot } from '@shared/types'
 import { MatchesTab } from '@/routes/event/MatchesTab'
 import { setAdminToken } from '@/lib/auth'
+import { HISTORY_NOTE } from '@/routes/event/MatchHistorySheet'
 import type { EventDetail, MatchRow } from '@/lib/types'
 import { fakeFetch, sampleMatch, sampleSnapshot, snapshotFeed, type Reply } from './fakes'
 
@@ -429,5 +430,34 @@ describe('MatchesTab in desk mode', () => {
     expect(await screen.findByText('Sec')).toBeInTheDocument()
     feed.push(deskSnapshot())
     await vi.waitFor(() => expect(screen.queryByText('Sec')).not.toBeInTheDocument(), { timeout: 6000 })
+  })
+})
+
+// 6.8 keeps the settled field out of the work lane, and its rows carry the two things a
+// record needs after the fact: what happened, and one way to change it.
+describe('MatchesTab settled row actions', () => {
+  const M3 = 'match 3, Mateo Rivera versus Olivia Kim'
+  const openSettledMenu = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(screen.getByRole('button', { name: 'Show' }))
+    await user.click(screen.getByRole('button', { name: `${M3} actions` }))
+  }
+
+  it('opens the match history from the settled row', async () => {
+    const f = mount(detail, url => (url.endsWith('/history') ? { json: [] } : { json: {} }))
+    const user = userEvent.setup()
+    await openSettledMenu(user)
+    await user.click(await screen.findByRole('menuitem', { name: 'Match history' }))
+    expect(await screen.findByRole('dialog')).toHaveTextContent(HISTORY_NOTE)
+    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/matches/3/history')).toBe(true))
+  })
+
+  it('opens the one correction dialog from the settled row', async () => {
+    mount()
+    const user = userEvent.setup()
+    await openSettledMenu(user)
+    await user.click(await screen.findByRole('menuitem', { name: 'Edit result' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('Edit result')).toBeInTheDocument()
+    expect(within(dialog).getByLabelText('Ridgeline points')).toBeInTheDocument()
   })
 })

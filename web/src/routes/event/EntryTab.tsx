@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
-import { PencilLine } from 'lucide-react'
+import { History, PencilLine } from 'lucide-react'
 import { teamCode, type WinType } from '@shared/types'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import { focusWithoutEngaging } from '@/lib/operatorEngaged'
@@ -9,6 +9,7 @@ import { useSnapshot } from '@/lib/useSnapshot'
 import { newEventId } from '@/lib/ids'
 import type { AthleteRow, EventDetail, MatchRow, TeamRow } from '@/lib/types'
 import { athleteName, winTypeLabel } from '@/lib/format'
+import { matchViewOf } from '@/lib/matchView'
 import { cn } from '@/lib/utils'
 import { defaultOutcome } from './entry-defaults'
 import {
@@ -26,6 +27,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Toggle } from '@/components/ui/toggle'
 import { TeamPlate } from '@/components/TeamPlate'
 import { FinishEventDialog } from './FinishEventDialog'
+import { MatchHistorySheet } from './MatchHistorySheet'
+import { matchHistorySource, type HistorySource } from './match-history'
 
 interface Form extends EntryDraft { touched: boolean }
 
@@ -56,7 +59,7 @@ const WIN_TYPE_KEY: Record<string, WinType> = { p: 'points', s: 'submission', d:
 // Declared on a mono element or ch measures the sans zero and the head stops lining
 // up with its own digits.
 const LEDGER_COLS =
-  'grid grid-cols-[minmax(0,1fr)_var(--col-num-s)_88px_var(--col-num-s)_minmax(0,1fr)_var(--col-num-l)_var(--col-act)] items-center gap-x-3 px-3 font-mono t2'
+  'grid grid-cols-[minmax(0,1fr)_var(--col-num-s)_88px_var(--col-num-s)_minmax(0,1fr)_var(--col-num-l)_var(--col-act)_var(--col-act)] items-center gap-x-3 px-3 font-mono t2'
 
 interface NewEntryBody { entryId: string; athleteAId: number; athleteBId: number; pointsA: number; pointsB: number; winnerAthleteId: number; winType: WinType }
 interface CorrectionBody { entryId: string; pointsA: number; pointsB: number; winnerAthleteId: number; winType: WinType }
@@ -97,6 +100,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   const [timedOut, setTimedOut] = useState(false)
   const [savedAt, setSavedAt] = useState<Record<number, number>>({})
   const [cue, setCue] = useState<{ id: number; on: boolean } | null>(null)
+  const [history, setHistory] = useState<HistorySource | null>(null)
   // Seeded from the ledger so a reload does not reopen the same-pair window on a result
   // the server already holds.
   const [seededPairs] = useState(() => seedPairLog(detail.matches))
@@ -368,6 +372,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   const shown = done.slice(0, LEDGER_LIMIT)
   const pending = detail.matches.filter(m => m.status === 'pending').sort((x, y) => x.orderIndex - y.orderIndex)
   const name = (id: number) => { const k = byId.get(id); return k ? athleteName(k) : 'Unknown' }
+  const matNumberOf = (m: MatchRow) => detail.mats.find(mat => mat.id === m.matId)?.number ?? null
   const startError = start.error
   // 6.9: a finished event stops taking results, so the form and every path back into it
   // go rather than sit there disabled. Nothing left on the screen says it can be scored.
@@ -530,6 +535,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
             <span className="tick text-right font-sans t1 text-gray-10 uppercase">Pts</span>
             <span className="truncate text-right font-sans t1 text-gray-10" title={teamB.name}>{teamCode(teamB.name)}</span>
             <span className="text-right font-sans t1 text-gray-10 uppercase">At</span>
+            <span className="sr-only">History</span>
             <span className="sr-only">Edit</span>
           </div>
           {shown.length === 0
@@ -544,10 +550,13 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
                 cued={cue?.id === m.id && cue.on}
                 cueing={cue?.id === m.id}
                 onEdit={finished ? undefined : () => load(m)}
+                onHistory={() => setHistory(matchHistorySource(matchViewOf(m, detail, stream), matNumberOf(m), detail))}
               />
             ))}
         </section>
       </div>
+
+      <MatchHistorySheet source={history} open={history !== null} onOpenChange={o => { if (!o) setHistory(null) }} />
 
       <FinishEventDialog
         open={finishOpen}
@@ -688,7 +697,7 @@ function WinnerToggle({ kid, team, hint, pressed, onPress, className }: {
 // The paper sheet's row: the winner carries its own mark on whichever side it
 // falls, the win type is a word, and the loser is --gray-10 at 400 and never
 // red, because red means delete in this app.
-function LedgerRow({ match, nameA, nameB, at, cued, cueing, onEdit }: {
+function LedgerRow({ match, nameA, nameB, at, cued, cueing, onEdit, onHistory }: {
   match: MatchRow
   nameA: string
   nameB: string
@@ -697,6 +706,8 @@ function LedgerRow({ match, nameA, nameB, at, cued, cueing, onEdit }: {
   cueing: boolean
   /** Absent once the event is finished: nothing on that screen may offer a way to score. */
   onEdit?: () => void
+  /** Read only, so it survives certification: the trail is what certification protects. */
+  onHistory: () => void
 }) {
   const aWon = match.winnerAthleteId === match.athleteAId
   const winnerName = aWon ? nameA : nameB
@@ -727,6 +738,16 @@ function LedgerRow({ match, nameA, nameB, at, cued, cueing, onEdit }: {
         rows above and below. The vertical reach is clamped to the row; the
         horizontal reach keeps the full 44px.
       */}
+      <Button
+        variant="ghost"
+        size="xs"
+        title="Match history"
+        aria-label={`History of ${winnerName} over ${loserName}`}
+        onClick={onHistory}
+        className="before:-top-1.5 before:-bottom-1.5"
+      >
+        <History />
+      </Button>
       {onEdit === undefined ? <span /> : (
         <Button
           variant="ghost"

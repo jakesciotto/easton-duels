@@ -1,7 +1,5 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
-import { Ellipsis } from 'lucide-react'
-import { Menu } from '@base-ui/react/menu'
 import type { EventMode, MatView, MatchSide, MatchView, Snapshot } from '@shared/types'
 import { formatClock, remainingMs } from '@shared/clock'
 import { ApiError } from '@/lib/api'
@@ -17,8 +15,11 @@ import type { EventDetail } from '@/lib/types'
 import { Clock } from '@/components/Clock'
 import { dialogBody, dialogFooter, dialogSurface } from '@/components/dialog-frame'
 import { Connecting } from '@/components/Connecting'
+import { OverflowMenu } from '@/components/OverflowMenu'
 import { QrCode } from '@/components/QrCode'
 import { TeamPlate } from '@/components/TeamPlate'
+import { MatchHistorySheet } from './MatchHistorySheet'
+import { matchHistorySource, type HistorySource } from './match-history'
 import { ResultDialog } from './ResultDialog'
 import { FinishEventDialog } from './FinishEventDialog'
 import {
@@ -56,6 +57,7 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
   const [editing, setEditing] = useState<MatchView | null>(null)
   const [ending, setEnding] = useState<EndTarget | null>(null)
   const [finishOpen, setFinishOpen] = useState(false)
+  const [history, setHistory] = useState<HistorySource | null>(null)
   // One client event id per match end, held across retries so a resend the server has
   // already applied is deduped rather than ending the next match too.
   const endIds = useRef<Record<number, string>>({})
@@ -158,6 +160,8 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
   const mats = [...(view?.mats ?? [])].sort((a, b) => a.number - b.number)
   const allBound = mats.length > 0 && mats.every(m => m.bound)
   const done = eventStatus === 'done'
+  const openMatchHistory = (match: MatchView, matNumber: number | null) =>
+    setHistory(matchHistorySource(match, matNumber, detail))
 
   return (
     <div className="grid gap-6">
@@ -227,6 +231,7 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
                   onSkip={id => runAct({ id, action: 'skip' })}
                   onReopen={id => runAct({ id, action: 'reopen' })}
                   onEditResult={setEditing}
+                  onHistory={openMatchHistory}
                 />
               ))}
             </div>
@@ -255,6 +260,8 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
         onEnd={winnerAthleteId => { if (ending) runEnd(ending, winnerAthleteId) }}
       />
       <ResultDialog detail={detail} match={editing} open={editing !== null} onOpenChange={o => { if (!o) setEditing(null) }} />
+
+      <MatchHistorySheet source={history} open={history !== null} onOpenChange={o => { if (!o) setHistory(null) }} />
     </div>
   )
 }
@@ -312,7 +319,7 @@ function ConnectCard({ connect, eventId, matUrl, collapsed, matCount }: {
   )
 }
 
-function MatPanel({ mat, view, mode, paused, lastSuccessAt, pollIntervalMs, busy, teamColor, onPrimary, onAdvance, onSkip, onReopen, onEditResult }: {
+function MatPanel({ mat, view, mode, paused, lastSuccessAt, pollIntervalMs, busy, teamColor, onPrimary, onAdvance, onSkip, onReopen, onEditResult, onHistory }: {
   mat: MatView
   view: Snapshot
   mode: EventMode
@@ -326,6 +333,7 @@ function MatPanel({ mat, view, mode, paused, lastSuccessAt, pollIntervalMs, busy
   onSkip: (matchId: number) => void
   onReopen: (matchId: number) => void
   onEditResult: (match: MatchView) => void
+  onHistory: (match: MatchView, matNumber: number) => void
 }) {
   const current = mat.current
   const clock = current?.clock ?? null
@@ -364,12 +372,13 @@ function MatPanel({ mat, view, mode, paused, lastSuccessAt, pollIntervalMs, busy
               ? <span className="fig fig-4 t5 text-gray-10">{formatClock(remaining)}</span>
               : <Clock clock={clock} serverNow={view.now} lastSuccessAt={lastSuccessAt} pollIntervalMs={pollIntervalMs} className="t5" />}
         </span>
-        <PanelMenu
+        <OverflowMenu
           label={`Mat ${mat.number} actions`}
           items={[
             { key: 'skip', label: 'Skip this match', disabled: current === null, onSelect: () => { if (current) onSkip(current.id) } },
             { key: 'reopen', label: 'Reopen the last match', disabled: last === null, onSelect: () => { if (last) onReopen(last.id) } },
             { key: 'edit', label: 'Edit the last result', disabled: last === null, onSelect: () => { if (last) onEditResult(last) } },
+            { key: 'history', label: 'Match history', disabled: last === null, onSelect: () => { if (last) onHistory(last, mat.number) } },
           ]}
         />
       </div>
@@ -481,36 +490,6 @@ function leadClass(side: MatchSide, match: MatchView): string {
 function winnerTeamId(match: MatchView): number | null {
   if (!match.result) return match.a.teamId
   return match.result.winnerAthleteId === match.a.athleteId ? match.a.teamId : match.b.teamId
-}
-
-interface MenuItemSpec { key: string; label: string; disabled: boolean; onSelect: () => void }
-
-// 6.9: the panel face holds the one action that matters and the overflow holds the rare
-// ones, instead of a row of identical grey text links.
-function PanelMenu({ label, items }: { label: string; items: MenuItemSpec[] }) {
-  return (
-    <Menu.Root>
-      <Menu.Trigger aria-label={label} className={buttonVariants({ variant: 'ghost', size: 'xs', className: 'self-center' })}>
-        <Ellipsis />
-      </Menu.Trigger>
-      <Menu.Portal>
-        <Menu.Positioner side="bottom" align="end" sideOffset={4} className="isolate z-50">
-          <Menu.Popup className="min-w-48 origin-(--transform-origin) rounded-xl border border-border bg-popover p-1 shadow-dialog">
-            {items.map(item => (
-              <Menu.Item
-                key={item.key}
-                disabled={item.disabled}
-                onClick={item.onSelect}
-                className="flex cursor-default items-center rounded-md px-2.5 py-1.5 t3 text-gray-11 outline-none select-none data-disabled:opacity-50 data-highlighted:bg-gray-4 data-highlighted:text-white"
-              >
-                {item.label}
-              </Menu.Item>
-            ))}
-          </Menu.Popup>
-        </Menu.Positioner>
-      </Menu.Portal>
-    </Menu.Root>
-  )
 }
 
 // 6.9's done state. The rack has nothing left to report, so the composition changes

@@ -483,6 +483,27 @@ describe('LiveTab', () => {
   })
 })
 
+
+describe('LiveTab match history', () => {
+  it('opens the last result on a mat from the panel overflow', async () => {
+    const feed = snapshotFeed(oneMat({ current: null }, [settled]))
+    const f = mount(url => feed.handle(url) ?? (url.endsWith('/history') ? { json: [] } : connectOnly(url)))
+    const user = userEvent.setup()
+    await openMenu(user, 1)
+    await user.click(await screen.findByRole('menuitem', { name: 'Match history' }))
+    expect(await screen.findByRole('dialog')).toHaveTextContent('Mat 1, Mateo Rivera vs Olivia Kim')
+    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/matches/9/history')).toBe(true))
+  })
+
+  it('refuses the panel history when the mat has recorded nothing', async () => {
+    const feed = snapshotFeed(oneMat({ current: null }, []))
+    mount(url => feed.handle(url) ?? connectOnly(url))
+    const user = userEvent.setup()
+    await openMenu(user, 1)
+    expect(await screen.findByRole('menuitem', { name: 'Match history' })).toHaveAttribute('data-disabled')
+  })
+})
+
 const entryDetail: EventDetail = { ...detail, event: { ...detail.event, mode: 'entry' } }
 const atMode = (snapshot: Snapshot, mode: EventMode): Snapshot => ({ ...snapshot, event: { ...snapshot.event, mode } })
 
