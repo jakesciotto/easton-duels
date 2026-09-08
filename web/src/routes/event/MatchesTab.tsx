@@ -19,8 +19,9 @@ import { MatchHistorySheet } from './MatchHistorySheet'
 import { matchHistorySource, type HistorySource } from './match-history'
 import { ResultDialog } from './ResultDialog'
 import { AddMatchDialog } from './AddMatchDialog'
+import { RegenerateConfirmDialog } from './RegenerateConfirmDialog'
 import {
-  endedLabel, liveReason, matchLabel, matchLines, readyNote, regenerateBlockedReason, regenerateWarning,
+  endedLabel, liveReason, matchLabel, matchLines, readyNote, regenerateBlockedReason,
   skipNote, type MatchLine,
 } from './matches-view'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -32,7 +33,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Clock } from '@/components/Clock'
 import { TeamPlate } from '@/components/TeamPlate'
-import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 interface Pick { matchId: number; side: 'a' | 'b'; teamId: number }
 
@@ -561,25 +561,15 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
         </section>
       )}
 
-      <Dialog open={confirmOpen} onOpenChange={o => { if (o) setConfirmOpen(true); else closeConfirm() }}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Replace {pendingCount} pending {pendingCount === 1 ? 'match' : 'matches'}?</DialogTitle></DialogHeader>
-          <DialogBody>
-            <p className="t3 text-gray-11">{regenerateWarning(pendingCount, handCount)}</p>
-            <p className="t3 text-gray-11">Manually added or edited pending matches are replaced too. Live and done matches are not affected.</p>
-            {generate.error && (
-              <Alert>
-                <AlertTitle>The matchups did not generate</AlertTitle>
-                <AlertDescription>{writeErrorMessage(generate.error)}</AlertDescription>
-              </Alert>
-            )}
-          </DialogBody>
-          <DialogFooter>
-            <Button type="button" size="lg" variant="secondary" onClick={closeConfirm}>Cancel</Button>
-            <Button type="button" size="lg" variant="destructive" disabled={generate.isPending} onClick={runGenerate}>Regenerate</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <RegenerateConfirmDialog
+        open={confirmOpen}
+        pendingCount={pendingCount}
+        handCount={handCount}
+        pending={generate.isPending}
+        error={generate.error}
+        onOpenChange={o => { if (o) setConfirmOpen(true); else closeConfirm() }}
+        onConfirm={runGenerate}
+      />
       <KidPickerDialog detail={detail} teamId={pick?.teamId ?? null} matchId={pick?.matchId ?? null} open={pick !== null} onOpenChange={o => { if (!o) setPick(null) }} onPick={onPicked} />
       <AddMatchDialog detail={detail} open={addOpen} onOpenChange={setAddOpen} />
       {/* The one correction dialog, reached from the settled field as well as from the

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { useParams, Link } from 'react-router'
+import { useParams, useSearchParams, Link } from 'react-router'
 import { Field } from '@base-ui/react/field'
 import type { EventMode, EventStatus, Snapshot } from '@shared/types'
 import { PinGate } from '@/components/PinGate'
@@ -8,6 +8,7 @@ import { RouteFallback } from '@/components/RouteFallback'
 import { adminApi, useAdminMutation, useEventDetail } from '@/lib/queries'
 import { SnapshotStreamContext, useSnapshot } from '@/lib/useSnapshot'
 import { pollIntervalForSnapshot } from '@/lib/pollInterval'
+import { SETUP_PARAM, setupStepOf, type SetupStep } from '@/lib/setupFlow'
 import {
   MODE_GROUP_LABEL, MODE_LABEL, MODE_OPTIONS, deskSwitchConsequence, deskSwitchMidMatch,
   deskSwitchRefusal, modeOf, toMode, type MidMatchMat,
@@ -28,6 +29,8 @@ import { EntryTab } from './event/EntryTab'
 import { RulesetsTab } from './event/RulesetsTab'
 import { MatchesTab } from './event/MatchesTab'
 import { LiveTab } from './event/LiveTab'
+import { SetupRosterStep } from './event/SetupRosterStep'
+import { SetupMatchesStep } from './event/SetupMatchesStep'
 
 const STATUS: Record<EventStatus, { label: string; variant: 'default' | 'live' | 'done' }> = {
   setup: { label: 'Setup', variant: 'default' },
@@ -173,6 +176,11 @@ function EventMeta({ eventId, detail, mode, refusal, snapshot }: {
 
 function EventBody({ eventId }: { eventId: number }) {
   const q = useEventDetail(eventId)
+  // The setup step is a URL fact, so a reload resumes it. The tab a click chose is not, so
+  // it stays local and only decides which panel is shown once no step is open.
+  const [params, setParams] = useSearchParams()
+  const step = setupStepOf(params.get(SETUP_PARAM))
+  const [picked, setPicked] = useState<string | null>(null)
   // 6.4 / 7.15: the one poll for this event. The header's freshness readout and every tab
   // under the provider read this same stream, so the shell can never report fresh data for
   // a screen that is deliberately frozen, and one browser tab makes one request per tick.
@@ -198,6 +206,19 @@ function EventBody({ eventId }: { eventId: number }) {
   // about the room rather than about the picture.
   const mode = modeOf(stream.live, detail.event.mode)
   const refusal = mode === 'live' ? deskSwitchRefusal(stream.live) : null
+  // Leaving a step keeps the operator on the tab that step was standing over: Open the
+  // event lands on the running order it just generated, not back on the roster.
+  const leave = (next: SetupStep | null) => {
+    if (step !== null) setPicked(step)
+    setParams(prev => {
+      const n = new URLSearchParams(prev)
+      if (next === null) n.delete(SETUP_PARAM)
+      else n.set(SETUP_PARAM, next)
+      return n
+    }, { replace: true })
+  }
+  const tab = step ?? picked ?? (mode === 'entry' ? 'entry' : 'roster')
+
   return (
     <AdminShell
       title={detail.event.name}
@@ -214,11 +235,13 @@ function EventBody({ eventId }: { eventId: number }) {
     >
       <SnapshotStreamContext value={shared}>
         {/*
-          The default tab follows the stored mode: in entry mode the Entry tab is the
-          product, so a freshly opened event lands on it. Uncontrolled on purpose -- a
-          mode change mid event must not throw the operator off the tab they are on.
+          The tab follows, in order: the open setup step, then whatever the operator last
+          clicked, then the stored mode (in entry mode the Entry tab is the product, so a
+          freshly opened event lands on it). Controlled only so a step can select the tab
+          it stands over; a mode change mid event still cannot throw the operator off the
+          tab they are on, because `picked` outlives it.
         */}
-        <Tabs defaultValue={mode === 'entry' ? 'entry' : 'roster'} className="gap-0">
+        <Tabs value={tab} onValueChange={v => setPicked(String(v))} className="gap-0">
           <TabsList className="px-4 sm:px-6">
             <TabsTrigger value="roster">Roster<span className="ml-1.5 fig text-gray-10">{detail.athletes.length}</span></TabsTrigger>
             <TabsTrigger value="entry">Entry</TabsTrigger>
@@ -232,6 +255,15 @@ function EventBody({ eventId }: { eventId: number }) {
           <TabsContent value="matches" className={PANEL}><MatchesTab detail={detail} /></TabsContent>
           <TabsContent value="live" className={PANEL}><LiveTab detail={detail} /></TabsContent>
         </Tabs>
+        {/* Inside the provider: the matches step reads the same stream every tab reads, so
+            it refuses a regenerate for the same live mat the Matches tab refuses it for. */}
+        <SetupRosterStep
+          detail={detail}
+          open={step === 'roster'}
+          onClose={() => leave(null)}
+          onContinue={() => leave('matches')}
+        />
+        <SetupMatchesStep detail={detail} open={step === 'matches'} onClose={() => leave(null)} />
       </SnapshotStreamContext>
     </AdminShell>
   )

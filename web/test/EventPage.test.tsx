@@ -61,12 +61,12 @@ const slowSnapshot = (over: Partial<Snapshot['event']> = {}) => sampleSnapshot({
 })
 const SLOW_SNAPSHOT = slowSnapshot()
 
-function mount(handler: (url: string, init?: RequestInit) => Reply | undefined) {
+function mount(handler: (url: string, init?: RequestInit) => Reply | undefined, path = '/events/7') {
   const f = fakeFetch((url, init) => handler(url, init) ?? { json: [] })
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  const router = createMemoryRouter([{ path: '/events/:eventId', element: <EventPage /> }], { initialEntries: ['/events/7'] })
+  const router = createMemoryRouter([{ path: '/events/:eventId', element: <EventPage /> }], { initialEntries: [path] })
   render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
-  return { f, qc }
+  return { f, qc, router }
 }
 
 const snapshotReply = (url: string, snapshot: Snapshot = SLOW_SNAPSHOT): Reply | undefined =>
@@ -474,5 +474,78 @@ describe('EventPage: the desk contact', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Save contact' }))
     await vi.waitFor(() => expect(patched(f)).toBeGreaterThan(-1))
     expect(f.body(patched(f))).toEqual({ contactName: 'Sam', contactPhone: '555-0199' })
+  })
+})
+
+/**
+ * B3. Creating an event used to end on a bare event page: the roster and the running order
+ * were both owed, both lived behind a tab, and nothing on the screen said so. The step is a
+ * URL fact so a reload on gym wifi resumes it, and an event opened from the list carries no
+ * param and sees none of it.
+ */
+describe('EventPage: the three step setup', () => {
+  const route = () => (url: string) =>
+    snapshotReply(url) ?? (url === '/api/events/7' ? { json: detailWith([]) } : undefined)
+  const tab = (name: RegExp) => screen.getByRole('tab', { name, hidden: true })
+
+  it('opens the roster step over the Roster tab', async () => {
+    mount(route(), '/events/7?setup=roster')
+    expect(await screen.findByText('Who is competing?')).toBeInTheDocument()
+    expect(tab(/Roster/)).toHaveAttribute('aria-selected', 'true')
+  })
+
+  // A reload lands here with no history behind it, which is the whole reason the step is in
+  // the URL rather than in a page state.
+  it('resumes the matches step from the URL alone, over the Matches tab', async () => {
+    mount(route(), '/events/7?setup=matches')
+    expect(await screen.findByText('Assign the matches')).toBeInTheDocument()
+    expect(tab(/Matches/)).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('shows no step for an event opened from the list', async () => {
+    mount(route())
+    await screen.findByRole('tab', { name: /Roster/ })
+    expect(screen.queryByText('Who is competing?')).not.toBeInTheDocument()
+    expect(screen.queryByText('Assign the matches')).not.toBeInTheDocument()
+  })
+
+  it('clears the param when the roster step is skipped, and stays on the tab it stood over', async () => {
+    const { router } = mount(route(), '/events/7?setup=roster')
+    const user = userEvent.setup()
+    await screen.findByText('Who is competing?')
+    await user.click(screen.getByRole('button', { name: 'Skip for now' }))
+    await vi.waitFor(() => expect(router.state.location.search).toBe(''))
+    expect(screen.queryByText('Who is competing?')).not.toBeInTheDocument()
+    expect(tab(/Roster/)).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('carries Continue from the roster step to the matches step', async () => {
+    const { router } = mount(route(), '/events/7?setup=roster')
+    const user = userEvent.setup()
+    await screen.findByText('Who is competing?')
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+    await vi.waitFor(() => expect(router.state.location.search).toBe('?setup=matches'))
+    expect(await screen.findByText('Assign the matches')).toBeInTheDocument()
+    expect(tab(/Matches/)).toHaveAttribute('aria-selected', 'true')
+  })
+
+  // Open the event closes the step on the running order it just generated, not back on the
+  // roster the tab would otherwise fall to.
+  it('clears the param on Open the event and leaves the Matches tab in view', async () => {
+    const { router } = mount(route(), '/events/7?setup=matches')
+    const user = userEvent.setup()
+    await screen.findByText('Assign the matches')
+    await user.click(screen.getByRole('button', { name: 'Open the event' }))
+    await vi.waitFor(() => expect(router.state.location.search).toBe(''))
+    expect(screen.queryByText('Assign the matches')).not.toBeInTheDocument()
+    expect(tab(/Matches/)).toHaveAttribute('aria-selected', 'true')
+  })
+
+  // Nothing about the step takes the tab rail away: a click still moves the panel.
+  it('leaves a tab click working once no step is open', async () => {
+    mount(route())
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('tab', { name: 'Rulesets' }))
+    expect(screen.getByRole('tab', { name: 'Rulesets' })).toHaveAttribute('aria-selected', 'true')
   })
 })
