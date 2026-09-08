@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { asc, eq } from 'drizzle-orm'
-import { createTestApp, call, matToken } from './helpers.js'
+import { createTestApp, call, matToken, TEST_PIN } from './helpers.js'
 import { seedEvent } from './fixtures.js'
 import { auditLog, events, matchEvents, matches, mats } from '../src/db/schema.js'
 import { actorOfMatchEventId } from '../src/audit/log.js'
@@ -320,6 +320,50 @@ describe('GET /api/matches/:matchId/history', () => {
     expect(r.body.map((row: { action: string }) => row.action)).toEqual(['team_edit', 'finish'])
     expect(Object.keys(r.body[0])).toEqual(['id', 'at', 'actor', 'action', 'detail'])
     expect((await call(app, 'GET', `/api/events/${s.eventId}/history`)).status).toBe(401)
+  })
+
+  it('leaves the match rows to the match, so an afternoon of scoring cannot push the event out', async () => {
+    const { app, db, adminToken } = await createTestApp()
+    const created = await call(app, 'POST', '/api/events', {
+      name: 'Ridgeline Duals', date: '2026-10-17', matCount: 1,
+      teams: [{ name: 'Ridgeline', color: 'red' }, { name: 'Lakeside', color: 'blue' }],
+    }, adminToken)
+    expect(created.status).toBe(201)
+    const eventId = created.body.event.id
+    const teamA = created.body.teams[0].id
+    const teamB = created.body.teams[1].id
+    const add = async (firstName: string, lastName: string, teamId: number) => {
+      const r = await call(app, 'POST', `/api/events/${eventId}/athletes`, { manual: { firstName, lastName } }, adminToken)
+      expect(r.status).toBe(201)
+      const id = r.body.find((a: { firstName: string }) => a.firstName === firstName).id
+      await call(app, 'POST', `/api/events/${eventId}/athletes/assign`, { ids: [id], teamId }, adminToken)
+      return id as number
+    }
+    const rowan = await add('Rowan', 'Vale', teamA)
+    const juniper = await add('Juniper', 'Solis', teamB)
+    const match = await call(app, 'POST', `/api/events/${eventId}/matches`, { athleteAId: rowan, athleteBId: juniper }, adminToken)
+    expect(match.status).toBe(201)
+    const matchId = match.body.id
+    await call(app, 'PATCH', `/api/events/${eventId}`, { status: 'live' }, adminToken)
+
+    const matId = (await db.select().from(mats).where(eq(mats.eventId, eventId)).get())!.id
+    const token = matToken(eventId, matId)
+    await call(app, 'POST', `/api/matches/${matchId}/events`, { id: 'score-0001', type: 'score', athleteId: rowan, actionKey: 'mount', lastSeq: 0 }, token)
+    await call(app, 'DELETE', `/api/matches/${matchId}/events/last`, { lastSeq: 1 }, token)
+    await call(app, 'POST', `/api/matches/${matchId}/end`, { id: 'end-0001', lastSeq: 0, winnerAthleteId: rowan }, token)
+    await call(app, 'PATCH', `/api/events/${eventId}`, { status: 'done' }, adminToken)
+    expect((await call(app, 'POST', `/api/events/${eventId}/certify`, { pin: TEST_PIN }, adminToken)).status).toBe(200)
+
+    const stored = await rows(db, eventId)
+    expect(stored.filter(r => r.matchId !== null).map(r => r.action)).toEqual(['match_create', 'score', 'undo', 'end'])
+
+    const r = await call(app, 'GET', `/api/events/${eventId}/history`, undefined, adminToken)
+    expect(r.status).toBe(200)
+    const served = r.body.map((row: { action: string }) => row.action)
+    expect(served).toEqual(['create', 'roster_add', 'roster_assign', 'roster_add', 'roster_assign', 'start', 'finish', 'certify'])
+    expect(served).not.toContain('score')
+    expect(served).not.toContain('undo')
+    expect(served).not.toContain('end')
   })
 
   it('needs an admin token, and answers an unknown match with nothing', async () => {

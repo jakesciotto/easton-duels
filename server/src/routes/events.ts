@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { z } from 'zod'
-import { asc, count, desc, eq } from 'drizzle-orm'
+import { and, asc, count, desc, eq, isNull } from 'drizzle-orm'
 import type { Env } from '../context.js'
 import type { DbLike } from '../db/client.js'
 import { auditLog, events, teams, athletes, rulesets, mats, matches, rosterCandidates } from '../db/schema.js'
@@ -249,14 +249,19 @@ eventRoutes.post('/events/:eventId/uncertify', requireAdmin, validate('json', un
 })
 
 // The companion to a match's history, for the rows that belong to no match: certify,
-// unlock, Start, Finish, the roster and the running order. It takes the newest rows
-// rather than the oldest, because an event's log only grows and the end of it is what a
-// person is looking at, and hands them back in reading order.
+// unlock, Start, Finish, the roster and the running order. Rows that name a match are
+// left to that match's own history, or a busy afternoon's scoring would push every
+// event-level row past the limit. It takes the newest rows rather than the oldest,
+// because an event's log only grows and the end of it is what a person is looking at,
+// and hands them back in reading order.
 eventRoutes.get('/events/:eventId/history', requireAdmin, async c => {
   const { db } = c.get('ctx')
   const rows = await db.select({
     id: auditLog.id, at: auditLog.at, actor: auditLog.actor, action: auditLog.action, detail: auditLog.detail,
-  }).from(auditLog).where(eq(auditLog.eventId, Number(c.req.param('eventId')))).orderBy(desc(auditLog.id)).limit(HISTORY_LIMIT).all()
+  }).from(auditLog).where(and(
+    eq(auditLog.eventId, Number(c.req.param('eventId'))),
+    isNull(auditLog.matchId),
+  )).orderBy(desc(auditLog.id)).limit(HISTORY_LIMIT).all()
   const body: AuditEntry[] = rows.reverse()
   return c.json(body)
 })
