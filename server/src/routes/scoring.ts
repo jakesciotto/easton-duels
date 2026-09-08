@@ -15,6 +15,7 @@ import { expireOverdue } from '../match/lazyExpiry.js'
 import { toMatchView, buildSnapshot } from '../live/snapshot.js'
 import { bindMat, heartbeatMat, unbindMat } from '../live/bound.js'
 import { recordAudit, actorOf, matNumberOf, actorOfMatchEventId } from '../audit/log.js'
+import { assertNotCertified, assertNotCertifiedVia } from '../audit/certify.js'
 import { EXTEND_MAX_MS, EXTEND_MIN_MS, type AuditActor } from '../shared/types.js'
 
 export const scoringRoutes = new Hono<Env>()
@@ -84,6 +85,10 @@ scoringRoutes.post('/events/:eventId/mats/:matId/bind', validate('json', z.objec
   // reaches here without it. Checked after the code so an unauthenticated caller learns
   // nothing about the event. Existing tokens keep working, because the desk path is the
   // fallback for tablets that failed and cutting them off mid-afternoon helps nobody.
+  //
+  // A certified event is signed off, so there is nothing left for a tablet to score
+  // either. Both refusals sit here, after the code, for the same reason.
+  await assertNotCertified(ctx.db, eventId)
   if (ev.mode === 'entry') {
     return errorJson(c, 409, 'desk_mode',
       'This event runs from the desk. Every result is typed on the Entry tab, so there is no mat for this iPad to score.')
@@ -108,6 +113,7 @@ scoringRoutes.post('/mats/:matId/advance', requireAdmin, async c => {
   const matId = Number(c.req.param('matId'))
   const mat = await db.select().from(mats).where(eq(mats.id, matId)).get()
   if (!mat) return errorJson(c, 404, 'not_found', 'mat not found')
+  await assertNotCertified(db, mat.eventId)
   const advanced = await db.transaction(async tx => {
     if (mat.currentMatchId !== null) {
       const current = await tx.select({ status: matches.status }).from(matches).where(eq(matches.id, mat.currentMatchId)).get()
@@ -157,6 +163,7 @@ scoringRoutes.post('/matches/:matchId/events', requireMatOrAdmin(matIdFromMatch)
   const matchId = Number(c.req.param('matchId'))
   const body = c.req.valid('json')
   const actor = await actorFor(c)
+  await assertNotCertifiedVia(db, 'match', matchId)
   try {
     const r = await db.transaction(async tx => {
       const appended = await appendMatchEvent(tx, { ...body, matchId })
@@ -180,6 +187,7 @@ scoringRoutes.delete('/matches/:matchId/events/last', requireMatOrAdmin(matIdFro
   const { db } = c.get('ctx')
   const matchId = Number(c.req.param('matchId'))
   const actor = await actorFor(c)
+  await assertNotCertifiedVia(db, 'match', matchId)
   try {
     const match = await db.transaction(async tx => {
       const { match: undone, deleted } = await undoLastMatchEvent(tx, { matchId, lastSeq: c.req.valid('json').lastSeq })
@@ -207,6 +215,7 @@ scoringRoutes.post('/matches/:matchId/end', requireMatOrAdmin(matIdFromMatch), v
   const { db } = c.get('ctx')
   const matchId = Number(c.req.param('matchId'))
   const actor = await actorFor(c)
+  await assertNotCertifiedVia(db, 'match', matchId)
   try {
     // advanceMat sits outside the idempotency guard so a retry whose advance never landed
     // still advances the mat. The bump is therefore unconditional: on a replay the advance
@@ -244,6 +253,7 @@ scoringRoutes.post('/matches/:matchId/clock/extend', requireMatOrAdmin(matIdFrom
   const matchId = Number(c.req.param('matchId'))
   const body = c.req.valid('json')
   const actor = await actorFor(c)
+  await assertNotCertifiedVia(db, 'match', matchId)
   await expireOverdue(db, (await loadMatch(db, matchId)).eventId, Date.now())
   try {
     const r = await db.transaction(async tx => {
@@ -266,6 +276,7 @@ scoringRoutes.post('/matches/:matchId/clock/extend', requireMatOrAdmin(matIdFrom
 
 scoringRoutes.post('/matches/:matchId/reopen', requireAdmin, async c => {
   const { db } = c.get('ctx')
+  await assertNotCertifiedVia(db, 'match', Number(c.req.param('matchId')))
   return respond(c, await db.transaction(async tx => {
     const match = await reopenMatch(tx, Number(c.req.param('matchId')))
     await recordAudit(tx, { eventId: match.eventId, matchId: match.id, actor: 'admin', action: 'reopen', detail: { seq: match.lastSeq } })
@@ -288,6 +299,7 @@ scoringRoutes.post('/matches/:matchId/skip', requireAdmin, async c => {
   const { db } = c.get('ctx')
   const body = await clientIdOf(c)
   if (body instanceof Response) return body
+  await assertNotCertifiedVia(db, 'match', Number(c.req.param('matchId')))
   return respond(c, await db.transaction(async tx => {
     const r = await skipMatch(tx, Number(c.req.param('matchId')), body.id)
     if (!r.duplicate) {

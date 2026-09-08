@@ -10,6 +10,7 @@ import { resolvePair, leastLoadedMat } from '../match/pairs.js'
 import { eventDetail } from './events.js'
 import { bumpVersion } from '../match/events.js'
 import { recordAudit } from '../audit/log.js'
+import { assertNotCertified } from '../audit/certify.js'
 import { advanceMat } from '../match/mats.js'
 
 const createSchema = z.object({
@@ -26,6 +27,7 @@ export const matchRoutes = new Hono<Env>()
 matchRoutes.post('/events/:eventId/matches/generate', requireAdmin, async c => {
   const { db } = c.get('ctx')
   const eventId = Number(c.req.param('eventId'))
+  await assertNotCertified(db, eventId)
   const result = await db.transaction(async tx => {
     const generated = await generateMatches(tx, eventId)
     await recordAudit(tx, { eventId, actor: 'admin', action: 'generate', detail: { created: generated.created } })
@@ -39,6 +41,7 @@ matchRoutes.post('/events/:eventId/matches', requireAdmin, validate('json', crea
   const { db } = c.get('ctx')
   const eventId = Number(c.req.param('eventId'))
   if (!await db.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get()) return errorJson(c, 404, 'not_found', 'event not found')
+  await assertNotCertified(db, eventId)
   const body = c.req.valid('json')
   const pair = await resolvePair(db, eventId, body.athleteAId, body.athleteBId)
   if (typeof pair === 'string') return errorJson(c, 422, 'validation', pair)
@@ -77,6 +80,7 @@ matchRoutes.patch('/matches/:matchId', requireAdmin, validate('json', patchSchem
   const id = Number(c.req.param('matchId'))
   const existing = await db.select().from(matches).where(eq(matches.id, id)).get()
   if (!existing) return errorJson(c, 404, 'not_found', 'match not found')
+  await assertNotCertified(db, existing.eventId)
   if (existing.status !== 'pending') return errorJson(c, 409, 'match_state', 'only a pending match can be edited')
   const body = c.req.valid('json')
   const update: Partial<typeof matches.$inferInsert> = {}
@@ -110,6 +114,7 @@ matchRoutes.delete('/matches/:matchId', requireAdmin, async c => {
   const id = Number(c.req.param('matchId'))
   const existing = await db.select().from(matches).where(eq(matches.id, id)).get()
   if (!existing) return errorJson(c, 404, 'not_found', 'match not found')
+  await assertNotCertified(db, existing.eventId)
   if (existing.status !== 'pending') return errorJson(c, 409, 'match_state', 'only a pending match can be deleted')
   await db.transaction(async tx => {
     await tx.update(mats).set({ currentMatchId: null }).where(eq(mats.currentMatchId, id)).run()
@@ -127,6 +132,7 @@ matchRoutes.post('/events/:eventId/matches/reorder', requireAdmin, validate('jso
   const { db } = c.get('ctx')
   const eventId = Number(c.req.param('eventId'))
   const { ids } = c.req.valid('json')
+  await assertNotCertified(db, eventId)
   const current = (await db.select({ id: matches.id }).from(matches).where(eq(matches.eventId, eventId)).all()).map(m => m.id)
   const same = current.length === ids.length && current.every(id => ids.includes(id))
   if (!same) return errorJson(c, 422, 'validation', 'ids must be every match of the event exactly once')

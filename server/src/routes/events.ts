@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import type { Context } from 'hono'
 import { z } from 'zod'
 import { asc, count, desc, eq } from 'drizzle-orm'
 import type { Env } from '../context.js'
@@ -6,13 +7,15 @@ import type { DbLike } from '../db/client.js'
 import { events, teams, athletes, rulesets, mats, matches, rosterCandidates } from '../db/schema.js'
 import { validate } from '../lib/validate.js'
 import { lanIp } from '../lib/lanIp.js'
-import { errorJson, requireAdmin } from '../auth/middleware.js'
-import { randomMatCode } from '../auth/pin.js'
+import { clientIp, errorJson, requireAdmin } from '../auth/middleware.js'
+import { checkLimit, recordFailure } from '../auth/dbRateLimit.js'
+import { pinMatches, randomMatCode } from '../auth/pin.js'
 import { advanceMat, startEvent } from '../match/mats.js'
 import { MatchStateError, bumpVersion, endedAtByMatch } from '../match/events.js'
 import { recordAudit } from '../audit/log.js'
+import { assertNotCertified } from '../audit/certify.js'
 import { eventContact } from '../live/snapshot.js'
-import { DEFAULT_ACTIONS, DEFAULT_TERMINALS, DEFAULT_LENGTH_SEC, TEAM_COLOR_KEYS, type AuditAction, type TeamColor } from '../shared/types.js'
+import { CORRECTION_REASON_MAX, DEFAULT_ACTIONS, DEFAULT_TERMINALS, DEFAULT_LENGTH_SEC, TEAM_COLOR_KEYS, type AuditAction, type TeamColor } from '../shared/types.js'
 
 const colorSchema = z.enum(TEAM_COLOR_KEYS as [TeamColor, ...TeamColor[]])
 export const teamSchema = z.object({ name: z.string().trim().min(1).max(40), color: colorSchema })
@@ -129,6 +132,7 @@ eventRoutes.patch('/events/:eventId', requireAdmin, validate('json', patchEventS
   const eventId = Number(c.req.param('eventId'))
   const ev = await db.select().from(events).where(eq(events.id, eventId)).get()
   if (!ev) return errorJson(c, 404, 'not_found', 'event not found')
+  await assertNotCertified(db, eventId)
   const { status, matCount, contactName: name, contactPhone: phone, mode, ...rest } = c.req.valid('json')
   const fields: Partial<typeof events.$inferInsert> = { ...rest }
   if (mode !== undefined) fields.mode = mode
@@ -171,6 +175,7 @@ eventRoutes.delete('/events/:eventId', requireAdmin, async c => {
   const eventId = Number(c.req.param('eventId'))
   const ev = await db.select().from(events).where(eq(events.id, eventId)).get()
   if (!ev) return errorJson(c, 404, 'not_found', 'event not found')
+  await assertNotCertified(db, eventId)
   if (ev.status !== 'setup') return errorJson(c, 409, 'match_state', 'only an event in setup can be deleted')
   // The audit row outlives the event, which is the point of a table with no foreign keys.
   await db.transaction(async tx => {
@@ -186,6 +191,7 @@ eventRoutes.patch('/events/:eventId/teams/:teamId', requireAdmin, validate('json
   const teamId = Number(c.req.param('teamId'))
   const team = await db.select().from(teams).where(eq(teams.id, teamId)).get()
   if (!team || team.eventId !== eventId) return errorJson(c, 404, 'not_found', 'team not found')
+  await assertNotCertified(db, eventId)
   const fields = c.req.valid('json')
   await db.transaction(async tx => {
     if (Object.keys(fields).length > 0) await tx.update(teams).set(fields).where(eq(teams.id, teamId)).run()
@@ -193,6 +199,56 @@ eventRoutes.patch('/events/:eventId/teams/:teamId', requireAdmin, validate('json
       eventId, actor: 'admin', action: 'team_edit',
       detail: { teamId, before: { name: team.name, color: team.color }, after: { name: fields.name ?? team.name, color: fields.color ?? team.color } },
     })
+    await bumpVersion(tx, eventId)
+  })
+  return c.json(await eventDetail(db, eventId))
+})
+
+// Certification is the organizer's signature, so it asks for the PIN again rather than
+// trusting the token in the browser: the console is left open on a desk all afternoon.
+const pinBody = z.object({ pin: z.string() })
+const unlockBody = pinBody.extend({ reason: z.string().trim().min(1).max(CORRECTION_REASON_MAX) })
+
+async function withPin(c: Context<Env>, pin: string): Promise<Response | null> {
+  const ctx = c.get('ctx')
+  const ip = clientIp(c)
+  if (!(await checkLimit(ctx.db, 'certify', ip, Date.now())).allowed) {
+    return errorJson(c, 429, 'rate_limited', 'too many attempts; wait a minute')
+  }
+  if (pinMatches(pin, ctx.adminPin)) return null
+  await recordFailure(ctx.db, 'certify', ip, Date.now())
+  return errorJson(c, 401, 'bad_pin', 'wrong PIN')
+}
+
+eventRoutes.post('/events/:eventId/certify', requireAdmin, validate('json', pinBody), async c => {
+  const { db } = c.get('ctx')
+  const eventId = Number(c.req.param('eventId'))
+  const ev = await db.select().from(events).where(eq(events.id, eventId)).get()
+  if (!ev) return errorJson(c, 404, 'not_found', 'event not found')
+  const refused = await withPin(c, c.req.valid('json').pin)
+  if (refused) return refused
+  if (ev.status !== 'done') return errorJson(c, 409, 'match_state', 'only a finished event can be certified')
+  const at = new Date().toISOString()
+  await db.transaction(async tx => {
+    await tx.update(events).set({ status: 'certified', certifiedAt: at }).where(eq(events.id, eventId)).run()
+    await recordAudit(tx, { eventId, actor: 'admin', action: 'certify', detail: { certifiedAt: at }, at })
+    await bumpVersion(tx, eventId)
+  })
+  return c.json(await eventDetail(db, eventId))
+})
+
+eventRoutes.post('/events/:eventId/uncertify', requireAdmin, validate('json', unlockBody), async c => {
+  const { db } = c.get('ctx')
+  const eventId = Number(c.req.param('eventId'))
+  const ev = await db.select().from(events).where(eq(events.id, eventId)).get()
+  if (!ev) return errorJson(c, 404, 'not_found', 'event not found')
+  const body = c.req.valid('json')
+  const refused = await withPin(c, body.pin)
+  if (refused) return refused
+  if (ev.status !== 'certified') return errorJson(c, 409, 'match_state', 'only a certified event can be unlocked')
+  await db.transaction(async tx => {
+    await tx.update(events).set({ status: 'done', certifiedAt: null }).where(eq(events.id, eventId)).run()
+    await recordAudit(tx, { eventId, actor: 'admin', action: 'uncertify', detail: { reason: body.reason, certifiedAt: ev.certifiedAt } })
     await bumpVersion(tx, eventId)
   })
   return c.json(await eventDetail(db, eventId))

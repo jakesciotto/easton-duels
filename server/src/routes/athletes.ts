@@ -9,6 +9,7 @@ import { errorJson, requireAdmin } from '../auth/middleware.js'
 import { eventDetail } from './events.js'
 import { bumpVersion } from '../match/events.js'
 import { recordAudit } from '../audit/log.js'
+import { assertNotCertified } from '../audit/certify.js'
 import { KIDS_BELTS } from '../shared/types.js'
 import type { RosterCandidate } from '../roster/types.js'
 
@@ -76,6 +77,7 @@ athleteRoutes.post('/events/:eventId/athletes', requireAdmin, validate('json', a
   const { db } = c.get('ctx')
   const eventId = Number(c.req.param('eventId'))
   if (!await db.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get()) return errorJson(c, 404, 'not_found', 'event not found')
+  await assertNotCertified(db, eventId)
   const body = c.req.valid('json')
   if ('manual' in body) {
     const m = body.manual
@@ -116,6 +118,7 @@ athleteRoutes.patch('/athletes/:athleteId', requireAdmin, validate('json', patch
   const id = Number(c.req.param('athleteId'))
   const existing = await db.select().from(athletes).where(eq(athletes.id, id)).get()
   if (!existing) return errorJson(c, 404, 'not_found', 'athlete not found')
+  await assertNotCertified(db, existing.eventId)
   const p = c.req.valid('json')
   if (p.teamId !== undefined && !await teamBelongs(db, existing.eventId, p.teamId)) return errorJson(c, 422, 'validation', 'teamId is not on this event')
   const update: Partial<typeof athletes.$inferInsert> = {}
@@ -141,6 +144,7 @@ athleteRoutes.post('/events/:eventId/athletes/assign', requireAdmin, validate('j
   const { db } = c.get('ctx')
   const eventId = Number(c.req.param('eventId'))
   const { ids, teamId } = c.req.valid('json')
+  await assertNotCertified(db, eventId)
   if (!await teamBelongs(db, eventId, teamId)) return errorJson(c, 422, 'validation', 'teamId is not on this event')
   await db.transaction(async tx => {
     await tx.update(athletes).set({ teamId }).where(and(eq(athletes.eventId, eventId), inArray(athletes.id, ids))).run()
@@ -155,6 +159,7 @@ athleteRoutes.delete('/athletes/:athleteId', requireAdmin, async c => {
   const id = Number(c.req.param('athleteId'))
   const existing = await db.select().from(athletes).where(eq(athletes.id, id)).get()
   if (!existing) return errorJson(c, 404, 'not_found', 'athlete not found')
+  await assertNotCertified(db, existing.eventId)
   const used = await db.select({ id: matches.id }).from(matches).where(or(eq(matches.athleteAId, id), eq(matches.athleteBId, id))).get()
   if (used) return errorJson(c, 409, 'match_state', 'athlete is in a match; delete the match first')
   await db.transaction(async tx => {

@@ -9,6 +9,7 @@ import { fetchCompetitors } from '../roster/leaderboard.js'
 import { buildCandidates } from '../roster/join.js'
 import { WlRequestError } from '../roster/wl.js'
 import { recordAudit } from '../audit/log.js'
+import { assertNotCertified } from '../audit/certify.js'
 import type { WlBeltRecord, LeaderboardCompetitor, RosterCandidate } from '../roster/types.js'
 
 export const rosterRoutes = new Hono<Env>()
@@ -27,6 +28,7 @@ rosterRoutes.post('/events/:eventId/roster/sync', requireAdmin, validate('json',
   const { db, roster } = c.get('ctx')
   const eventId = Number(c.req.param('eventId'))
   if (!await db.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get()) return errorJson(c, 404, 'not_found', 'event not found')
+  await assertNotCertified(db, eventId)
   if (!roster.wl) return errorJson(c, 503, 'wl_not_configured', 'WellnessLiving credentials are not set')
   const { kBusinesses } = c.req.valid('json')
   const warnings: string[] = []

@@ -3,9 +3,11 @@ import type { DbLike } from '../db/client.js'
 import { rateLimits } from '../db/schema.js'
 
 const WINDOW_MS = 60 * 60 * 1000
-const LIMITS: Record<LimitScope, number> = { pin: 10, bind: 20 }
+const LIMITS: Record<LimitScope, number> = { pin: 10, bind: 20, certify: 10 }
 
-export type LimitScope = 'pin' | 'bind'
+// 'certify' is its own bucket rather than sharing 'pin': locking somebody out of signing
+// the record off because a tablet mistyped the mat code all afternoon helps nobody.
+export type LimitScope = 'pin' | 'bind' | 'certify'
 
 function where(scope: LimitScope, key: string) {
   return and(eq(rateLimits.scope, scope), eq(rateLimits.key, key))

@@ -9,6 +9,7 @@ import { enterResult, createEntry } from '../match/entry.js'
 import { bumpVersion } from '../match/events.js'
 import { resolvePair } from '../match/pairs.js'
 import { recordAudit } from '../audit/log.js'
+import { assertNotCertified } from '../audit/certify.js'
 import { respond } from './scoring.js'
 
 const entrySchema = z.object({
@@ -34,6 +35,7 @@ entryRoutes.post('/matches/:matchId/entry', requireAdmin, validate('json', entry
   const matchId = Number(c.req.param('matchId'))
   const match = await db.select().from(matches).where(eq(matches.id, matchId)).get()
   if (!match) return errorJson(c, 404, 'not_found', 'match not found')
+  await assertNotCertified(db, match.eventId)
   const body = c.req.valid('json')
   if (body.winnerAthleteId !== match.athleteAId && body.winnerAthleteId !== match.athleteBId) return errorJson(c, 422, 'validation', 'winner must be one of the two athletes')
   // A settled match typed again is a correction, and the audit row carries both sides of
@@ -60,6 +62,7 @@ entryRoutes.post('/events/:eventId/entries', requireAdmin, validate('json', crea
   const { db } = c.get('ctx')
   const eventId = Number(c.req.param('eventId'))
   if (!await db.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get()) return errorJson(c, 404, 'not_found', 'event not found')
+  await assertNotCertified(db, eventId)
   const body = c.req.valid('json')
   const pair = await resolvePair(db, eventId, body.athleteAId, body.athleteBId)
   if (typeof pair === 'string') return errorJson(c, 422, 'validation', pair)
