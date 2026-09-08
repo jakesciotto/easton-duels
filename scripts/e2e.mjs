@@ -174,10 +174,12 @@ async function certifyArm(admin) {
   assert(fresh.status === 409 && fresh.body.error.message === 'event is done', 'a finished event still refuses a new result')
 
   const matchHistory = (await j('GET', `/api/matches/${matchId}/history`, undefined, admin)).body
-  assert(matchHistory.map(r => r.action).join() === 'score,end,correction,correction', 'the match history lists the mat and both corrections')
-  assert(matchHistory.map(r => r.actor).join() === 'mat:1,mat:1,desk,desk', 'the match history names who did each')
-  assert(matchHistory[2].detail.reason === 'the mat called the wrong colour', 'a correction carries its reason')
-  assert(matchHistory[2].detail.before.winnerAthleteId === athleteA && matchHistory[2].detail.after.winnerAthleteId === athleteB, 'a correction carries both sides')
+  // generate wrote this match into existence, and Start loaded it onto its one mat, which
+  // is the match_create and advance rows ahead of the mat's own score.
+  assert(matchHistory.map(r => r.action).join() === 'match_create,advance,score,end,correction,correction', 'the match history lists the match_create, the advance, the mat, and both corrections')
+  assert(matchHistory.map(r => r.actor).join() === 'admin,system,mat:1,mat:1,desk,desk', 'the match history names who did each')
+  assert(matchHistory[4].detail.reason === 'the mat called the wrong colour', 'a correction carries its reason')
+  assert(matchHistory[4].detail.before.winnerAthleteId === athleteA && matchHistory[4].detail.after.winnerAthleteId === athleteB, 'a correction carries both sides')
   const eventHistory = (await j('GET', `/api/events/${eventId}/history`, undefined, admin)).body
   const signed = eventHistory.filter(r => r.action === 'certify' || r.action === 'uncertify')
   assert(signed.map(r => r.action).join() === 'certify,uncertify', 'the history lists the certify and uncertify rows')
