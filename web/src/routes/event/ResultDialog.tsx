@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import type { MatchView, WinType } from '@shared/types'
+import { CORRECTION_REASON_MAX, type MatchView, type WinType } from '@shared/types'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import { newEventId } from '@/lib/ids'
 import { writeErrorMessage } from '@/lib/eventMode'
@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils'
 import { dialogBody, dialogFooter, dialogStack, dialogSurface } from '@/components/dialog-frame'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Toggle } from '@/components/ui/toggle'
 import { TeamPlate } from '@/components/TeamPlate'
@@ -76,6 +77,9 @@ export function ResultDialog({ detail, match, open, onOpenChange }: { detail: Ev
   const [pointsB, setPointsB] = useState('')
   const [winner, setWinner] = useState<number | null>(null)
   const [winType, setWinType] = useState<WinType>('points')
+  // Optional: a correction made in the heat of the afternoon should not stall on a
+  // sentence, and the trail already records who changed what and when.
+  const [reason, setReason] = useState('')
   const save = useAdminMutation(eventId, (v: { id: number; body: unknown }) =>
     adminApi(`/api/matches/${v.id}/entry`, { method: 'POST', body: v.body }))
 
@@ -91,6 +95,7 @@ export function ResultDialog({ detail, match, open, onOpenChange }: { detail: Ev
     setPointsB(String(match.b.score))
     setWinner(match.result?.winnerAthleteId ?? null)
     setWinType(match.result?.winType ?? 'points')
+    setReason('')
     save.reset()
   }, [open, match?.id])
 
@@ -101,9 +106,15 @@ export function ResultDialog({ detail, match, open, onOpenChange }: { detail: Ev
   const submit = (e: FormEvent) => {
     e.preventDefault()
     if (winner === null) return
+    const trimmed = reason.trim()
     save.mutate({
       id: match.id,
-      body: { entryId, pointsA: Number(pointsA || 0), pointsB: Number(pointsB || 0), winnerAthleteId: winner, winType },
+      body: {
+        entryId, pointsA: Number(pointsA || 0), pointsB: Number(pointsB || 0), winnerAthleteId: winner, winType,
+        // Absent rather than empty: the server reads a blank as no reason at all, and
+        // sending one would write an empty string into the record.
+        ...(trimmed === '' ? {} : { reason: trimmed }),
+      },
     }, { onSuccess: () => onOpenChange(false) })
   }
 
@@ -133,6 +144,20 @@ export function ResultDialog({ detail, match, open, onOpenChange }: { detail: Ev
                   {t.word}
                 </Toggle>
               ))}
+            </div>
+
+            <div className="grid gap-2 sm:col-span-2">
+              <Label htmlFor="res-reason">
+                Reason
+                <span className="ml-auto fig t1 text-gray-9">{reason.length} / {CORRECTION_REASON_MAX}</span>
+              </Label>
+              <Input
+                id="res-reason"
+                value={reason}
+                maxLength={CORRECTION_REASON_MAX}
+                autoComplete="off"
+                onChange={e => setReason(e.target.value)}
+              />
             </div>
 
             {save.error && (

@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ResultDialog } from '@/routes/event/ResultDialog'
 import { setAdminToken } from '@/lib/auth'
 import { CERTIFIED_REFUSAL } from '@/lib/eventMode'
+import { CORRECTION_REASON_MAX } from '@shared/types'
 import type { EventDetail } from '@/lib/types'
 import { fakeFetch, sampleMatch } from './fakes'
 
@@ -74,7 +75,59 @@ describe('ResultDialog', () => {
   })
 })
 
-describe('ResultDialog refusals', () => {
+// A correction is the one write that changes a record after the fact, so it may carry the
+// sentence that says why. Optional by ruling: a correction made in the heat of the
+// afternoon should not stall on a sentence.
+describe('ResultDialog reason', () => {
+  it('counts the reason against its limit and sends it with the correction', async () => {
+    const f = fakeFetch(() => ({ json: {} }))
+    mount()
+    const user = userEvent.setup()
+    const dialog = await screen.findByRole('dialog')
+    const field = within(dialog).getByLabelText(/^Reason/)
+    expect(field).toHaveAttribute('maxLength', String(CORRECTION_REASON_MAX))
+    expect(within(dialog).getByText(`0 / ${CORRECTION_REASON_MAX}`)).toBeInTheDocument()
+    await user.type(field, 'referee called the tap')
+    expect(within(dialog).getByText(`22 / ${CORRECTION_REASON_MAX}`)).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: 'Save result' }))
+    await vi.waitFor(() => expect(f.calls.length).toBeGreaterThan(0))
+    expect(f.body(0)).toMatchObject({ reason: 'referee called the tap' })
+  })
+
+  // The server reads a blank as no reason at all, and sending one would write an empty
+  // string into the record.
+  it('leaves the field out of the write when nothing was typed', async () => {
+    const f = fakeFetch(() => ({ json: {} }))
+    mount()
+    const user = userEvent.setup()
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Save result' }))
+    await vi.waitFor(() => expect(f.calls.length).toBeGreaterThan(0))
+    expect(f.body(0)).not.toHaveProperty('reason')
+  })
+
+  it('sends a trimmed reason, never one that is only spaces', async () => {
+    const f = fakeFetch(() => ({ json: {} }))
+    mount()
+    const user = userEvent.setup()
+    const dialog = await screen.findByRole('dialog')
+    await user.type(within(dialog).getByLabelText(/^Reason/), '   ')
+    await user.click(within(dialog).getByRole('button', { name: 'Save result' }))
+    await vi.waitFor(() => expect(f.calls.length).toBeGreaterThan(0))
+    expect(f.body(0)).not.toHaveProperty('reason')
+  })
+
+  it('clears the reason between openings, so one correction never carries another one', async () => {
+    fakeFetch(() => ({ json: {} }))
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const { rerender } = mount()
+    const user = userEvent.setup()
+    await user.type(within(await screen.findByRole('dialog')).getByLabelText(/^Reason/), 'wrong winner')
+    rerender(<QueryClientProvider client={qc}><ResultDialog detail={detail} match={done} open={false} onOpenChange={() => {}} /></QueryClientProvider>)
+    rerender(<QueryClientProvider client={qc}><ResultDialog detail={detail} match={done} open onOpenChange={() => {}} /></QueryClientProvider>)
+    expect(within(await screen.findByRole('dialog')).getByLabelText(/^Reason/)).toHaveValue('')
+  })
+
   it('says what to do when the server refuses the correction on a certified event', async () => {
     fakeFetch(() => ({ status: 409, json: { error: { code: 'match_state', message: 'event is certified' } } }))
     mount()
