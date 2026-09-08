@@ -263,3 +263,19 @@ describe('unbind', () => {
     expect(stale.body.error.code).toBe('token_stale')
   })
 })
+
+describe('names on the wire', () => {
+  it('serves initials on the public snapshot and full names to the console', async () => {
+    const { app, db } = await createTestApp()
+    const s = await seedEvent(db, { live: true })
+    const pub = await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)
+    expect(pub.body.snapshot.matches[0].a.name).toBe('Mateo R.')
+    const admin = (await call(app, 'POST', '/api/auth/admin', { pin: '123456' })).body.token
+    const full = await call(app, 'GET', `/api/events/${s.eventId}/snapshot`, undefined, admin)
+    expect(full.body.snapshot.matches[0].a.name).toBe('Mateo Rivera')
+    const mat = (await call(app, 'POST', `/api/events/${s.eventId}/mats/${s.matIds[0]}/bind`, { code: '0420' })).body.token
+    const write = await call(app, 'POST', `/api/matches/${s.matchIds[0]}/events`, { id: 'names-0001', type: 'clock_start', lastSeq: 0 }, mat)
+    expect(write.status).toBe(200)
+    expect(write.body.match.a.name).toBe('Mateo R.')
+  })
+})

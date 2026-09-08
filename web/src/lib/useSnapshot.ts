@@ -1,3 +1,4 @@
+import { getAdminToken } from './auth'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { Snapshot } from '@shared/types'
 import { POLL_DEADLINE_MIN_MS, pollIntervalForSnapshot } from './pollInterval'
@@ -105,7 +106,13 @@ function usePoll(eventId: number | null, pollMs?: number): PollState {
       const deadline = new AbortController()
       const cutOff = setTimeout(() => deadline.abort(), Math.max(POLL_DEADLINE_MIN_MS, nextInterval() * 3))
       try {
-        const res = await fetch(`/api/events/${eventId}/snapshot?since=${version}`, { signal: deadline.signal })
+        // The snapshot serves initials to anyone; the console's token is what buys it the
+        // full names the Live tab prints. The board and the tablets hold no admin token.
+        const token = getAdminToken()
+        const res = await fetch(`/api/events/${eventId}/snapshot?since=${version}`, {
+          signal: deadline.signal,
+          headers: token ? { authorization: `Bearer ${token}` } : undefined,
+        })
         if (!res.ok) throw new Error(String(res.status))
         const body = await res.json() as { version: number; snapshot?: Snapshot }
         if (ignore) return

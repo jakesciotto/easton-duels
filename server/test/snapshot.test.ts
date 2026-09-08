@@ -7,7 +7,7 @@ import { advanceMat, reopenMatch } from '../src/match/mats.js'
 import { mats } from '../src/db/schema.js'
 import { ON_DECK_DEPTH } from '../src/shared/types.js'
 
-const opts = { nowMs: Date.parse('2026-08-27T18:00:00.000Z') }
+const opts = { names: 'full' as const, nowMs: Date.parse('2026-08-27T18:00:00.000Z') }
 const T = (s: number) => new Date(Date.parse('2026-08-27T18:00:00.000Z') + s * 1000).toISOString()
 
 describe('buildSnapshot', () => {
@@ -96,5 +96,23 @@ describe('buildSnapshot', () => {
     const rematched = (await buildSnapshot(db, s.eventId, opts)).matches.find(m => m.id === first)
     expect(rematched?.endedAt).toBe(T(120))
     expect(rematched?.result).toEqual({ winnerAthleteId: s.b1, winType: 'decision' })
+  })
+})
+
+import { publicName } from '../src/live/snapshot.js'
+
+// Open question 5. The snapshot is public, so by default it carries a first name and a
+// last initial; only a caller that asks for the full form gets it.
+describe('public names', () => {
+  it('shortens to a last initial by default', async () => {
+    const db = await freshDb()
+    const s = await seedEvent(db, { live: true })
+    const snap = await buildSnapshot(db, s.eventId, { nowMs: Date.now() })
+    expect(snap.matches[0].a.name).toBe('Mateo R.')
+  })
+  it('formats a single name and an empty surname without a stray dot', () => {
+    expect(publicName('Mateo', 'Rivera')).toBe('Mateo R.')
+    expect(publicName('Mateo', '')).toBe('Mateo')
+    expect(publicName(' Ava ', ' park')).toBe('Ava P.')
   })
 })

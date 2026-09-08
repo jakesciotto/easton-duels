@@ -12,7 +12,7 @@ import { signToken, tokenExpiry } from '../auth/tokens.js'
 import { appendMatchEvent, endMatch, extendClock, undoLastMatchEvent, loadMatch, latestEndedAt, bumpVersion, MatchStateError, SeqConflict } from '../match/events.js'
 import { advanceMat, reopenMatch, skipMatch } from '../match/mats.js'
 import { expireOverdue } from '../match/lazyExpiry.js'
-import { toMatchView, buildSnapshot } from '../live/snapshot.js'
+import { toMatchView, buildSnapshot, nameFormFor } from '../live/snapshot.js'
 import { bindMat, heartbeatMat, unbindMat } from '../live/bound.js'
 import { recordAudit, actorOf, matNumberOf, actorOfMatchEventId } from '../audit/log.js'
 import { assertNotCertified, assertNotCertifiedVia } from '../audit/certify.js'
@@ -35,7 +35,7 @@ async function actorFor(c: Context<Env>): Promise<AuditActor> {
 async function matchView(c: Context<Env>, match: MatchRow) {
   const db = c.get('ctx').db
   const kids = await db.select().from(athletes).where(eq(athletes.eventId, match.eventId)).all()
-  return toMatchView(match, new Map(kids.map(a => [a.id, a])), await latestEndedAt(db, match.id))
+  return toMatchView(match, new Map(kids.map(a => [a.id, a])), await latestEndedAt(db, match.id), nameFormFor(c.get('auth')))
 }
 
 // Every caller bumps the version inside its own write transaction, so this only reads.
@@ -47,7 +47,7 @@ export async function respond(c: Context<Env>, match: MatchRow) {
 // advance onto an empty queue does.
 export async function respondOptional(c: Context<Env>, eventId: number, match: MatchRow | null) {
   const { db } = c.get('ctx')
-  const snap = await buildSnapshot(db, eventId, { nowMs: Date.now() })
+  const snap = await buildSnapshot(db, eventId, { nowMs: Date.now(), names: nameFormFor(c.get('auth')) })
   const view = match === null ? null : snap.matches.find(m => m.id === match.id) ?? await matchView(c, match)
   return c.json({ match: view, version: snap.version })
 }

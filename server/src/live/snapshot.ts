@@ -4,9 +4,30 @@ import { events, teams, athletes, rulesets, mats, matches, type MatchRow, type A
 import { ON_DECK_DEPTH, type Snapshot, type MatchView, type MatchSide, type MatView, type TeamView, type TeamColor, type EventContact } from '../shared/types.js'
 import { MatchStateError, endedAtByMatch } from '../match/events.js'
 import { effectiveLengthMs } from '../match/derive.js'
+import type { TokenPayload } from '../auth/tokens.js'
+
+/**
+ * Which name a view carries. The snapshot is public: the board reads it with no token
+ * and the tablets with a mat token, and until 2026-09-08 it served every child's full
+ * name to anyone with the URL. Only the console, which holds an admin token, gets the
+ * full name. Public is the default so a new caller has to ask for the full form.
+ */
+export type NameForm = 'full' | 'public'
+
+export function nameFormFor(auth: TokenPayload | null | undefined): NameForm {
+  return auth?.role === 'admin' ? 'full' : 'public'
+}
+
+/** First name plus last initial: "Mateo R.". A single name stays as it is. */
+export function publicName(firstName: string, lastName: string): string {
+  const first = firstName.trim()
+  const initial = lastName.trim().charAt(0).toUpperCase()
+  return initial ? `${first} ${initial}.` : first
+}
 
 export interface SnapshotOptions {
   nowMs: number
+  names?: NameForm
 }
 
 export function eventContact(ev: Pick<EventRow, 'contactName' | 'contactPhone'>): EventContact | null {
@@ -15,13 +36,13 @@ export function eventContact(ev: Pick<EventRow, 'contactName' | 'contactPhone'>)
   return name && phone ? { name, phone } : null
 }
 
-export function toMatchView(m: MatchRow, athleteById: Map<number, AthleteRow>, endedAt: string | null): MatchView {
+export function toMatchView(m: MatchRow, athleteById: Map<number, AthleteRow>, endedAt: string | null, names: NameForm = 'public'): MatchView {
   const lengthMs = effectiveLengthMs(m)
   const side = (id: number, score: number): MatchSide => {
     const a = athleteById.get(id)
     return {
       athleteId: id,
-      name: a ? `${a.firstName} ${a.lastName}` : 'Unknown',
+      name: a ? (names === 'full' ? `${a.firstName} ${a.lastName}` : publicName(a.firstName, a.lastName)) : 'Unknown',
       teamId: a?.teamId ?? null,
       belt: a?.belt ?? null,
       weightLbs: a?.weightLbs ?? null,
@@ -58,7 +79,7 @@ export async function buildSnapshot(db: DbLike, eventId: number, opts: SnapshotO
   const matRows = await db.select().from(mats).where(eq(mats.eventId, eventId)).orderBy(asc(mats.number)).all()
   const matchRows = await db.select().from(matches).where(eq(matches.eventId, eventId)).orderBy(asc(matches.orderIndex), asc(matches.id)).all()
   const endedAtById = await endedAtByMatch(db, matchRows.map(m => m.id))
-  const views = matchRows.map(m => toMatchView(m, athleteById, endedAtById.get(m.id) ?? null))
+  const views = matchRows.map(m => toMatchView(m, athleteById, endedAtById.get(m.id) ?? null, opts.names ?? 'public'))
 
   const tally = new Map<number, { wins: number; points: number }>(teamRows.map(t => [t.id, { wins: 0, points: 0 }]))
   const add = (teamId: number | null, wins: number, points: number) => {

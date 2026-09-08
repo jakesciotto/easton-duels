@@ -217,6 +217,7 @@ try {
   assert(ended.body.match.status === 'done', 'match done')
   poll = await pollSnapshot(eventId, poll.version)
   assert(poll.snapshot.teams[0].wins === 1, 'team win in snapshot')
+  assert(/^[A-Za-z]+ [A-Z]\.$/.test(poll.snapshot.matches[0].a.name), 'public snapshot carries a first name and an initial')
 
   await entryArm(admin)
   await certifyArm(admin)

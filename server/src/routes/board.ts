@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm'
 import type { Env } from '../context.js'
 import { events } from '../db/schema.js'
 import { errorJson } from '../auth/middleware.js'
-import { buildSnapshot } from '../live/snapshot.js'
+import { buildSnapshot, nameFormFor } from '../live/snapshot.js'
 import { reapBound } from '../live/bound.js'
 import { expireOverdue } from '../match/lazyExpiry.js'
 
@@ -20,5 +20,5 @@ boardRoutes.get('/events/:eventId/snapshot', async c => {
   const ev = await db.select({ version: events.version }).from(events).where(eq(events.id, eventId)).get()
   if (!ev) return errorJson(c, 404, 'not_found', 'event not found')
   if (since === ev.version) return c.json({ version: ev.version, now: new Date(now).toISOString() })
-  return c.json({ version: ev.version, snapshot: await buildSnapshot(db, eventId, { nowMs: now }) })
+  return c.json({ version: ev.version, snapshot: await buildSnapshot(db, eventId, { nowMs: now, names: nameFormFor(c.get('auth')) }) })
 })
