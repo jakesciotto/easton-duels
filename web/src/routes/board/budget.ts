@@ -39,6 +39,13 @@ export const HERO_GAP: Record<Composition, number> = { cold: 3, setup: 3, mats: 
 
 /** The note is a b3 line and it DISPLACES: 7.6's words cannot cover a score. */
 export const NOTE_GAP = 1
+/**
+ * The certified line, on done only. It takes a b3 line of its own rather than borrowing
+ * the note slot, because a certified board can also be stale or holding a wake lock
+ * warning: sharing one slot would put two lines in the height budgeted for one and push
+ * the summary out of the safe frame in exactly the state the room is trying to read.
+ */
+export const SIGN_GAP = 1
 /** data entry's "Results entered" line, which is b3 tall. */
 export const FOOTER_GAP = 1
 
@@ -84,6 +91,9 @@ export interface BoardBudget {
   footerGap: number
   note: number
   noteGap: number
+  /** done's certified line, when the event has been signed off. Zero everywhere else. */
+  sign: number
+  signGap: number
   /** mats: one mat's panel. setup: a column. entry: unused. */
   panel: number
   matGap: number
@@ -121,19 +131,27 @@ export function matGapFor(mats: number): number {
   return 0.4
 }
 
-export function boardBudget({ comp, mats, far, note }: {
+export function boardBudget({ comp, mats, far, note, sign = false }: {
   comp: Composition
   mats: number
   far: number
   note: boolean
+  /** done only: the event is certified, so the board carries the signature line. */
+  sign?: boolean
 }): BoardBudget {
   const count = Math.max(1, mats)
   const b3 = B3 * far
   const noteH = note ? b3 : 0
   const noteGap = note ? NOTE_GAP : 0
+  // Only done carries the signature. An event that is not over has nothing signed off,
+  // so no other composition ever spends a line on it.
+  const signed = sign && comp === 'done'
+  const signH = signed ? b3 : 0
+  const signGap = signed ? SIGN_GAP : 0
+  const foot = noteGap + noteH + signGap + signH
   const heroGap = HERO_GAP[comp]
   const base = {
-    heroGap, note: noteH, noteGap, footer: 0, footerGap: 0,
+    heroGap, note: noteH, noteGap, sign: signH, signGap, footer: 0, footerGap: 0,
     matGap: 0, queue: 0, rows: 0, matsShown: 0, sumScale: 1, floorNote: null as string | null,
   }
 
@@ -142,7 +160,7 @@ export function boardBudget({ comp, mats, far, note }: {
     // smaller of its budget and whatever the summary's own content does not need, and
     // never less than its own content.
     const content = SUM_GAP * 2 + SUM_LINES * far
-    const room = SAFE_CQH - heroGap - noteGap - noteH
+    const room = SAFE_CQH - heroGap - foot
     const hero = Math.max(heroContent('done', far), Math.min(HERO.done * far, room - content))
     const band = room - hero
     const sumScale = Math.min(1, (band - SUM_GAP * 2 - SUM_ALLOW * far) / (SUM_FIGS * far))
@@ -154,7 +172,7 @@ export function boardBudget({ comp, mats, far, note }: {
 
   if (comp === 'entry') {
     const hero = HERO.entry * far
-    const band = SAFE_CQH - hero - heroGap - FOOTER_GAP - b3 - noteGap - noteH
+    const band = SAFE_CQH - hero - heroGap - FOOTER_GAP - b3 - foot
     const rows = clampInt(Math.floor(band / b3), 0, ENTRY_ROWS_MAX)
     const row = rows > 0 ? band / rows : band
     return {
@@ -164,7 +182,7 @@ export function boardBudget({ comp, mats, far, note }: {
   }
 
   const hero = HERO[comp] * far
-  const band = SAFE_CQH - hero - heroGap - noteGap - noteH
+  const band = SAFE_CQH - hero - heroGap - foot
 
   if (comp === 'setup') {
     const queue = clampInt(Math.floor((band - b3 - SETUP_HEAD_GAP) / b3), 0, SETUP_FIRST_UP)
@@ -206,7 +224,7 @@ export function boardBudget({ comp, mats, far, note }: {
  * floor, so the two are resolved together. Adding the note only ever shrinks the band,
  * so one extra pass reaches the fixed point.
  */
-export function budgetWithNotes(input: { comp: Composition; mats: number; far: number }, notes: string[]): {
+export function budgetWithNotes(input: { comp: Composition; mats: number; far: number; sign?: boolean }, notes: string[]): {
   budget: BoardBudget
   notes: string[]
 } {

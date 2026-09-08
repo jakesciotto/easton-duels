@@ -374,8 +374,9 @@ describe('Board compositions', () => {
     expect(within(hero).getByText('5').closest('.b-fig')).toHaveClass('b-trail')
   })
 
-  // 6.15: one b3 line in the note slot the board already budgets. Before certification
-  // the line is absent; the board never says Final, uncertified.
+  // 6.15: one b3 line of its own under the summary, centred and quiet. It is not a note:
+  // section 8 keeps the note's attend colour for a state that needs a person. Before
+  // certification the line is absent; the board never says Final, uncertified.
   describe('the certified line', () => {
     const finished = (over: Partial<Snapshot['event']> = {}) => sampleSnapshot({
       event: { ...event('done', 'live'), ...over },
@@ -390,7 +391,27 @@ describe('Board compositions', () => {
     it('prints the signature and its time under the summary', () => {
       const { container } = render(<Board snapshot={finished({ status: 'certified', certifiedAt })} connected lastSuccessAt={Date.now()} />)
       expect(safe(container)).toHaveAttribute('data-comp', 'done')
-      expect(screen.getByText('Final, certified at 4:12 pm')).toBeInTheDocument()
+      const line = container.querySelector('.b-sign')
+      expect(line).toHaveTextContent('Final, certified at 4:12 pm')
+      expect(within(line as HTMLElement).getByText('4:12 pm')).toHaveClass('b-sign-at')
+    })
+
+    // Section 8 reserves the note row for a state that needs a person. A signature needs
+    // nobody, so it is never rendered as one, and it never shares that row's one line.
+    it('is its own element and not a note, even when the board also has a fault to report', () => {
+      const { container } = render(
+        <Board snapshot={finished({ status: 'certified', certifiedAt })} connected lastSuccessAt={Date.now() - 10_500} screenMaySleep />,
+      )
+      const note = container.querySelector('.b-note') as HTMLElement
+      expect(note).not.toBeNull()
+      expect(note.textContent).not.toMatch(/certified/)
+      expect(within(note).getByText('Screen may sleep')).toBeInTheDocument()
+
+      const line = container.querySelector('.b-sign') as HTMLElement
+      expect(line).toHaveTextContent('Final, certified at 4:12 pm')
+      expect(line.parentElement).toBe(note.parentElement)
+      // The words the room reads first are the ones that need somebody.
+      expect(note.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     })
 
     it('says nothing at all before an admin certifies', () => {

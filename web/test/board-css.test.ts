@@ -304,6 +304,23 @@ describe('the note', () => {
   })
 })
 
+describe('the certified line', () => {
+  it('is a line of its own, centred and quiet, never the note\'s attend colour', () => {
+    const body = rule('.b-sign')
+    expect(body).not.toMatch(/position\s*:/)
+    expect(declIn(body, 'flex')).toBe('none')
+    expect(px(declIn(body, 'height'), boardVars(1))).toBeCloseTo(B3 * CQH, 6)
+    expect(px(declIn(body, 'margin-top'), boardVars(1))).toBeCloseTo(CQH, 6)
+    expect(px(declIn(body, 'font-size'), boardVars(1))).toBeCloseTo(B3 * CQH, 6)
+    // 6.15's approved frame: centred under the summary, not left aligned in the note row.
+    expect(declIn(body, 'justify-content')).toBe('center')
+    // Section 8 keeps --attend for a state that needs a person. A signature needs nobody.
+    expect(declIn(body, 'color')).toBe('var(--gray-10)')
+    expect(decl('.b-sign-at', 'color')).toBe('var(--gray-11)')
+    expect(decl('.b-note', 'color')).toBe('var(--attend)')
+  })
+})
+
 /**
  * G05 / G26 / 7.10. Two rows that used to be information-free blanks now carry a
  * sentence, and both of them are read at 30 feet like everything else on the board.

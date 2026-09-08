@@ -85,25 +85,27 @@ export function Board({ snapshot, connected, lastSuccessAt = null, screenMaySlee
   const ageSec = ageSeconds(lastSuccessAt, now)
   const unreachable = silent && now - openedAt.current >= FIRST_CONTACT_MS
 
-  // The signature on the record, in the note slot the board already budgets, so the
-  // summary steps down by its usual factor rather than anything clipping. Absent before
-  // certification: the board never says Final, uncertified.
+  // The signature on the record, under the summary and centred, in its own b3 line.
+  // It is not a note: section 8 reserves the note's attend colour for a state that needs
+  // a person, and this one needs nobody. Absent before certification: the board never
+  // says Final, uncertified.
   const certifiedAt = plan.comp === 'done' ? timeOfDay(snapshot?.event.certifiedAt) : null
 
   // 4.3: an attention state is never carried by colour alone, and a 1.2cqh bar at the
   // edge of the stage is not a message. Each of these says what is wrong, in words, at
-  // b3, inside the safe area where the room reads. A fault leads: the certified line is
-  // a statement about the record and everything above it is a thing gone wrong now.
+  // b3, inside the safe area where the room reads.
   const reported = [
     unreachable ? NOTE_NO_CONTACT : null,
     stale && ageSec !== null ? `Not updating ${formatAge(ageSec)}` : null,
     screenMaySleep ? 'Screen may sleep' : null,
-    certifiedAt === null ? null : `${CERTIFIED_NOTE} ${certifiedAt}`,
   ].filter((note): note is string => note !== null)
 
-  // The note takes a b3 line out of the composition rather than painting over one, so
-  // the budget has to be resolved together with the notes it carries.
-  const { budget, notes } = budgetWithNotes({ comp: plan.comp, mats: plan.mats, far }, reported)
+  // The note and the certified line each take a b3 line out of the composition rather
+  // than painting over one, so the budget has to be resolved together with them.
+  const { budget, notes } = budgetWithNotes(
+    { comp: plan.comp, mats: plan.mats, far, sign: certifiedAt !== null },
+    reported,
+  )
 
   const done = snapshot ? sortDoneMatches(snapshot.matches.filter(m => m.status === 'done')) : []
   const entryRows = plan.comp === 'entry' ? done.slice(0, budget.rows) : []
@@ -156,6 +158,12 @@ export function Board({ snapshot, connected, lastSuccessAt = null, screenMaySlee
           {notes.length > 0 && (
             <div role="status" className="b-note font-sans">
               {notes.map(note => <span key={note}>{note}</span>)}
+            </div>
+          )}
+
+          {certifiedAt !== null && (
+            <div className="b-sign font-sans">
+              {CERTIFIED_NOTE} <span className="b-sign-at font-mono">{certifiedAt}</span>
             </div>
           )}
         </div>

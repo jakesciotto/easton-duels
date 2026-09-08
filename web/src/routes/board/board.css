@@ -152,6 +152,27 @@
   color: var(--attend);
 }
 
+/* 6.15's signature on the record, on done only. Centred under the summary rather than
+   left aligned in the note row, and at --gray-10 rather than --attend: section 8 keeps
+   the attend colour for a state that needs a person, and a certified event needs none.
+   Its own flex item with its own line in the budget, so a board that is both certified
+   and stale carries two lines and clips neither. */
+.b-sign {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2cqw;
+  height: var(--b3);
+  margin-top: 1cqh;
+  font-size: var(--b3);
+  line-height: 1;
+  color: var(--gray-10);
+}
+.b-sign-at {
+  color: var(--gray-11);
+}
+
 /* ---------------- hero ---------------- */
 
 .b-hero {
