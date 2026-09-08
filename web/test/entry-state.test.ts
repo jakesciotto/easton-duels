@@ -3,14 +3,14 @@ import { ApiError } from '@/lib/api'
 import { CERTIFIED_REFUSAL_BODY, CERTIFIED_REFUSAL_TITLE } from '@/lib/eventMode'
 import {
   SAME_PAIR_WINDOW_MS, clearDraft, clockLabel, draftKey, isRepeatPair, ledgerTime, loadDraft, pairKey, restoreDraft,
-  RETRYING_LINE, retriesItself, saveDraft, saveErrorCopy, seedPairLog, serverRefused, teamWins,
+  DRAFT_VERSION, RETRYING_LINE, retriesItself, saveDraft, saveErrorCopy, seedPairLog, serverRefused, teamWins,
   type EntryDraft,
 } from '@/routes/event/entry-state'
 import type { AthleteRow, MatchRow } from '@/lib/types'
 
 const draft: EntryDraft = {
-  entryId: 'e1234567-aaaa', aId: '101', bId: '201', pointsA: '5', pointsB: '2',
-  winner: 'a', winType: 'points', editingId: null,
+  v: DRAFT_VERSION, entryId: 'e1234567-aaaa', aId: '101', bId: '201', pointsA: '5', pointsB: '2',
+  winner: 'a', winType: 'points', editingId: null, reason: '',
 }
 
 const kid = (id: number, teamId: number | null): AthleteRow => ({
@@ -79,6 +79,28 @@ describe('entry draft', () => {
     saveDraft(7, draft)
     expect(restoreDraft(7)).toEqual(draft)
     expect(restoreDraft(8)).toBeNull()
+  })
+
+  /**
+   * The parked item's migration. A draft is an unsent result, and losing one is the
+   * failure the whole mechanism exists to prevent, so a payload written by a build that
+   * predates the correction reason restores with an empty one rather than being thrown
+   * away with the tab's only copy of a result nobody typed twice.
+   */
+  it('restores a draft written before the reason field existed', () => {
+    sessionStorage.setItem(draftKey(7, 4), JSON.stringify({
+      entryId: 'e1234567-aaaa', aId: '101', bId: '201', pointsA: '5', pointsB: '2',
+      winner: 'a', winType: 'points', editingId: 4,
+    }))
+    expect(loadDraft(7, 4)).toEqual({ ...draft, editingId: 4, reason: '', v: DRAFT_VERSION })
+  })
+
+  it('stamps the current version on every write and bounds a restored reason', () => {
+    saveDraft(7, { ...draft, reason: 'scoreboard was a bout behind' })
+    expect(loadDraft(7)?.v).toBe(DRAFT_VERSION)
+    expect(loadDraft(7)?.reason).toBe('scoreboard was a bout behind')
+    sessionStorage.setItem(draftKey(7, null), JSON.stringify({ ...draft, reason: 'x'.repeat(400) }))
+    expect(loadDraft(7)?.reason).toHaveLength(120)
   })
 
   it('restores the lowest match when several corrections are stranded', () => {

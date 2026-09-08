@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { History, PencilLine } from 'lucide-react'
-import { teamCode, type WinType } from '@shared/types'
+import { CORRECTION_REASON_MAX, teamCode, type WinType } from '@shared/types'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import { focusWithoutEngaging } from '@/lib/operatorEngaged'
 import { sortDoneMatches } from '@/lib/matchOrder'
@@ -14,7 +14,7 @@ import { matchLines } from './matches-view'
 import { cn } from '@/lib/utils'
 import { defaultOutcome } from './entry-defaults'
 import {
-  CUE_MS, LEDGER_LIMIT, RESTORED_NEW_ENTRY, RETRY_INTERVAL_MS, SAVED_LABEL_MS, SAVE_TIMEOUT_MS,
+  CUE_MS, DRAFT_VERSION, LEDGER_LIMIT, RESTORED_NEW_ENTRY, RETRY_INTERVAL_MS, SAVED_LABEL_MS, SAVE_TIMEOUT_MS,
   clearDraft, clockLabel, duplicateCopy, entryShape, isRepeatPair, ledgerTime, loadDraft, outcomeMatches,
   pairKey, restoreDraft, restoredBannerCopy, retriesItself, saveDraft, saveErrorCopy, seedPairLog, serverRefused,
   storedOutcome, teamWins,
@@ -23,6 +23,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { List, ListRow } from '@/components/ui/list'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -39,13 +40,13 @@ interface Form extends EntryDraft { touched: boolean }
 // including retries and a reload, so the server dedupes a resend. Only a 2xx
 // mints the next one.
 const fresh = (): Form => ({
-  entryId: newEventId(), aId: '', bId: '', pointsA: '', pointsB: '',
-  winner: null, winType: 'points', touched: false, editingId: null,
+  v: DRAFT_VERSION, entryId: newEventId(), aId: '', bId: '', pointsA: '', pointsB: '',
+  winner: null, winType: 'points', touched: false, editingId: null, reason: '',
 })
 
 const draftOf = (f: Form): EntryDraft => ({
-  entryId: f.entryId, aId: f.aId, bId: f.bId, pointsA: f.pointsA, pointsB: f.pointsB,
-  winner: f.winner, winType: f.winType, editingId: f.editingId,
+  v: DRAFT_VERSION, entryId: f.entryId, aId: f.aId, bId: f.bId, pointsA: f.pointsA, pointsB: f.pointsB,
+  winner: f.winner, winType: f.winType, editingId: f.editingId, reason: f.reason,
 })
 
 const WIN_TYPES: { value: WinType; label: string; hint: string }[] = [
@@ -89,7 +90,7 @@ const LEDGER_COLS =
   'grid grid-cols-[minmax(0,1fr)_var(--col-num-s)_84px_var(--col-num-s)_minmax(0,1fr)_var(--col-num-l)_var(--col-act)_var(--col-act)] items-center gap-x-3 px-3 font-mono t2'
 
 interface NewEntryBody { entryId: string; athleteAId: number; athleteBId: number; pointsA: number; pointsB: number; winnerAthleteId: number; winType: WinType }
-interface CorrectionBody { entryId: string; pointsA: number; pointsB: number; winnerAthleteId: number; winType: WinType }
+interface CorrectionBody { entryId: string; pointsA: number; pointsB: number; winnerAthleteId: number; winType: WinType; reason?: string }
 interface EntryResponse { match?: EntryMatch | null; version?: number }
 // The POST answers 201 for a write it made and 200 for one it deduped.
 interface EntryResult { res: EntryResponse; duplicate: boolean }
@@ -377,6 +378,7 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     // carries a result, because that is what is on file.
     const typed = `Saved. ${athleteName(won)} beat ${athleteName(lost)} ${winTypeLabel(winType)}, ${pA} to ${pB}.`
     const sent: Sent = { winnerAthleteId, winType, scores: { [a.id]: pA, [b.id]: pB } }
+    const reason = f.reason.trim()
 
     // 7.12 holds one id through a retry so a resend is deduped. A retry whose payload the
     // operator has corrected is a different write, but only a failure the server refused
@@ -393,18 +395,23 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     send({
       payload, key, typed, sent,
       request: f.editingId !== null
-        ? { kind: 'correct', id: f.editingId, body: { entryId, pointsA: pA, pointsB: pB, winnerAthleteId, winType } }
+        // Absent rather than empty: the server reads a blank as no reason at all, and
+        // sending one would write an empty string into the record.
+        ? { kind: 'correct', id: f.editingId, body: { entryId, pointsA: pA, pointsB: pB, winnerAthleteId, winType, ...(reason === '' ? {} : { reason }) } }
         : { kind: 'create', body: { entryId, athleteAId: a.id, athleteBId: b.id, pointsA: pA, pointsB: pB, winnerAthleteId, winType } },
     })
   }
 
   // Single keys on top of the tab order. Letters are read even inside a points
   // well, which takes digits only, so the operator never has to leave the well
-  // to name a winner. The Select owns its own typeahead and is left alone.
+  // to name a winner.
   const onKeyDown = (e: KeyboardEvent<HTMLFormElement>) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return
     const el = e.target as HTMLElement
-    if (el.closest('[data-slot="select-trigger"], [data-slot="select-content"]')) return
+    // The Select owns its own typeahead, and a free text field owns every letter typed
+    // into it: the win type keys would otherwise eat the s, p, d, a and b out of a
+    // correction's reason as it was written.
+    if (el.closest('[data-slot="select-trigger"], [data-slot="select-content"], [data-free-text]')) return
     const typing = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
     if (e.key === 'Enter' && typing) { e.preventDefault(); submit(); return }
     if (/^\d$/.test(e.key) && !typing) {
@@ -440,10 +447,11 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     // without G30's prompt over a submission somebody recorded on purpose.
     setWinTypeChecked(true)
     setF({
+      v: DRAFT_VERSION,
       aId: String(m.athleteAId), bId: String(m.athleteBId),
       pointsA: String(m.pointsA), pointsB: String(m.pointsB),
       winner: m.winnerAthleteId === m.athleteAId ? 'a' : 'b', winType: m.winType ?? 'points',
-      touched: true, editingId: m.id, entryId: newEventId(),
+      touched: true, editingId: m.id, entryId: newEventId(), reason: '',
     })
     setFailure(null)
     setDupe(null)
@@ -599,6 +607,28 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
                 </Toggle>
               ))}
             </div>
+
+            {/* The inline correction is a change to a stored result, so it takes the same
+                optional reason the result dialog takes, in the same words and with the
+                same counter. Optional on purpose: a correction made in the heat of the
+                afternoon should not stall on a sentence, and the trail already records
+                who changed what and when. */}
+            {f.editingId !== null && (
+              <div className="mt-4 grid gap-1.5">
+                <Label htmlFor="entry-reason">
+                  Reason
+                  <span className="ml-auto fig t1 text-gray-9">{f.reason.length} / {CORRECTION_REASON_MAX}</span>
+                </Label>
+                <Input
+                  id="entry-reason"
+                  data-free-text
+                  value={f.reason}
+                  maxLength={CORRECTION_REASON_MAX}
+                  autoComplete="off"
+                  onChange={e => edit(st => ({ ...st, reason: e.target.value }))}
+                />
+              </div>
+            )}
 
             {winner === null && a && b && <p className="mt-3 t2 text-gray-11">Scores are tied. Pick the winner.</p>}
             {/* Not amber: kids submit from behind all afternoon, and section 8 keeps

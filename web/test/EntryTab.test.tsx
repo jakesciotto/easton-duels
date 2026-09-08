@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import type { UserEvent } from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { EntryTab, FEWER_POINTS_LINE } from '@/routes/event/EntryTab'
-import { saveDraft } from '@/routes/event/entry-state'
+import { DRAFT_VERSION, saveDraft } from '@/routes/event/entry-state'
 import { setAdminToken } from '@/lib/auth'
 import { CERTIFIED_ENTRY_LINE, CERTIFIED_REFUSAL_BODY, CERTIFIED_REFUSAL_TITLE, FINISHED_LINE } from '@/lib/eventMode'
 import { HISTORY_NOTE } from '@/routes/event/MatchHistorySheet'
@@ -147,6 +147,67 @@ describe('EntryTab', () => {
     // The loaded win type ('points') is a pick that survives the points edit and the
     // winner change below: only an explicit win-type pick changes it, per spec 9.2.
     expect(f.body(f.calls.findIndex(c => c.url === '/api/matches/1/entry'))).toMatchObject({ pointsA: 4, pointsB: 4, winnerAthleteId: 200, winType: 'points' })
+  })
+
+  /**
+   * Batch 2's parked item. The result dialog took an optional reason and the tab's own
+   * inline correction, which is the path the desk actually uses while an event is live,
+   * did not, so half the corrections on an event reached the record with no account of
+   * themselves at all.
+   */
+  it('sends an optional reason with an inline correction', async () => {
+    const f = fakeFetch(() => ({ json: { match: { id: 1 }, version: 2 } }))
+    mount()
+    const user = userEvent.setup()
+    expect(screen.queryByLabelText(/^Reason/)).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Edit Mateo Rivera over Olivia Kim' }))
+    const reason = screen.getByLabelText(/^Reason/)
+    expect(reason).toHaveAttribute('maxLength', '120')
+    expect(screen.getByText('0 / 120')).toBeInTheDocument()
+
+    await user.type(reason, 'scoreboard was a bout behind')
+    expect(screen.getByText('28 / 120')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Save correction' }))
+    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/matches/1/entry')).toBe(true))
+    expect(f.body(f.calls.findIndex(c => c.url === '/api/matches/1/entry'))).toMatchObject({ reason: 'scoreboard was a bout behind' })
+  })
+
+  // Absent rather than empty: the server reads a blank as no reason at all, and sending
+  // one would write an empty string into the record.
+  it('leaves the reason out of the body when it is blank', async () => {
+    const f = fakeFetch(() => ({ json: { match: { id: 1 }, version: 2 } }))
+    mount()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Edit Mateo Rivera over Olivia Kim' }))
+    await user.type(screen.getByLabelText(/^Reason/), '   ')
+    await user.click(screen.getByRole('button', { name: 'Save correction' }))
+    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/matches/1/entry')).toBe(true))
+    expect(f.body(f.calls.findIndex(c => c.url === '/api/matches/1/entry'))).not.toHaveProperty('reason')
+  })
+
+  it('keeps a typed reason in the draft a failed save leaves behind', async () => {
+    fakeFetch(async () => { throw new TypeError('Failed to fetch') })
+    mount()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Edit Mateo Rivera over Olivia Kim' }))
+    await user.type(screen.getByLabelText(/^Reason/), 'wrong mat')
+    await user.click(screen.getByRole('button', { name: 'Save correction' }))
+    await vi.waitFor(() => expect(correctionDraft(1)).not.toBeNull())
+    expect(JSON.parse(correctionDraft(1) as string)).toMatchObject({ reason: 'wrong mat', v: DRAFT_VERSION })
+  })
+
+  // The win type keys would otherwise eat the s, p, d, a and b out of a reason as it was
+  // being written, which is invisible until somebody reads the record back.
+  it('leaves the shortcut letters alone inside the reason field', async () => {
+    fakeFetch(() => ({ json: { match: { id: 1 }, version: 2 } }))
+    mount()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Edit Mateo Rivera over Olivia Kim' }))
+    expect(screen.getByRole('button', { name: 'On points' })).toHaveAttribute('aria-pressed', 'true')
+    await user.type(screen.getByLabelText(/^Reason/), 'sad pab')
+    expect(screen.getByLabelText(/^Reason/)).toHaveValue('sad pab')
+    expect(screen.getByRole('button', { name: 'On points' })).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('keeps the loaded win type through a points correction', async () => {
@@ -743,8 +804,8 @@ describe('EntryTab', () => {
   it('names the match in a restored correction banner, distinct from an unsent new entry', () => {
     fakeFetch(() => ({ json: {} }))
     saveDraft(7, {
-      entryId: 'e-stranded-0001', aId: '100', bId: '200', pointsA: '9', pointsB: '2',
-      winner: 'a', winType: 'points', editingId: 1,
+      v: DRAFT_VERSION, entryId: 'e-stranded-0001', aId: '100', bId: '200', pointsA: '9', pointsB: '2',
+      winner: 'a', winType: 'points', editingId: 1, reason: '',
     })
     mount()
     expect(screen.getByText('This correction to Mateo Rivera vs Olivia Kim never sent')).toBeInTheDocument()
@@ -1167,7 +1228,7 @@ describe('EntryTab', () => {
   // rather than as a second win for the team.
   it('keeps the restored entryId when the payload changes after a reload', async () => {
     const f = fakeFetch(() => ({ status: 201, json: { match: { id: 9 }, version: 3 } }))
-    saveDraft(7, { entryId: 'e-restored-0001', aId: '101', bId: '201', pointsA: '6', pointsB: '1', winner: 'a', winType: 'points', editingId: null })
+    saveDraft(7, { v: DRAFT_VERSION, entryId: 'e-restored-0001', aId: '101', bId: '201', pointsA: '6', pointsB: '1', winner: 'a', winType: 'points', editingId: null, reason: '' })
     mount()
     const user = userEvent.setup()
     expect(screen.getByText('This entry never sent')).toBeInTheDocument()

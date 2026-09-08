@@ -2,7 +2,7 @@ import { ApiError } from '@/lib/api'
 import { CERTIFIED_REFUSAL_BODY, CERTIFIED_REFUSAL_TITLE, isCertifiedRefusal } from '@/lib/eventMode'
 import { athleteName, winTypeLabel } from '@/lib/format'
 import type { AthleteRow, MatchRow } from '@/lib/types'
-import type { WinType } from '@shared/types'
+import { CORRECTION_REASON_MAX, type WinType } from '@shared/types'
 
 export const SAME_PAIR_WINDOW_MS = 60_000
 // A POST that never settles would otherwise leave Save disabled with a reload as
@@ -18,7 +18,17 @@ export const LEDGER_LIMIT = 200
 export const SAVED_LABEL_MS = 900
 export const CUE_MS = 600
 
+/**
+ * The draft schema's version, stamped on every write and read back on every restore.
+ *
+ * A draft is an unsent result, and losing one is the failure the whole mechanism exists
+ * to prevent, so a shape written by an older build is migrated rather than discarded.
+ * Version 1 had no correction reason.
+ */
+export const DRAFT_VERSION = 2
+
 export interface EntryDraft {
+  v: number
   entryId: string
   aId: string
   bId: string
@@ -27,6 +37,8 @@ export interface EntryDraft {
   winner: 'a' | 'b' | null
   winType: WinType
   editingId: number | null
+  /** Why a correction was made. Always a string here, empty when there is none. */
+  reason: string
 }
 
 // One slot per intent, not one per event. A correction is a different job from the
@@ -38,15 +50,35 @@ const CORRECTION = ':match:'
 export const draftKey = (eventId: number, editingId: number | null): string =>
   editingId === null ? `${DRAFT_ROOT}${eventId}` : `${DRAFT_ROOT}${eventId}${CORRECTION}${editingId}`
 
-const isDraft = (v: unknown): v is EntryDraft => {
-  if (!v || typeof v !== 'object') return false
+/**
+ * A stored payload read back as the current shape, or null if it is not a draft at all.
+ *
+ * Every version has carried the same core, so the migration is the fields the newer
+ * version added: a version 1 draft restores with an empty reason rather than being
+ * thrown away, which is the whole point of stamping the version.
+ */
+function readDraft(v: unknown): EntryDraft | null {
+  if (!v || typeof v !== 'object') return null
   const d = v as Record<string, unknown>
-  return typeof d.entryId === 'string' && d.entryId.length >= 8
+  const core = typeof d.entryId === 'string' && d.entryId.length >= 8
     && typeof d.aId === 'string' && typeof d.bId === 'string'
     && typeof d.pointsA === 'string' && typeof d.pointsB === 'string'
     && (d.winner === 'a' || d.winner === 'b' || d.winner === null)
     && (d.winType === 'points' || d.winType === 'submission' || d.winType === 'decision')
     && (d.editingId === null || typeof d.editingId === 'number')
+  if (!core) return null
+  return {
+    v: DRAFT_VERSION,
+    entryId: d.entryId as string,
+    aId: d.aId as string,
+    bId: d.bId as string,
+    pointsA: d.pointsA as string,
+    pointsB: d.pointsB as string,
+    winner: d.winner as 'a' | 'b' | null,
+    winType: d.winType as WinType,
+    editingId: d.editingId as number | null,
+    reason: typeof d.reason === 'string' ? d.reason.slice(0, CORRECTION_REASON_MAX) : '',
+  }
 }
 
 // Storage throws in Safari private mode rather than returning null, so every
@@ -57,8 +89,8 @@ export function loadDraft(eventId: number, editingId: number | null = null): Ent
   try {
     const raw = sessionStorage.getItem(draftKey(eventId, editingId))
     if (!raw) return null
-    const parsed: unknown = JSON.parse(raw)
-    return isDraft(parsed) && parsed.editingId === editingId ? parsed : null
+    const draft = readDraft(JSON.parse(raw))
+    return draft !== null && draft.editingId === editingId ? draft : null
   } catch {
     return null
   }
