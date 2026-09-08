@@ -7,9 +7,10 @@ import MatPickPage from '@/routes/MatPickPage'
 import { getMatBinding, setMatBinding } from '@/lib/auth'
 import { unlockAudio } from '@/lib/sounds'
 import { DESK_BIND_REFUSAL } from '@/lib/eventMode'
+import { BIND_LOSS_COPY } from '@/lib/matBinding'
 import { POLL_DATA_ENTRY_MS } from '@/lib/pollInterval'
 import type { EventMode } from '@shared/types'
-import { fakeFetch, sampleSnapshot } from './fakes'
+import { fakeFetch, sampleSnapshot, type Reply } from './fakes'
 
 vi.mock('@/lib/sounds', () => ({ unlockAudio: vi.fn() }))
 
@@ -221,10 +222,14 @@ describe('MatPickPage', () => {
     await vi.waitFor(() => expect(getMatBinding()?.matNumber).toBe(6))
   })
 
-  // Refuse rather than ask (6.7 / 6.8): an entry mode event has no scorer, so a volunteer
-  // who binds one holds a tablet that sits on an empty mat all afternoon. The control is
-  // disabled with the reason printed as text, never only in a title attribute.
-  it('refuses to bind on an event that runs from the desk, and prints why', async () => {
+  /**
+   * G10. An entry mode event has no mat for this iPad to score, so the picker is not a
+   * control that happens to be disabled, it is a control that does not apply. The screen
+   * rendered the heading, four 104px mat toggles and the code field and only then a
+   * refusal above a dead Bind button, so a volunteer worked through all of it before
+   * reading the sentence that says none of it does anything.
+   */
+  it('replaces the whole picker with the refusal on an event that runs from the desk', async () => {
     const f = fakeFetch(url => {
       if (url === '/api/events/3/snapshot') {
         return { json: { version: 1, snapshot: sampleSnapshot({
@@ -235,17 +240,14 @@ describe('MatPickPage', () => {
       return { json: {} }
     })
     mount('/mat?event=3')
-    const user = userEvent.setup()
-    await user.click(await screen.findByRole('button', { name: 'Mat 1' }))
-    await typeMatCode(user, '0420')
-    expect(screen.getByText(/This event runs from the desk/)).toBeInTheDocument()
-    expect(screen.getByText(/no mat for this iPad to score/)).toBeInTheDocument()
+    expect(await screen.findByText(DESK_BIND_REFUSAL)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Mat 1' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Bind this iPad' })).toBeNull()
+    expect(screen.queryAllByRole('textbox')).toHaveLength(0)
+    expect(screen.queryByText('Pick your mat')).toBeNull()
 
-    const bind = screen.getByRole('button', { name: 'Bind this iPad' })
-    expect(bind).toBeDisabled()
-    // A disabled button still leaves Enter in the code field able to submit the form, so
-    // the refusal has to hold at the handler too.
-    fireEvent.submit(bind.closest('form') as HTMLFormElement)
+    // Watching is the one thing this tablet can still do, so the board URL stays.
+    expect(screen.getByText(`${window.location.origin}/board/3`)).toBeInTheDocument()
     await act(async () => { await Promise.resolve() })
     expect(f.calls.some(c => c.url.includes('/bind'))).toBe(false)
     expect(getMatBinding()).toBeNull()
@@ -272,7 +274,7 @@ describe('MatPickPage', () => {
     mountEager('/mat?event=3')
     await flush()
     expect(screen.getByText(DESK_BIND_REFUSAL)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Bind this iPad' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Bind this iPad' })).toBeNull()
 
     // At 10:00 the organizer switches the event back to the mats. Nobody touches the iPad.
     mode = 'live'
@@ -284,6 +286,117 @@ describe('MatPickPage', () => {
     fireEvent.submit(screen.getByRole('button', { name: 'Bind this iPad' }).closest('form') as HTMLFormElement)
     await flush()
     expect(f.calls.some(c => c.url.includes('/bind'))).toBe(true)
+  })
+
+  /**
+   * G08. Two tablets could bind the same mat with nothing said on either of them, and the
+   * second one silently killed the first: the mat went on showing a live match on a device
+   * whose every write now failed. The snapshot says which mats already have an iPad, and
+   * taking one off another device is a decision with its own control and its own words.
+   */
+  describe('a mat that already has an iPad', () => {
+    const twoMats = (boundIds: number[]) => sampleSnapshot({
+      mats: [1, 2].map(n => ({ id: n, number: n, current: null, onDeck: [], bound: boundIds.includes(n) })),
+    })
+
+    const serve = (over: (url: string, init?: RequestInit) => Reply | undefined) => fakeFetch((url, init) => {
+      if (url === '/api/events/1/snapshot') return { json: { version: 1, snapshot: twoMats([2]) } }
+      return over(url, init) ?? { json: {} }
+    })
+
+    it('marks it with the word and a rule, and leaves an unbound mat alone', async () => {
+      serve(() => undefined)
+      mount('/mat?event=1')
+      const taken = await screen.findByRole('button', { name: 'Mat 2 Scoring' })
+      expect(taken).toBeInTheDocument()
+      // Section 8: a rule and a word, never a fill, and never on the normal state.
+      expect(taken.querySelector('.bg-attend')).not.toBeNull()
+      const free = screen.getByRole('button', { name: 'Mat 1' })
+      expect(free.querySelector('.bg-attend')).toBeNull()
+      expect(free.textContent).not.toMatch(/Scoring/)
+    })
+
+    it('refuses the bind in the server words, then takes the mat over on a control of its own', async () => {
+      const bodies: unknown[] = []
+      const f = serve((url, init) => {
+        if (url !== '/api/events/1/mats/2/bind') return undefined
+        const body = JSON.parse(String(init?.body)) as { takeOver?: boolean }
+        bodies.push(body)
+        if (!body.takeOver) {
+          return { status: 409, json: { error: { code: 'mat_bound', message: 'This mat already has an iPad scoring it. Take it over to score from here instead.' } } }
+        }
+        return { json: { token: 'mat-tok', mat: { id: 2, number: 2 }, event: { id: 1, name: 'Fall Duels' } } }
+      })
+      const router = mount('/mat?event=1')
+      const user = userEvent.setup()
+      await user.click(await screen.findByRole('button', { name: 'Mat 2 Scoring' }))
+      await typeMatCode(user, '0420')
+
+      expect(screen.queryByRole('button', { name: 'Take over this mat' })).toBeNull()
+      await user.click(screen.getByRole('button', { name: 'Bind this iPad' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent('This mat already has an iPad scoring it.')
+      expect(getMatBinding()).toBeNull()
+
+      // A plain second press of Bind is not an answer to that refusal.
+      await user.click(screen.getByRole('button', { name: 'Bind this iPad' }))
+      await vi.waitFor(() => expect(bodies).toHaveLength(2))
+      expect(bodies.every(b => (b as { takeOver?: boolean }).takeOver === undefined)).toBe(true)
+      expect(getMatBinding()).toBeNull()
+
+      await user.click(screen.getByRole('button', { name: 'Take over this mat' }))
+      await vi.waitFor(() => expect(router.state.location.pathname).toBe('/mat/2'))
+      expect(bodies[2]).toEqual({ code: '0420', takeOver: true })
+      expect(getMatBinding()?.matId).toBe(2)
+      expect(f.calls.filter(c => c.url === '/api/events/1/mats/2/bind')).toHaveLength(3)
+    })
+
+    // The offer belongs to the mat the server refused, and to no other.
+    it('withdraws the takeover offer when the volunteer picks a different mat', async () => {
+      serve(url => (url.includes('/bind')
+        ? { status: 409, json: { error: { code: 'mat_bound', message: 'This mat already has an iPad scoring it. Take it over to score from here instead.' } } }
+        : undefined))
+      mount('/mat?event=1')
+      const user = userEvent.setup()
+      await user.click(await screen.findByRole('button', { name: 'Mat 2 Scoring' }))
+      await typeMatCode(user, '0420')
+      await user.click(screen.getByRole('button', { name: 'Bind this iPad' }))
+      expect(await screen.findByRole('button', { name: 'Take over this mat' })).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: 'Mat 1' }))
+      expect(screen.queryByRole('button', { name: 'Take over this mat' })).toBeNull()
+    })
+  })
+
+  /**
+   * G04. The tablet did not come back to this screen on its own: either its token expired
+   * between the rehearsal and the event, or another iPad took its mat. Whoever is holding
+   * it needs to know why it stopped scoring before they are asked to bind it again.
+   */
+  describe('a tablet sent back here after losing its mat', () => {
+    const serveOneMat = () => fakeFetch(url => (url === '/api/events/1/snapshot'
+      ? { json: { version: 1, snapshot: sampleSnapshot({ mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: false }] }) } }
+      : { json: {} }))
+
+    it('says the code is needed again after an expired token', async () => {
+      serveOneMat()
+      mount('/mat?event=1&reason=expired')
+      expect(await screen.findByText(BIND_LOSS_COPY.expired)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Mat 1' })).toBeInTheDocument()
+    })
+
+    it('repeats the server sentence after a takeover', async () => {
+      serveOneMat()
+      mount('/mat?event=1&reason=taken')
+      expect(await screen.findByText(BIND_LOSS_COPY.taken)).toBeInTheDocument()
+    })
+
+    it('says nothing when the volunteer simply opened the page', async () => {
+      serveOneMat()
+      mount('/mat?event=1')
+      expect(await screen.findByRole('button', { name: 'Mat 1' })).toBeInTheDocument()
+      expect(screen.queryByText(BIND_LOSS_COPY.expired)).toBeNull()
+      expect(screen.queryByText(BIND_LOSS_COPY.taken)).toBeNull()
+    })
   })
 
   describe('the below-900px / portrait guard (6.17b)', () => {

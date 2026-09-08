@@ -4,6 +4,7 @@ import type { Snapshot } from '@shared/types'
 import { api, ApiError } from '@/lib/api'
 import { clearMatBinding, getMatBinding, setMatBinding } from '@/lib/auth'
 import { DESK_BIND_REFUSAL } from '@/lib/eventMode'
+import { BIND_LOSS_COPY, isBindLoss } from '@/lib/matBinding'
 import { POLL_DATA_ENTRY_MS } from '@/lib/pollInterval'
 import { useWakeLock } from '@/lib/useWakeLock'
 import { unlockAudio } from '@/lib/sounds'
@@ -36,15 +37,40 @@ function isBindableViewport(): boolean {
   }
 }
 
+function boardUrlFor(eventId: number | null): string | null {
+  return eventId !== null && typeof window !== 'undefined' ? `${window.location.origin}/board/${eventId}` : null
+}
+
+function BoardUrl({ eventId }: { eventId: number | null }) {
+  const url = boardUrlFor(eventId)
+  if (!url) return null
+  return <span className="max-w-full truncate rounded-sm bg-black px-4 py-2 t7 font-mono text-white">{url}</span>
+}
+
 function TooSmallToScore({ eventId }: { eventId: number | null }) {
-  const boardUrl = eventId !== null && typeof window !== 'undefined' ? `${window.location.origin}/board/${eventId}` : null
   return (
     <main className="grid min-h-dvh place-items-center p-6 text-center">
       <div className="grid max-w-sm gap-4 justify-items-center">
         <h1 className="t6 text-gray-12">Use a tablet for scoring</h1>
-        {boardUrl && (
-          <span className="max-w-full truncate rounded-sm bg-black px-4 py-2 t7 font-mono text-white">{boardUrl}</span>
-        )}
+        <BoardUrl eventId={eventId} />
+      </div>
+    </main>
+  )
+}
+
+/**
+ * G10: an entry mode event has no mat for this iPad to score, so the picker is not a control
+ * that happens to be disabled, it is a control that does not apply. Rendering the heading,
+ * four 104px mat toggles and a code field above a refusal invited a volunteer to work
+ * through all of it before reading the sentence that says none of it does anything. The
+ * board URL stays, because watching is the one thing this tablet can still do.
+ */
+function DeskEvent({ eventId }: { eventId: number | null }) {
+  return (
+    <main className="grid min-h-dvh place-items-center p-6">
+      <div className="grid w-full max-w-md justify-items-center gap-4 rounded-lg border border-gray-7 bg-gray-2 p-4 text-center">
+        <p className="t3 text-gray-11">{DESK_BIND_REFUSAL}</p>
+        <BoardUrl eventId={eventId} />
       </div>
     </main>
   )
@@ -55,6 +81,8 @@ export default function MatPickPage() {
   const navigate = useNavigate()
   const eventParam = params.get('event')
   const eventQueryId = eventParam ? Number(eventParam) : null
+  const reasonParam = params.get('reason')
+  const loss = isBindLoss(reasonParam) ? BIND_LOSS_COPY[reasonParam] : null
   const [eventId, setEventId] = useState(eventParam ?? '')
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [matId, setMatId] = useState<number | null>(null)
@@ -66,6 +94,9 @@ export default function MatPickPage() {
   const [readError, setReadError] = useState<string | null>(null)
   const [reads, setReads] = useState(0)
   const [busy, setBusy] = useState(false)
+  // Which mat the server has already refused for this device, and so the only one the
+  // takeover control may be offered for. A plain second press of Bind never carries it.
+  const [contested, setContested] = useState<number | null>(null)
   const [binding, setBinding] = useState(() => getMatBinding())
   const [bindable, setBindable] = useState(isBindableViewport)
   const boundToCurrentEvent = binding !== null && (eventQueryId === null || binding.eventId === eventQueryId)
@@ -129,19 +160,27 @@ export default function MatPickPage() {
     return () => { ignore = true }
   }, [eventId, reads])
 
-  const bind = async (e: FormEvent) => {
-    e.preventDefault()
+  /**
+   * G08: taking a mat off another iPad is a decision, so it is a separate control with its
+   * own words rather than a second press of Bind. The server refuses the first attempt and
+   * says why; only the button that answers that refusal carries `takeOver`.
+   */
+  const bind = async (e?: FormEvent, takeOver = false) => {
+    e?.preventDefault()
     if (matId === null || !snapshot || entryMode) return
+    if (takeOver && contested !== matId) return
     setBusy(true)
     setError(null)
+    setContested(null)
     try {
       const r = await api<{ token: string; mat: { id: number; number: number }; event: { id: number; name: string } }>(
         `/api/events/${snapshot.event.id}/mats/${matId}/bind`,
-        { method: 'POST', body: { code } },
+        { method: 'POST', body: takeOver ? { code, takeOver: true } : { code } },
       )
       setMatBinding({ eventId: r.event.id, matId: r.mat.id, matNumber: r.mat.number, eventName: r.event.name, token: r.token })
       navigate(`/mat/${r.mat.id}`)
     } catch (err) {
+      if (err instanceof ApiError && err.code === 'mat_bound') setContested(matId)
       setError(err instanceof ApiError ? err.message : 'Could not reach the server')
     } finally {
       setBusy(false)
@@ -167,6 +206,8 @@ export default function MatPickPage() {
     )
   }
 
+  if (snapshot && entryMode) return <DeskEvent eventId={snapshot.event.id} />
+
   const matSlotCount = Math.max(MIN_MAT_SLOTS, snapshot?.event.matCount ?? MIN_MAT_SLOTS)
   const matSlots = Array.from({ length: matSlotCount }, (_, i) => snapshot?.mats.find(m => m.number === i + 1) ?? null)
 
@@ -174,6 +215,13 @@ export default function MatPickPage() {
     <main className="grid min-h-dvh place-items-center p-6">
       <div className="grid w-full max-w-md gap-4 rounded-lg border border-gray-7 bg-gray-2 p-4">
         <h1 className="t6 text-gray-12">Pick your mat</h1>
+        {/* G04: the tablet did not come back here on its own. Whoever is holding it needs
+            to know why it stopped scoring before they are asked to bind it again. */}
+        {loss && (
+          <Alert variant="attend">
+            <AlertDescription>{loss}</AlertDescription>
+          </Alert>
+        )}
         {otherEventBinding && (
           <div className="grid gap-2">
             <Alert variant="attend" className="text-left">
@@ -211,11 +259,20 @@ export default function MatPickPage() {
                 <Toggle
                   key={m.id}
                   size="mat"
-                  className="w-full"
+                  className="w-full flex-col gap-1.5"
                   pressed={matId === m.id}
                   onPressedChange={() => setMatId(m.id)}
                 >
-                  Mat {m.number}
+                  <span>Mat {m.number}</span>
+                  {/* Section 8: a rule and a word, never a fill, and only on a mat that
+                      already has an iPad. An unbound mat is the normal state on this
+                      screen and carries no colour at all. */}
+                  {m.bound && (
+                    <span className="grid justify-items-center gap-1">
+                      <span aria-hidden className="h-0.5 w-10 bg-attend" />
+                      <span className="t1 font-normal! text-attend">Scoring</span>
+                    </span>
+                  )}
                 </Toggle>
               ) : (
                 <div key={`empty-${i}`} aria-hidden className="h-[104px]" />
@@ -241,8 +298,12 @@ export default function MatPickPage() {
               <AlertDescription>{error ?? readError}</AlertDescription>
             </Alert>
           )}
-          {entryMode && <p className="t2 text-gray-10">{DESK_BIND_REFUSAL}</p>}
-          <Button type="submit" size="lg" className="w-full" disabled={busy || entryMode || matId === null || code.length !== 4}>
+          {contested === matId && matId !== null && (
+            <Button type="button" size="lg" variant="secondary" className="w-full" disabled={busy} onClick={() => void bind(undefined, true)}>
+              Take over this mat
+            </Button>
+          )}
+          <Button type="submit" size="lg" className="w-full" disabled={busy || matId === null || code.length !== 4}>
             Bind this iPad
           </Button>
         </form>
