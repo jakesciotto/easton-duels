@@ -9,6 +9,7 @@ import { pairVerdict, type GuardLevel } from '@/lib/team-guard'
 import type { EventDetail } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { TeamPlate } from '@/components/TeamPlate'
+import { SetupSteps } from '@/components/SetupSteps'
 import { dialogBody, dialogFooter, dialogStack, dialogSurface } from '@/components/dialog-frame'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -204,7 +205,12 @@ export function NewEventDialog({ open, onOpenChange, onCreated }: { open: boolea
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className={dialogSurface(640)}>
         <form onSubmit={submit} className={dialogStack}>
-          <DialogHeader><DialogTitle>New event</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <div className="grid gap-1">
+              <DialogTitle>New event</DialogTitle>
+              <SetupSteps current={1} />
+            </div>
+          </DialogHeader>
           <DialogBody className={cn(dialogBody, 'gap-4')}>
             <div className="grid gap-4 sm:grid-cols-[1fr_170px]">
               <div className="grid gap-2">
@@ -270,7 +276,9 @@ export function NewEventDialog({ open, onOpenChange, onCreated }: { open: boolea
           </DialogBody>
           <DialogFooter className={dialogFooter}>
             <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="submit" disabled={!counts || create.isPending}>Create event</Button>
+            {/* The event is one of three steps, so the primary names the next screen
+                rather than the row it just wrote. */}
+            <Button type="submit" disabled={!counts || create.isPending}>Continue</Button>
           </DialogFooter>
         </form>
       </DialogContent>

@@ -6,6 +6,7 @@ import { RouteFallback } from '@/components/RouteFallback'
 import { TeamPlate } from '@/components/TeamPlate'
 import { NewEventDialog } from './admin/NewEventDialog'
 import { useEvents } from '@/lib/queries'
+import { eventSetupPath } from '@/lib/setupFlow'
 import { MODE_LABEL } from '@/lib/eventMode'
 import type { EventSummary } from '@/lib/types'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -78,7 +79,7 @@ function EventList() {
 
   return (
     <AdminShell title="Events" actions={<Button size="sm" onClick={() => setOpen(true)}>New event</Button>}>
-      <NewEventDialog open={open} onOpenChange={setOpen} onCreated={d => navigate(`/events/${d.event.id}`)} />
+      <NewEventDialog open={open} onOpenChange={setOpen} onCreated={d => navigate(eventSetupPath(d.event.id, 'roster'))} />
       <div className="grid gap-6 px-6 pb-10">
         {events.error && (
           <Alert>

@@ -100,7 +100,9 @@ describe('AdminPage', () => {
     expect(screen.getByLabelText('Event name')).toBeInTheDocument()
   })
 
-  it('creates an event from the dialog and navigates to it', async () => {
+  // B3: Continue is the first of three steps, so the event it just wrote opens on the
+  // roster step rather than on a bare event page the organizer has to find the way out of.
+  it('creates an event from the dialog and opens it on the roster step', async () => {
     const f = fakeFetch((url, init) => {
       if (url === '/api/events' && init?.method === 'POST') return { status: 201, json: { event: { ...summary, id: 9 }, teams: summary.teams, athletes: [], rulesets: [], mats: [], matches: [] } }
       if (url === '/api/events') return { json: [] }
@@ -114,8 +116,9 @@ describe('AdminPage', () => {
     await user.type(screen.getByLabelText('Date'), '2026-10-03')
     await user.type(screen.getByLabelText('Team A name'), 'Ridgeline')
     await user.type(screen.getByLabelText('Team B name'), 'Lakeside')
-    await user.click(screen.getByRole('button', { name: 'Create event' }))
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
     await vi.waitFor(() => expect(router.state.location.pathname).toBe('/events/9'))
+    expect(router.state.location.search).toBe('?setup=roster')
     const posted = f.body(f.calls.findIndex(c => c.init?.method === 'POST'))
     expect(posted).toMatchObject({ name: 'Fall Duels', date: '2026-10-03', matCount: 1, teams: [{ name: 'Ridgeline', color: 'red' }, { name: 'Lakeside', color: 'blue' }] })
   })
@@ -144,7 +147,7 @@ describe('AdminPage', () => {
     await user.type(screen.getByLabelText('Event name'), 'Fall Duels')
     await user.type(screen.getByLabelText('Team A name'), 'Ridgeline')
     await user.type(screen.getByLabelText('Team B name'), 'Lakeside')
-    await user.click(screen.getByRole('button', { name: 'Create event' }))
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('name required')
     expect(router.state.location.pathname).toBe('/admin')
   })
