@@ -74,9 +74,11 @@ function mountLive() {
 
 // The two competitor fields are the Select primitive, so a pick is a click on the
 // combobox and a click on its option, the same shape every other dialog uses.
+// G36 put 7.1's meta line after the name inside every option, so the option's accessible
+// name is the name plus that line and a pick matches on the name it starts with.
 async function pick(user: UserEvent, field: string, name: string) {
   await user.click(screen.getByRole('combobox', { name: field }))
-  await user.click(await screen.findByRole('option', { name }))
+  await user.click(await screen.findByRole('option', { name: new RegExp(`^${name}\\b`) }))
 }
 // The label is the confirmation channel, so it reads Save, Saving or Saved
 // depending on where the round trip is.
@@ -812,6 +814,39 @@ describe('EntryTab', () => {
     const sideB = row.querySelector('[data-side="b"]') as HTMLElement
     expect(within(sideA).getByText('RID')).toBeInTheDocument()
     expect(within(sideB).getByText('LAK')).toBeInTheDocument()
+  })
+
+  /**
+   * G36. Options showed the name and nothing else, so two kids with the same name were
+   * indistinguishable and picking the wrong one writes a win to the wrong child. 7.1's
+   * meta line disambiguates, in the field order the whole product uses.
+   */
+  it('appends the belt, age and weight to every competitor option', async () => {
+    fakeFetch(() => ({ json: {} }))
+    mount({
+      ...detail,
+      athletes: [
+        { ...kid(101, 1, 'Ava', 'Park'), age: 8, weightLbs: 60, belt: 'grey' },
+        { ...kid(102, 1, 'Ava', 'Park'), age: 11, weightLbs: null, belt: 'grey-white' },
+        kid(201, 2, 'Noah', 'Tran'),
+      ],
+      matches: [],
+    })
+    await userEvent.setup().click(screen.getByRole('combobox', { name: 'Ridgeline competitor' }))
+    const options = await screen.findAllByRole('option')
+    expect(options[0]).toHaveTextContent('Ava Park')
+    expect(options[0]).toHaveTextContent('Grey · 8 · 60 lb')
+    // A missing value keeps its place, so the three fields still read by position.
+    expect(options[1]).toHaveTextContent('Grey / White · 11 · --')
+  })
+
+  it('keeps the closed trigger to the name alone', async () => {
+    fakeFetch(() => ({ json: {} }))
+    mount()
+    const user = userEvent.setup()
+    await pick(user, 'Ridgeline competitor', 'Ava Park')
+    expect(screen.getByRole('combobox', { name: 'Ridgeline competitor' })).toHaveTextContent('Ava Park')
+    expect(screen.getByRole('combobox', { name: 'Ridgeline competitor' })).not.toHaveTextContent('lb')
   })
 
   // 2.7: one set of tracks, so a score sits in the same register on every screen.

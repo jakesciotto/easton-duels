@@ -8,7 +8,7 @@ import { CERTIFIED_ENTRY_LINE, FINISHED_LINE, MAT_NOTE, isFinished, modeOf, stat
 import { useSnapshot } from '@/lib/useSnapshot'
 import { newEventId } from '@/lib/ids'
 import type { AthleteRow, EventDetail, MatchRow, TeamRow } from '@/lib/types'
-import { athleteName, winTypeLabel } from '@/lib/format'
+import { athleteName, beltLabel, winTypeLabel } from '@/lib/format'
 import { matchViewOf } from '@/lib/matchView'
 import { matchLines } from './matches-view'
 import { cn } from '@/lib/utils'
@@ -55,6 +55,18 @@ const WIN_TYPES: { value: WinType; label: string; hint: string }[] = [
 ]
 const WIN_TYPE_WORD: Record<WinType, string> = { points: 'Points', submission: 'Submission', decision: 'Decision' }
 
+/**
+ * G36 / 7.1's meta line, in the field order the whole product uses: belt word, age,
+ * weight. Two kids with the same name were indistinguishable in a picker that showed a
+ * name and nothing else, and picking the wrong one writes a win to the wrong child.
+ *
+ * A missing value keeps its place as `--` rather than closing the gap, because the fields
+ * are read by position and a two field line and a three field line do not compare.
+ */
+export function kidMeta(kid: AthleteRow): string {
+  return [beltLabel(kid.belt), kid.age ?? '--', kid.weightLbs === null ? '--' : `${kid.weightLbs} lb`].join(' · ')
+}
+
 // G30. A 5 to 2 match won by the side with 2 recorded as won on points and nothing said
 // so. The pick is never refused: kids submit from behind all afternoon. It clears the
 // suggestion to the type that explains it and asks once.
@@ -63,6 +75,7 @@ export const FEWER_POINTS_LINE = 'Won with fewer points: check the win type.'
 // G31. A forty match event put forty rows under the one control this screen exists for.
 // The Live queue is capped the same way and states its own remainder.
 export const PENDING_CAP = 8
+
 const WIN_TYPE_KEY: Record<string, WinType> = { p: 'points', s: 'submission', d: 'decision' }
 
 // One set of tracks for the head and every row: name, points, the win type as a
@@ -759,6 +772,8 @@ function KidField({ id, team, kids, value, onChange, align = 'left', className }
   align?: 'left' | 'right'
   className?: string
 }) {
+  // `items` carries the plain name, so the closed trigger reads as one name and the meta
+  // line lives where it is needed, which is the moment two of them are on screen at once.
   const items = kids.map(k => ({ value: String(k.id), label: athleteName(k) }))
   return (
     <div className={cn('grid gap-1.5', className)}>
@@ -766,7 +781,12 @@ function KidField({ id, team, kids, value, onChange, align = 'left', className }
       <Select value={value} onValueChange={v => onChange(String(v ?? ''))} items={items}>
         <SelectTrigger id={id}><SelectValue placeholder="Pick a competitor" /></SelectTrigger>
         <SelectContent>
-          {items.map(i => <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>)}
+          {kids.map(k => (
+            <SelectItem key={k.id} value={String(k.id)}>
+              <span className="truncate">{athleteName(k)}</span>
+              <span className="ml-auto shrink-0 t2 text-gray-10">{kidMeta(k)}</span>
+            </SelectItem>
+          ))}
         </SelectContent>
       </Select>
     </div>
