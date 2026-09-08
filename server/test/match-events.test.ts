@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { freshDb, seedEvent } from './fixtures.js'
-import { appendMatchEvent, endMatch, undoLastMatchEvent, loadEvents, latestEndedAt, endedAtByMatch, bumpVersion, SeqConflict, MatchStateError, DecisionRequired } from '../src/match/events.js'
+import { appendMatchEvent, endMatch, extendClock, undoLastMatchEvent, loadEvents, loadMatch, latestEndedAt, endedAtByMatch, bumpVersion, SeqConflict, MatchStateError, DecisionRequired } from '../src/match/events.js'
 import { events } from '../src/db/schema.js'
+import { DEFAULT_LENGTH_SEC } from '../src/shared/types.js'
 
 const T = (s: number) => new Date(Date.parse('2026-08-27T18:00:00.000Z') + s * 1000).toISOString()
 
@@ -194,5 +195,52 @@ describe('undoLastMatchEvent', () => {
     await expect(undoLastMatchEvent(db, { matchId, lastSeq: 0 })).rejects.toThrow(SeqConflict)
     await endMatch(db, { id: 'end1', matchId, lastSeq: 1 })
     await expect(undoLastMatchEvent(db, { matchId, lastSeq: 2 })).rejects.toThrow(/done/)
+  })
+})
+
+describe('extendClock', () => {
+  it('adds time to an expired clock so it can run again', async () => {
+    const { db, matchId } = await liveMatch()
+    await appendMatchEvent(db, { id: 'c1', matchId, type: 'clock_start', lastSeq: 0, at: T(0) })
+    await appendMatchEvent(db, { id: 'c2', matchId, type: 'clock_pause', lastSeq: 1, at: T(DEFAULT_LENGTH_SEC) })
+    const expired = await loadMatch(db, matchId)
+    expect(expired.clockElapsedMs).toBe(DEFAULT_LENGTH_SEC * 1000)
+    await expect(appendMatchEvent(db, { id: 'c3', matchId, type: 'clock_start', lastSeq: 2 })).rejects.toThrow(/time is up/)
+
+    const r = await extendClock(db, { id: 'add-0001', matchId, lastSeq: 2, addMs: 60_000 })
+    expect(r.duplicate).toBe(false)
+    expect(r.match.extensionMs).toBe(60_000)
+    expect(r.match.lengthSec).toBe(DEFAULT_LENGTH_SEC)
+    const running = await appendMatchEvent(db, { id: 'c4', matchId, type: 'clock_start', lastSeq: 3, at: T(DEFAULT_LENGTH_SEC) })
+    expect(running.match.clockStartedAt).not.toBeNull()
+  })
+
+  it('refuses while the clock is running and takes a replay as a read', async () => {
+    const { db, matchId } = await liveMatch()
+    await appendMatchEvent(db, { id: 'c1', matchId, type: 'clock_start', lastSeq: 0, at: T(0) })
+    await expect(extendClock(db, { id: 'add-0001', matchId, lastSeq: 1, addMs: 60_000 })).rejects.toThrow(/stop the clock/)
+    await appendMatchEvent(db, { id: 'c2', matchId, type: 'clock_pause', lastSeq: 1, at: T(10) })
+    const first = await extendClock(db, { id: 'add-0001', matchId, lastSeq: 2, addMs: 60_000 })
+    const replay = await extendClock(db, { id: 'add-0001', matchId, lastSeq: 2, addMs: 60_000 })
+    expect(replay.duplicate).toBe(true)
+    expect(replay.match.extensionMs).toBe(first.match.extensionMs)
+    expect(await loadEvents(db, matchId)).toHaveLength(3)
+  })
+
+  it('gives the added time back on undo', async () => {
+    const { db, matchId } = await liveMatch()
+    await appendMatchEvent(db, { id: 'c1', matchId, type: 'clock_start', lastSeq: 0, at: T(0) })
+    await appendMatchEvent(db, { id: 'c2', matchId, type: 'clock_pause', lastSeq: 1, at: T(30) })
+    await extendClock(db, { id: 'add-0001', matchId, lastSeq: 2, addMs: 90_000 })
+    await extendClock(db, { id: 'add-0002', matchId, lastSeq: 3, addMs: 30_000 })
+    expect((await loadMatch(db, matchId)).extensionMs).toBe(120_000)
+    expect((await undoLastMatchEvent(db, { matchId, lastSeq: 4 })).extensionMs).toBe(90_000)
+    expect((await undoLastMatchEvent(db, { matchId, lastSeq: 3 })).extensionMs).toBe(0)
+  })
+
+  it('refuses added time outside the bounds', async () => {
+    const { db, matchId } = await liveMatch()
+    await expect(extendClock(db, { id: 'add-0001', matchId, lastSeq: 0, addMs: 1_000 })).rejects.toThrow(/out of range/)
+    await expect(extendClock(db, { id: 'add-0002', matchId, lastSeq: 0, addMs: 600_000 })).rejects.toThrow(/out of range/)
   })
 })

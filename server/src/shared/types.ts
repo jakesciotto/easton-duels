@@ -138,3 +138,8 @@ export const DEFAULT_TERMINALS: RulesetTerminal[] = [
   { key: 'pin', label: 'Pin', winType: 'submission' },
 ]
 export const DEFAULT_LENGTH_SEC = 300
+
+// A referee adds time to finish a match that ran out, not to invent a new one, so the
+// control offers half a minute at the low end and five minutes at the high end.
+export const EXTEND_MIN_MS = 30_000
+export const EXTEND_MAX_MS = 300_000

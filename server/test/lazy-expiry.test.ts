@@ -12,6 +12,39 @@ const T0 = Date.parse('2026-08-27T18:00:00.000Z')
 afterEach(() => vi.useRealTimers())
 
 describe('expireOverdue', () => {
+  it('arms again at the new length once the referee adds time', async () => {
+    const { app, db } = await createTestApp()
+    const s = await seedEvent(db, { live: true })
+    const token = matToken(s.eventId, s.matIds[0])
+    const url = `/api/matches/${s.matchIds[0]}`
+
+    vi.useFakeTimers({ now: T0 })
+    await call(app, 'POST', `${url}/events`, { id: 'clk-0001', type: 'clock_start', lastSeq: 0 }, token)
+    vi.setSystemTime(T0 + DEFAULT_LENGTH_SEC * 1000 + 1_000)
+    await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)
+
+    const added = await call(app, 'POST', `${url}/clock/extend`, { id: 'add-0001', lastSeq: 2, addMs: 60_000 }, token)
+    expect(added.status).toBe(200)
+    expect(added.body.match.clock.lengthMs).toBe(DEFAULT_LENGTH_SEC * 1000 + 60_000)
+    expect(added.body.match.lengthSec).toBe(DEFAULT_LENGTH_SEC + 60)
+
+    const restarted = await call(app, 'POST', `${url}/events`, { id: 'clk-0002', type: 'clock_start', lastSeq: 3 }, token)
+    expect(restarted.status).toBe(200)
+    expect(restarted.body.match.clock.startedAt).not.toBeNull()
+
+    vi.setSystemTime(T0 + DEFAULT_LENGTH_SEC * 1000 + 30_000)
+    const early = await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)
+    expect(early.body.snapshot.matches[0].clock.startedAt).not.toBeNull()
+
+    vi.setSystemTime(T0 + DEFAULT_LENGTH_SEC * 1000 + 62_000)
+    const late = await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)
+    expect(late.body.snapshot.matches[0].clock.startedAt).toBeNull()
+    expect(late.body.snapshot.matches[0].clock.elapsedMs).toBe(DEFAULT_LENGTH_SEC * 1000 + 60_000)
+
+    const running = await call(app, 'POST', `${url}/clock/extend`, { id: 'add-0002', lastSeq: 99, addMs: 1_000 }, token)
+    expect(running.status).toBe(422)
+  })
+
   it('expires an elapsed clock during a snapshot poll', async () => {
     const { app, db } = await createTestApp()
     const s = await seedEvent(db, { live: true })

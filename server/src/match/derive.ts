@@ -18,13 +18,23 @@ export interface DerivedMatch {
   lastSeq: number
   pendingTerminal: PendingTerminal | null
   result: MatchResult | null
+  extensionMs: number
+  lengthMs: number
+}
+
+// The designed length plus whatever has been added to it. lengthSec is never rewritten by
+// scoring, so this stays a pure function of the row and of the log behind it.
+export function effectiveLengthMs(m: { lengthSec: number; extensionMs: number }): number {
+  return m.lengthSec * 1000 + m.extensionMs
 }
 
 export type Outcome =
   | { kind: 'decided'; winnerAthleteId: number; winType: WinType }
   | { kind: 'tie' }
 
-export function deriveMatch(events: MatchEventInput[], athleteAId: number, athleteBId: number, lengthMs: number): DerivedMatch {
+export function deriveMatch(events: MatchEventInput[], athleteAId: number, athleteBId: number, baseLengthMs: number): DerivedMatch {
+  let extensionMs = 0
+  let lengthMs = baseLengthMs
   let rawA = 0
   let rawB = 0
   let elapsed = 0
@@ -53,6 +63,12 @@ export function deriveMatch(events: MatchEventInput[], athleteAId: number, athle
           startedAt = null
         }
         break
+      case 'clock_extend':
+        if (e.payload?.kind === 'clock_extend') {
+          extensionMs += e.payload.addMs
+          lengthMs = baseLengthMs + extensionMs
+        }
+        break
       case 'terminal':
         if (e.athleteId !== null && e.actionKey !== null) pendingTerminal = { athleteId: e.athleteId, actionKey: e.actionKey }
         break
@@ -78,6 +94,8 @@ export function deriveMatch(events: MatchEventInput[], athleteAId: number, athle
     lastSeq,
     pendingTerminal,
     result,
+    extensionMs,
+    lengthMs,
   }
 }
 

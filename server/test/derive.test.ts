@@ -87,7 +87,7 @@ describe('deriveMatch', () => {
 })
 
 describe('deriveOutcome', () => {
-  const base = { scoreA: 0, scoreB: 0, clockElapsedMs: 0, clockStartedAt: null, lastSeq: 0, pendingTerminal: null, result: null }
+  const base = { scoreA: 0, scoreB: 0, clockElapsedMs: 0, clockStartedAt: null, lastSeq: 0, pendingTerminal: null, result: null, extensionMs: 0, lengthMs: 300_000 }
   it('prefers the pending terminal', () => {
     const o = deriveOutcome({ ...base, scoreA: 0, scoreB: 9, pendingTerminal: { athleteId: A, actionKey: 'pin' } }, A, B, DEFAULT_TERMINALS)
     expect(o).toEqual({ kind: 'decided', winnerAthleteId: A, winType: 'submission' })

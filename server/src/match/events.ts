@@ -1,8 +1,8 @@
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
 import type { DbLike } from '../db/client.js'
 import { events, matches, matchEvents, rulesets, type MatchRow, type MatchEventRow, type RulesetRow } from '../db/schema.js'
-import { deriveMatch, deriveOutcome } from './derive.js'
-import type { MatchResult } from '../shared/types.js'
+import { deriveMatch, deriveOutcome, effectiveLengthMs } from './derive.js'
+import { EXTEND_MAX_MS, EXTEND_MIN_MS, type MatchResult } from '../shared/types.js'
 
 export class SeqConflict extends Error {
   constructor(public readonly currentSeq: number) {
@@ -42,6 +42,14 @@ export interface EndInput {
   matchId: number
   lastSeq: number
   winnerAthleteId?: number
+  at?: string
+}
+
+export interface ExtendInput {
+  id: string
+  matchId: number
+  lastSeq: number
+  addMs: number
   at?: string
 }
 
@@ -103,6 +111,7 @@ export async function recompute(db: DbLike, matchId: number): Promise<MatchRow> 
     clockStartedAt: d.clockStartedAt,
     pendingTerminalAthleteId: d.pendingTerminal?.athleteId ?? null,
     pendingTerminalKey: d.pendingTerminal?.actionKey ?? null,
+    extensionMs: d.extensionMs,
     lastSeq: d.lastSeq,
     status,
     winnerAthleteId: d.result?.winnerAthleteId ?? null,
@@ -158,7 +167,7 @@ export async function appendMatchEvent(db: DbLike, input: AppendInput): Promise<
       }
       case 'clock_start':
         if (match.clockStartedAt) throw new MatchStateError('clock already running')
-        if (match.clockElapsedMs >= match.lengthSec * 1000) throw new MatchStateError('time is up')
+        if (match.clockElapsedMs >= effectiveLengthMs(match)) throw new MatchStateError('time is up')
         if (match.pendingTerminalKey) throw new MatchStateError('terminal pending')
         rows.push({ id: input.id, matchId: match.id, seq: ++seq, type: 'clock_start', at })
         break
@@ -168,6 +177,24 @@ export async function appendMatchEvent(db: DbLike, input: AppendInput): Promise<
         break
     }
     await tx.insert(matchEvents).values(rows).run()
+    return { duplicate: false, match: await recompute(tx, match.id) }
+  })
+}
+
+// A referee who runs out of time mid scramble stops the clock, adds time, and starts it
+// again. The added time is an event like any other, so undo takes it back, a replay of the
+// same press is a read, and the length the board counts down is rebuilt from the log.
+export async function extendClock(db: DbLike, input: ExtendInput): Promise<AppendResult> {
+  return db.transaction(async tx => {
+    const g = await guard(tx, input)
+    if ('duplicate' in g) return g.duplicate
+    const match = g.match
+    if (match.clockStartedAt) throw new MatchStateError('stop the clock before adding time')
+    if (input.addMs < EXTEND_MIN_MS || input.addMs > EXTEND_MAX_MS) throw new MatchStateError('added time is out of range')
+    await tx.insert(matchEvents).values({
+      id: input.id, matchId: match.id, seq: match.lastSeq + 1, type: 'clock_extend',
+      payload: { kind: 'clock_extend', addMs: input.addMs }, at: input.at ?? new Date().toISOString(),
+    }).run()
     return { duplicate: false, match: await recompute(tx, match.id) }
   })
 }

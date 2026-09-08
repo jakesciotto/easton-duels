@@ -196,6 +196,24 @@ describe('scoring flow', () => {
     expect(r.body.error.code).toBe('validation')
   })
 
+  it('refuses added time while the clock is running and takes it once it stops', async () => {
+    const { app, db } = await createTestApp()
+    const s = await seedEvent(db, { live: true })
+    const token = matToken(s.eventId, s.matIds[0])
+    const url = `/api/matches/${s.matchIds[0]}`
+    await call(app, 'POST', `${url}/events`, { id: 'clk-0001', type: 'clock_start', lastSeq: 0 }, token)
+    const running = await call(app, 'POST', `${url}/clock/extend`, { id: 'add-0001', lastSeq: 1, addMs: 60_000 }, token)
+    expect(running.status).toBe(409)
+    expect(running.body.error.code).toBe('match_state')
+    await call(app, 'POST', `${url}/events`, { id: 'clk-0002', type: 'clock_pause', lastSeq: 1 }, token)
+    const added = await call(app, 'POST', `${url}/clock/extend`, { id: 'add-0001', lastSeq: 2, addMs: 60_000 }, token)
+    expect(added.status).toBe(200)
+    const stale = await call(app, 'POST', `${url}/clock/extend`, { id: 'add-0002', lastSeq: 2, addMs: 60_000 }, token)
+    expect(stale.status).toBe(409)
+    expect(stale.body.error).toMatchObject({ code: 'sequence', currentSeq: 3 })
+    expect((await call(app, 'POST', `${url}/clock/extend`, { id: 'add-0003', lastSeq: 3, addMs: 60_000 }, matToken(s.eventId, s.matIds[1]))).status).toBe(403)
+  })
+
   it('admin can reopen, edit the result, and skip', async () => {
     const { app, db, adminToken } = await createTestApp()
     const s = await seedEvent(db, { matCount: 1, live: true })

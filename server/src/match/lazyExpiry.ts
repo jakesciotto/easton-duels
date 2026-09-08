@@ -2,6 +2,7 @@ import { and, eq, isNotNull } from 'drizzle-orm'
 import type { Db } from '../db/client.js'
 import { matches } from '../db/schema.js'
 import { bumpVersion } from './events.js'
+import { effectiveLengthMs } from './derive.js'
 import { expireClock, isBusy } from './expiry.js'
 
 // Live matches whose running clock has elapsed by nowMs still show 'live' in the
@@ -14,7 +15,7 @@ export async function expireOverdue(db: Db, eventId: number, nowMs: number): Pro
   const running = await db.select().from(matches)
     .where(and(eq(matches.eventId, eventId), eq(matches.status, 'live'), isNotNull(matches.clockStartedAt)))
     .all()
-  const overdue = running.filter(m => Date.parse(m.clockStartedAt as string) + (m.lengthSec * 1000 - m.clockElapsedMs) <= nowMs)
+  const overdue = running.filter(m => Date.parse(m.clockStartedAt as string) + (effectiveLengthMs(m) - m.clockElapsedMs) <= nowMs)
   if (overdue.length === 0) return
   const atIso = new Date(nowMs).toISOString()
   try {

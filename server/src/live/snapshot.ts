@@ -3,6 +3,7 @@ import type { DbLike } from '../db/client.js'
 import { events, teams, athletes, rulesets, mats, matches, type MatchRow, type AthleteRow, type EventRow } from '../db/schema.js'
 import { ON_DECK_DEPTH, type Snapshot, type MatchView, type MatchSide, type MatView, type TeamView, type TeamColor, type EventContact } from '../shared/types.js'
 import { MatchStateError, endedAtByMatch } from '../match/events.js'
+import { effectiveLengthMs } from '../match/derive.js'
 
 export interface SnapshotOptions {
   nowMs: number
@@ -15,6 +16,7 @@ export function eventContact(ev: Pick<EventRow, 'contactName' | 'contactPhone'>)
 }
 
 export function toMatchView(m: MatchRow, athleteById: Map<number, AthleteRow>, endedAt: string | null): MatchView {
+  const lengthMs = effectiveLengthMs(m)
   const side = (id: number, score: number): MatchSide => {
     const a = athleteById.get(id)
     return {
@@ -32,11 +34,11 @@ export function toMatchView(m: MatchRow, athleteById: Map<number, AthleteRow>, e
     matId: m.matId,
     status: m.status,
     rulesetId: m.rulesetId,
-    lengthSec: m.lengthSec,
+    lengthSec: Math.round(lengthMs / 1000),
     why: m.why,
     a: side(m.athleteAId, m.pointsA),
     b: side(m.athleteBId, m.pointsB),
-    clock: { elapsedMs: m.clockElapsedMs, startedAt: m.clockStartedAt, lengthMs: m.lengthSec * 1000 },
+    clock: { elapsedMs: m.clockElapsedMs, startedAt: m.clockStartedAt, lengthMs },
     result: m.winnerAthleteId !== null && m.winType !== null ? { winnerAthleteId: m.winnerAthleteId, winType: m.winType } : null,
     pendingTerminal: m.pendingTerminalAthleteId !== null && m.pendingTerminalKey !== null
       ? { athleteId: m.pendingTerminalAthleteId, actionKey: m.pendingTerminalKey }

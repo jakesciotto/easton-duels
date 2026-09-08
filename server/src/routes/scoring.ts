@@ -9,11 +9,12 @@ import { clientIp, errorJson, requireAdmin, requireMatOrAdmin } from '../auth/mi
 import { checkLimit, recordFailure } from '../auth/dbRateLimit.js'
 import { pinMatches } from '../auth/pin.js'
 import { signToken, tokenExpiry } from '../auth/tokens.js'
-import { appendMatchEvent, endMatch, undoLastMatchEvent, loadMatch, latestEndedAt, bumpVersion, MatchStateError, SeqConflict } from '../match/events.js'
+import { appendMatchEvent, endMatch, extendClock, undoLastMatchEvent, loadMatch, latestEndedAt, bumpVersion, MatchStateError, SeqConflict } from '../match/events.js'
 import { advanceMat, reopenMatch, setResult, skipMatch } from '../match/mats.js'
 import { expireOverdue } from '../match/lazyExpiry.js'
 import { toMatchView, buildSnapshot } from '../live/snapshot.js'
 import { bindMat, heartbeatMat } from '../live/bound.js'
+import { EXTEND_MAX_MS, EXTEND_MIN_MS } from '../shared/types.js'
 
 export const scoringRoutes = new Hono<Env>()
 
@@ -176,6 +177,31 @@ scoringRoutes.post('/matches/:matchId/end', requireMatOrAdmin(matIdFromMatch), v
       return ended
     })
     return await respondToScoringEvent(c, r.match)
+  } catch (e) {
+    if (e instanceof SeqConflict) return seqConflict(c, matchId, e)
+    throw e
+  }
+})
+
+// The clock is the only state a referee cannot correct after the fact, so a match that
+// ran out gets time added rather than a result nobody agrees with. Expiry runs first: a
+// clock past its length is still marked running until something sweeps it, and time can
+// only be added to a stopped clock.
+scoringRoutes.post('/matches/:matchId/clock/extend', requireMatOrAdmin(matIdFromMatch), validate('json', z.object({
+  id: clientEventId,
+  lastSeq: z.number().int().min(0),
+  addMs: z.number().int().min(EXTEND_MIN_MS).max(EXTEND_MAX_MS),
+})), async c => {
+  const { db } = c.get('ctx')
+  const matchId = Number(c.req.param('matchId'))
+  await expireOverdue(db, (await loadMatch(db, matchId)).eventId, Date.now())
+  try {
+    const r = await db.transaction(async tx => {
+      const extended = await extendClock(tx, { ...c.req.valid('json'), matchId })
+      if (!extended.duplicate) await bumpVersion(tx, extended.match.eventId)
+      return extended
+    })
+    return await respond(c, r.match)
   } catch (e) {
     if (e instanceof SeqConflict) return seqConflict(c, matchId, e)
     throw e
