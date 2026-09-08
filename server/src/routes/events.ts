@@ -128,6 +128,13 @@ eventRoutes.patch('/events/:eventId', requireAdmin, validate('json', patchEventS
   if (!ev) return errorJson(c, 404, 'not_found', 'event not found')
   await assertNotCertified(db, eventId)
   const { status, matCount, contactName: name, contactPhone: phone, mode, ...rest } = c.req.valid('json')
+  // The console sends the whole form back, so most of `rest` usually repeats what is
+  // already stored. Only the fields that differ belong in the history: a row saying an
+  // event was edited when nothing about it moved is noise in the one place that has to be
+  // trustworthy.
+  const changed = Object.fromEntries(
+    Object.entries(rest).filter(([key, value]) => value !== ev[key as keyof typeof ev]),
+  )
   const fields: Partial<typeof events.$inferInsert> = { ...rest }
   if (mode !== undefined) fields.mode = mode
   if (name !== undefined) fields.contactName = blankToNull(name)
@@ -141,7 +148,7 @@ eventRoutes.patch('/events/:eventId', requireAdmin, validate('json', patchEventS
       await setMatCount(tx, eventId, matCount)
       await audit('mat_count', { from: ev.matCount, to: matCount })
     }
-    if (Object.keys(rest).length > 0) await audit('event_edit', { ...rest })
+    if (Object.keys(changed).length > 0) await audit('event_edit', changed)
     if (mode !== undefined && mode !== ev.mode) await audit('mode', { from: ev.mode, to: mode })
     if (name !== undefined || phone !== undefined) await audit('contact', { name: fields.contactName ?? ev.contactName, phone: fields.contactPhone ?? ev.contactPhone })
     // Start skips the mats in entry mode, so an event that switches to the mats halfway
@@ -206,8 +213,13 @@ const unlockBody = pinBody.extend({ reason: z.string().trim().min(1).max(CORRECT
 async function withPin(c: Context<Env>, pin: string): Promise<Response | null> {
   const ctx = c.get('ctx')
   const ip = clientIp(c)
-  if (!(await checkLimit(ctx.db, 'certify', ip, Date.now())).allowed) {
-    return errorJson(c, 429, 'rate_limited', 'too many attempts; wait a minute')
+  // The window is an hour, so a person told to wait a minute would try again and again
+  // and be refused every time. The wait it prints is the one the limiter is actually
+  // holding, rounded up to the next whole minute.
+  const limit = await checkLimit(ctx.db, 'certify', ip, Date.now())
+  if (!limit.allowed) {
+    const minutes = Math.max(1, Math.ceil(limit.retryAfterSec / 60))
+    return errorJson(c, 429, 'rate_limited', `Too many attempts. Try again in ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}.`)
   }
   if (pinMatches(pin, ctx.adminPin)) return null
   await recordFailure(ctx.db, 'certify', ip, Date.now())

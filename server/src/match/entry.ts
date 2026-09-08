@@ -27,7 +27,18 @@ export interface CreateEntryInput extends EntryInput {
 
 // `created` is set only by createEntry, and says whether the pair had no open match and
 // one was made for it. The audit row for an entry carries it.
-export interface EntryResult { duplicate: boolean; match: MatchRow; created?: boolean }
+//
+// `wasDone` and `before` are the match as this write found it, read inside the same
+// transaction that then replaced it. The audit row is built from these rather than from a
+// read of its own, so what the row calls the write and what it prints as the old result
+// are the one state the write actually acted on.
+export interface EntryResult {
+  duplicate: boolean
+  match: MatchRow
+  created?: boolean
+  wasDone?: boolean
+  before?: MatchRow
+}
 
 type Insert = typeof matchEvents.$inferInsert
 
@@ -86,7 +97,7 @@ export async function enterResult(db: DbLike, matchId: number, input: EntryInput
       const mat = await tx.select().from(mats).where(eq(mats.id, updated.matId)).get()
       if (mat && mat.currentMatchId === matchId) await advanceMat(tx, mat.id)
     }
-    return { duplicate: false, match: await loadMatch(tx, matchId) }
+    return { duplicate: false, match: await loadMatch(tx, matchId), wasDone, before: match }
   })
 }
 

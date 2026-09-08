@@ -192,6 +192,19 @@ describe('audit log, the event', () => {
     expect(all[4].detail).toEqual({ name: 'Dana Vale', phone: '555 0147' })
   })
 
+  it('records only the fields a patch moved, and nothing when the form comes back unchanged', async () => {
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db)
+    const url = `/api/events/${s.eventId}`
+    // The console posts the whole form, so the date repeats what is stored.
+    await call(app, 'PATCH', url, { name: 'Fall Duels 2026', date: '2026-10-03' }, adminToken)
+    const edits = (await rows(db, s.eventId)).filter(r => r.action === 'event_edit')
+    expect(edits.map(r => r.detail)).toEqual([{ name: 'Fall Duels 2026' }])
+
+    await call(app, 'PATCH', url, { name: 'Fall Duels 2026', date: '2026-10-03', sameGender: false }, adminToken)
+    expect((await rows(db, s.eventId)).filter(r => r.action === 'event_edit')).toHaveLength(1)
+  })
+
   it('records start, finish, a team edit, and a delete that outlives its event', async () => {
     const { app, db, adminToken } = await createTestApp()
     const s = await seedEvent(db)

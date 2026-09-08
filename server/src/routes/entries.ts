@@ -44,16 +44,18 @@ entryRoutes.post('/matches/:matchId/entry', requireAdmin, validate('json', entry
   const body = c.req.valid('json')
   if (body.winnerAthleteId !== match.athleteAId && body.winnerAthleteId !== match.athleteBId) return errorJson(c, 422, 'validation', 'winner must be one of the two athletes')
   // A settled match typed again is a correction, and the audit row carries both sides of
-  // it: what the board had been showing, and what it shows now.
-  const correcting = match.status === 'done'
+  // it: what the board had been showing, and what it shows now. Both come from the write's
+  // own read of the match, not from the row fetched above, so a result that lands between
+  // the two reads cannot make the audit row disagree with what happened.
   const { match: updated } = await db.transaction(async tx => {
     const r = await enterResult(tx, matchId, body)
     if (!r.duplicate) {
+      const correcting = r.wasDone === true
       await recordAudit(tx, {
         eventId: r.match.eventId, matchId, actor: 'desk',
         action: correcting ? 'correction' : 'entry',
         detail: correcting
-          ? { before: result(match), after: result(r.match), ...reasonOf(body) }
+          ? { before: result(r.before ?? match), after: result(r.match), ...reasonOf(body) }
           : { ...result(r.match), ...reasonOf(body) },
       })
       await bumpVersion(tx, r.match.eventId)

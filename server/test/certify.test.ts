@@ -23,9 +23,22 @@ async function certified(): Promise<{ app: App; db: Db; adminToken: string; s: S
 
 interface Write { name: string; method: string; path: (s: Seeded) => string; body?: (s: Seeded) => unknown; mat?: boolean }
 
-// Every write route the server has, minus the two that certification deliberately leaves
-// open (heartbeat and unbind) and the two that manage certification itself. A route added
-// without a guard fails here rather than at the gym.
+// The write routes certification deliberately leaves alone. Heartbeat and unbind stay open
+// so a bound tablet can keep saying it is there and can always hand its mat back; the two
+// certification routes are the lock itself; signing in is not a write on an event; and a
+// new event has nothing to certify yet.
+const EXCLUDED = new Set([
+  'POST /api/auth/admin',
+  'POST /api/events',
+  'POST /api/events/:eventId/certify',
+  'POST /api/events/:eventId/uncertify',
+  'POST /api/mats/:matId/heartbeat',
+  'POST /api/mats/:matId/unbind',
+])
+
+// Every write route the server has, minus the ones above. The list below is checked
+// against the app's own route table, so a route added without a guard fails here rather
+// than at the gym.
 const WRITES: Write[] = [
   { name: 'scoring event', method: 'POST', path: s => `/api/matches/${s.matchIds[0]}/events`, body: s => ({ id: 'score-0002', type: 'score', athleteId: s.a1, actionKey: 'mount', lastSeq: 2 }), mat: true },
   { name: 'undo', method: 'DELETE', path: s => `/api/matches/${s.matchIds[0]}/events/last`, body: () => ({ lastSeq: 2 }), mat: true },
@@ -54,6 +67,38 @@ const WRITES: Write[] = [
   { name: 'match delete', method: 'DELETE', path: s => `/api/matches/${s.matchIds[1]}` },
   { name: 'match reorder', method: 'POST', path: s => `/api/events/${s.eventId}/matches/reorder`, body: s => ({ ids: [...s.matchIds].reverse() }) },
 ]
+
+// Ids that cannot collide with a path segment of their own, so a concrete url matches one
+// route pattern and no other.
+const SHAPE = { eventId: 1, teamA: 2, teamB: 3, rulesetId: 4, matIds: [5, 6], a1: 7, a2: 8, b1: 9, b2: 10, matchIds: [11, 12] } as Seeded
+
+function nonGetRoutes(app: App): string[] {
+  const seen = new Set<string>()
+  for (const r of app.routes) {
+    if (r.method === 'ALL' || r.method === 'GET') continue
+    seen.add(`${r.method} ${r.path}`)
+  }
+  return [...seen].sort()
+}
+
+const patternOf = (route: string) => new RegExp(`^${route.split(' ')[1].replace(/:[^/]+/g, '[^/]+')}$`)
+
+describe('the write routes this suite covers', () => {
+  it('accounts for every non-GET route the app has', async () => {
+    const { app } = await createTestApp()
+    const covered = new Set<string>()
+    for (const w of WRITES) {
+      const url = w.path(SHAPE)
+      const hits = nonGetRoutes(app).filter(r => r.startsWith(`${w.method} `) && patternOf(r).test(url))
+      expect(hits, `${w.name} matches no single route: ${w.method} ${url}`).toHaveLength(1)
+      covered.add(hits[0])
+    }
+    const unguarded = nonGetRoutes(app).filter(r => !covered.has(r) && !EXCLUDED.has(r))
+    expect(unguarded, 'a write route is in neither WRITES nor EXCLUDED').toEqual([])
+    // An exclusion that no longer names a real route is a stale claim about the lock.
+    expect([...EXCLUDED].filter(r => !nonGetRoutes(app).includes(r))).toEqual([])
+  })
+})
 
 describe('certification locks the event', () => {
   it.each(WRITES.map(w => [w.name, w] as const))('refuses %s', async (_name, w) => {
@@ -136,6 +181,11 @@ describe('certify and uncertify', () => {
     for (let i = 0; i < 9; i++) await call(app, 'POST', `/api/events/${s.eventId}/certify`, { pin: '000000' }, adminToken)
     const limited = await call(app, 'POST', `/api/events/${s.eventId}/certify`, { pin: TEST_PIN }, adminToken)
     expect(limited.status).toBe(429)
+    // The window is an hour, so the wait it names has to be the real one.
+    expect(limited.body.error.message).toBe('Too many attempts. Try again in 60 minutes.')
+    const unlock = await call(app, 'POST', `/api/events/${s.eventId}/uncertify`, { pin: TEST_PIN, reason: 'locked out' }, adminToken)
+    expect(unlock.status).toBe(429)
+    expect(unlock.body.error.message).toBe('Too many attempts. Try again in 60 minutes.')
   })
 
   it('certifies a finished event only, and unlocks a certified one only', async () => {
