@@ -31,3 +31,21 @@ describe('loadDotEnv', () => {
     expect(() => loadDotEnv(path.join(dir, 'does-not-exist.env'))).not.toThrow()
   })
 })
+
+
+describe('applyDevDefaults', () => {
+  it('points the dev server at a local file when nothing says otherwise', () => {
+    const env: Record<string, string | undefined> = { TURSO_DATABASE_URL: 'libsql://duels-example.turso.io' }
+    expect(applyDevDefaults(env)).toBe(DEV_DB_PATH)
+    expect(env.DB_PATH).toBe(DEV_DB_PATH)
+  })
+  it('keeps an explicit DB_PATH', () => {
+    const env: Record<string, string | undefined> = { DB_PATH: './data/other.db' }
+    expect(applyDevDefaults(env)).toBe('./data/other.db')
+  })
+  it('keeps the remote target only when the operator opts in', () => {
+    const env: Record<string, string | undefined> = { DUELS_DEV_REMOTE: '1', TURSO_DATABASE_URL: 'libsql://duels-example.turso.io' }
+    expect(applyDevDefaults(env)).toBeNull()
+    expect(env.DB_PATH).toBeUndefined()
+  })
+})

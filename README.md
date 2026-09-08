@@ -65,7 +65,9 @@ It checks health, PIN auth, event creation, a snapshot poll, and cleanup, and pr
 
 ## Develop
 
-- `npm run dev` starts the server with reload. `npm test` runs the server tests.
+- `npm run dev` starts the server with reload against a local file, `server/data/dev.db`. Set
+  `DUELS_DEV_REMOTE=1` to read the remote database named in `.env` instead; an explicit `DB_PATH`
+  always wins. Migrations never run at boot against a remote database. `npm test` runs the server tests.
 - `npm run db:migrate` applies every pending migration to the database in `.env`. `npm run db:migrate -- --to 0007`
   stops after that migration, for a release whose newest migration drops a column the running build
   still reads: apply the additive files, deploy, then run the rest.
