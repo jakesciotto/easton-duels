@@ -9,6 +9,7 @@ import {
   CLOCK_ROW, COLUMN_GAP, COMMIT, HEAD_GAP, HEAD_LINE, MOAT, PAD, REASON, RULE, SECONDARY,
   STACK_GAP, columnBudget,
 } from './budget'
+import { CLOCK_RUNNING } from './refusals'
 import { useViewportHeight } from './viewport'
 
 export interface CenterRefusals {
@@ -103,6 +104,15 @@ export function CenterColumn({ mat, match, serverNow, lastSuccessAt, pollInterva
   // and only the far side's minus refuses, with a reason that names a competitor rather than
   // the match and so belongs on that button rather than in a line under both of them.
   const correctionReason = refusals.undo
+  // 6.16 reserves this line for a reason the operator needs NOW, and the two controls above
+  // it are refused in mutually exclusive states, so it can serve both. The clock speaks
+  // first, because a refused Start is the press the thumb is already making. The extension
+  // speaks only while the clock is stopped, and never for the one reason that is simply
+  // that it is running: printed for the whole of every round, that sentence is a permanent
+  // notice under the control the operator presses every thirty seconds, and it crowds out
+  // the reason that will matter when the clock stops.
+  const clockRowReason = refusals.clock
+    ?? (!running && refusals.addTime !== CLOCK_RUNNING ? refusals.addTime : null)
   const minusPoints = (refusal: string | null) =>
     refusal === null && lastAction?.kind === 'score' ? lastAction.points : null
 
@@ -219,7 +229,8 @@ export function CenterColumn({ mat, match, serverNow, lastSuccessAt, pollInterva
             (budget.ts), and a second 104px row would put End match under the fold. They are
             never refused at the same time -- a running clock refuses the extension, an
             expired one refuses Start -- so the one reason line below serves both, and each
-            sentence names the control it is about. */}
+            sentence names the control it is about. What it will not carry is the running
+            clock's own refusal: see clockRowReason. */}
         <div className="grid w-full" style={{ gridTemplateColumns: '3fr 2fr', gap: STACK_GAP * 2 }}>
           <Button
             type="button"
@@ -242,7 +253,7 @@ export function CenterColumn({ mat, match, serverNow, lastSuccessAt, pollInterva
             Add <span className="fig">{formatClock(ADD_TIME_MS)}</span>
           </Button>
         </div>
-        <Reason text={refusals.clock ?? refusals.addTime} />
+        <Reason text={clockRowReason} />
 
         {/* The moat again: the control that ends a match never shares a row, or a
             neighbourhood, with the one the operator presses every thirty seconds. */}

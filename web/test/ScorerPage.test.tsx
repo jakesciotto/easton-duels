@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { routes } from '@/router'
 import { SHORTEST_VIEWPORT } from '@/routes/scorer/budget'
-import { CLOCK_RUNNING, TIME_UP } from '@/routes/scorer/refusals'
+import { CLOCK_RUNNING, CLOCK_UNSTARTED, PENDING, TIME_UP, scorerRefusals } from '@/routes/scorer/refusals'
 import { EVENT_FINISHED } from '@/routes/scorer/actions'
 import { CenterColumn } from '@/routes/scorer/CenterColumn'
 import { ConfirmSheet } from '@/routes/scorer/ConfirmSheet'
@@ -48,6 +48,12 @@ const onOneMat = (match: ReturnType<typeof sampleMatch>) =>
 // inside the one region that is allowed to scroll. The budget suite proves the arithmetic.
 function centreColumn() {
   return screen.getByRole('button', { name: 'End match' }).closest('.w-80') as HTMLElement
+}
+// The single t2 line the column reserves under the clock row (budget.REASON). It is the row
+// the two controls above it share, so which of their reasons reaches it is a decision.
+function clockRowReason() {
+  const row = screen.getByRole('button', { name: /^(Start|Pause)$/ }).closest('.grid') as HTMLElement
+  return row.nextElementSibling as HTMLElement
 }
 function referenceRegion() {
   const found = centreColumn().querySelector('.overflow-y-auto')
@@ -147,7 +153,7 @@ describe('ScorerPage', () => {
     const feed = snapshotFeed(sampleSnapshot({ mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: true }], matches: [] }))
     fakeFetch(url => feed.handle(url) ?? { json: {} })
     await mount()
-    expect(await screen.findByText('Mat 1 complete.')).toBeInTheDocument()
+    expect(await screen.findByText('Mat 1 complete')).toBeInTheDocument()
     expect(screen.queryByText(/Waiting for the organizer/)).toBeNull()
   })
 
@@ -157,7 +163,7 @@ describe('ScorerPage', () => {
     fakeFetch(url => feed.handle(url) ?? { json: {} })
     await mount()
     expect(await screen.findByText(/No match on this mat. Waiting for the organizer./)).toBeInTheDocument()
-    expect(screen.queryByText('Mat 1 complete.')).toBeNull()
+    expect(screen.queryByText('Mat 1 complete')).toBeNull()
   })
 
   // 6.16: the action grid is fixed 3 x 3 and a shorter ruleset leaves cells EMPTY rather
@@ -599,6 +605,70 @@ describe('ScorerPage', () => {
   })
 
   /**
+   * I7. The column reserves one t2 line under the clock row, and 6.16 reserves it for a
+   * reason the operator needs NOW. It printed `refusals.clock ?? refusals.addTime`, so for
+   * the whole of every running round it read "Add time while the clock is stopped." under
+   * the control the operator presses every thirty seconds -- and it was still reading that
+   * at the moment something worth a glance had to appear there.
+   */
+  describe('the reason line under the clock row', () => {
+    const T0_ISO = new Date(T0).toISOString()
+    const running = sampleMatch({ clock: { elapsedMs: 0, startedAt: T0_ISO, lengthMs: 300_000 } })
+    const paused = sampleMatch({ clock: { elapsedMs: 45_000, startedAt: null, lengthMs: 300_000 } })
+    const waiting = sampleMatch({
+      clock: { elapsedMs: 0, startedAt: T0_ISO, lengthMs: 300_000 },
+      pendingTerminal: { athleteId: 200, actionKey: 'pin' },
+    })
+
+    // The refusals come from the real decision function rather than a literal, so this reads
+    // the same pipeline the route does.
+    function paint(match: ReturnType<typeof sampleMatch>, expired: boolean) {
+      render(
+        <CenterColumn
+          mat={{ id: 1, number: 1, current: match, onDeck: [], bound: true }}
+          match={match}
+          serverNow={sampleSnapshot().now}
+          lastSuccessAt={Date.now()}
+          pollIntervalMs={1000}
+          expired={expired}
+          lastAction={null}
+          refusals={scorerRefusals({ connected: true, eventStatus: 'live', match, last: null, expired })}
+          error={null}
+          contact={null}
+          onClock={() => {}}
+          onAddTime={() => {}}
+          onUndo={() => {}}
+          onMinus={() => {}}
+          onEnd={() => {}}
+        />,
+      )
+      return clockRowReason()
+    }
+
+    it('stays empty for the whole of a running round', () => {
+      expect(paint(running, false)).toBeEmptyDOMElement()
+      expect(screen.getByRole('button', { name: 'Add 1:00' })).toBeDisabled()
+    })
+
+    it('stays empty on a paused clock, where neither control is refused', () => {
+      expect(paint(paused, false)).toBeEmptyDOMElement()
+      expect(screen.getByRole('button', { name: 'Add 1:00' })).toBeEnabled()
+    })
+
+    it('names the expiry, which is the reason the operator needs then', () => {
+      expect(paint(expiredMatch(), true)).toHaveTextContent(TIME_UP)
+    })
+
+    it('names a waiting result even while the clock runs, because it is what has to be answered', () => {
+      expect(paint(waiting, false)).toHaveTextContent(PENDING)
+    })
+
+    it('names the unstarted clock, which is why the extension is refused before the bout', () => {
+      expect(paint(sampleMatch(), false)).toHaveTextContent(CLOCK_UNSTARTED)
+    })
+  })
+
+  /**
    * G19. The clock could not be restarted or extended once it ran out, so a match that
    * needed thirty more seconds had to be recorded as whatever the board happened to say.
    */
@@ -626,14 +696,17 @@ describe('ScorerPage', () => {
       expect(screen.getByText(/Time added/)).toBeInTheDocument()
     })
 
-    it('refuses while the clock runs, and says which control the reason is about', async () => {
+    it('refuses while the clock runs, without spending the reserved line on saying so', async () => {
       const running = sampleMatch({ clock: { elapsedMs: 0, startedAt: '2026-10-03T16:00:00.000Z', lengthMs: 300_000 } })
       const feed = snapshotFeed(onOneMat(running))
       const f = fakeFetch(url => feed.handle(url) ?? { json: {} })
       await mount()
       const add = await screen.findByRole('button', { name: 'Add 1:00' })
       expect(add).toBeDisabled()
-      expect(screen.getByText(CLOCK_RUNNING)).toBeInTheDocument()
+      // I7: the line is reserved for a reason the operator needs NOW, and for the whole of
+      // a running round this one is not it.
+      expect(screen.queryByText(CLOCK_RUNNING)).toBeNull()
+      expect(clockRowReason()).toBeEmptyDOMElement()
       // Pause is not refused by the same line, which is what makes one line legal here.
       expect(screen.getByRole('button', { name: 'Pause' })).toBeEnabled()
       expect(f.calls.some(c => c.url.includes('/clock/extend'))).toBe(false)

@@ -3,6 +3,7 @@ import { renderHook, act } from '@testing-library/react'
 import { EXTEND_MAX_MS, EXTEND_MIN_MS, type Snapshot } from '@shared/types'
 import { useScorer } from '@/routes/scorer/useScorer'
 import { ADD_TIME_MS, WRITE_DEADLINE_MS } from '@/routes/scorer/actions'
+import { loadLedger } from '@/routes/scorer/ledger'
 import type { MatBinding } from '@/lib/auth'
 import { fakeFetch, sampleMatch, sampleSnapshot } from './fakes'
 
@@ -576,6 +577,21 @@ describe('useScorer', () => {
       const after = renderHook(() => useScorer(binding, snapshotWith(next, 4), true))
       expect(after.result.current.lastAction).toBeNull()
     })
+
+    /**
+     * M14. Keys were written and never removed, so one tablet holding one mat accumulated a
+     * ledger for every bout it had scored, none of them readable by any control again.
+     */
+    it('removes the key of the match it has left behind', async () => {
+      fakeFetch(url => (url === '/api/matches/10/events' ? { json: { match: scored, version: 2 } } : { json: { ok: true } }))
+      const view = renderHook(({ snap }: { snap: Snapshot }) => useScorer(binding, snap, true), { initialProps: { snap: sampleSnapshot() } })
+      act(() => view.result.current.tap(100, 'takedown'))
+      await settle(view.result)
+      expect(loadLedger(10, 9)).toHaveLength(1)
+
+      view.rerender({ snap: snapshotWith(sampleMatch({ id: 11, orderIndex: 1 }), 4) })
+      expect(loadLedger(10, 9)).toEqual([])
+    })
   })
 
   /**
@@ -624,6 +640,36 @@ describe('useScorer', () => {
 
       act(() => result.current.addTime())
       expect(f.calls.some(c => c.url.includes('/clock/extend'))).toBe(false)
+    })
+
+    /**
+     * M8. The retry adopts the server's seq, but the ledger entry was written before the
+     * request and kept the number the tablet had guessed. An entry whose seq is not the
+     * match's lastSeq is not `lastAction` at all, so Undo refused with "The newest action
+     * came from elsewhere" for the minute the operator had just added, and went on refusing
+     * until the next write.
+     */
+    it('takes the server seq into the ledger when the retry adopts it', async () => {
+      let attempts = 0
+      const swept = sampleMatch({ lastSeq: 5, lengthSec: 360, clock: { elapsedMs: 300_000, startedAt: null, lengthMs: 360_000 } })
+      const f = fakeFetch(url => {
+        if (url.endsWith('/events/last')) return { json: { match: expired, version: 4 } }
+        if (!url.includes('/clock/extend')) return { json: { ok: true } }
+        attempts += 1
+        if (attempts === 1) return { status: 409, json: { error: { code: 'sequence', message: 'stale sequence', currentSeq: 4 } } }
+        return { json: { match: swept, version: 3 } }
+      })
+      const { result } = renderHook(() => useScorer(binding, snapshotWith(expired), true))
+
+      act(() => result.current.addTime())
+      await settle(result)
+      expect(result.current.current?.lastSeq).toBe(5)
+      expect(result.current.lastAction).toMatchObject({ kind: 'extend', seq: 5 })
+
+      // And the control that reads it answers, which is the whole point of the entry.
+      act(() => result.current.undo())
+      await settle(result)
+      expect(f.calls.some(c => c.url === '/api/matches/10/events/last')).toBe(true)
     })
 
     // Undo removes the newest event whatever it is, so an extension the operator did not

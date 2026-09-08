@@ -10,7 +10,7 @@ import {
   ADD_TIME_MS, applyClockExtend, applyClockPause, applyClockStart, applyScore, applyUndo,
   errorCopy, withDeadline, WRITE_DEADLINE_MS, type LocalAction,
 } from './actions'
-import { loadLedger, saveLedger } from './ledger'
+import { loadLedger, pruneLedgers, saveLedger } from './ledger'
 
 const HEARTBEAT_MS = 20_000
 
@@ -153,6 +153,10 @@ export function useScorer(binding: MatBinding, snapshot: Snapshot | null, connec
     setError(null)
     setPending([])
     const id = current?.id ?? 0
+    // The match that just ended takes its ledger with it. Guarded on a real id, because 0 is
+    // both "between bouts" and "the snapshot has not landed yet", and sweeping there would
+    // take the ledger a reload is one render away from restoring.
+    if (id) pruneLedgers(id)
     setLog({ matchId: id, actions: id ? loadLedger(id, current!.lastSeq) : [] })
     // The ledger is restored for the match, not for a moment in it, so the seq it is pruned
     // against is deliberately not a dependency.
@@ -244,6 +248,18 @@ export function useScorer(binding: MatBinding, snapshot: Snapshot | null, connec
   const record = (matchId: number, action: LocalAction) =>
     setLog(l => (l.matchId === matchId ? { matchId, actions: [...l.actions, action] } : { matchId, actions: [action] }))
 
+  /**
+   * An entry is written before its request goes out, so it carries the seq this tablet
+   * guessed. When a retry adopts the server's number instead, that guess is wrong, and an
+   * entry whose seq no longer matches the match's lastSeq is not `lastAction` at all: Undo
+   * and both minus buttons then refuse with "The newest action came from elsewhere" for a
+   * write this tablet had just made, and go on refusing until the next one.
+   */
+  const reseq = (matchId: number, from: number, to: number) =>
+    setLog(l => (l.matchId === matchId && from !== to
+      ? { matchId, actions: l.actions.map(a => (a.seq === from ? { ...a, seq: to } : a)) }
+      : l))
+
   const tap = (athleteId: number, actionKey: string) => {
     const m = current
     const action = ruleset?.actions.find(a => a.key === actionKey)
@@ -301,7 +317,11 @@ export function useScorer(binding: MatBinding, snapshot: Snapshot | null, connec
         // there; a second one is a real conflict and rolls back like any other.
         const server = e instanceof ApiError && e.code === 'sequence' ? Number(e.details.currentSeq) : NaN
         if (!Number.isFinite(server)) throw e
-        return await extendClock(matchId, binding.token, { lastSeq: server, addMs: ADD_TIME_MS })
+        const r = await extendClock(matchId, binding.token, { lastSeq: server, addMs: ADD_TIME_MS })
+        // The sweep the server wrote sits between the guess and the extension, so the entry
+        // has to take the number the extension actually landed on.
+        reseq(matchId, target, r.match.lastSeq)
+        return r
       }
     }, id)
   }

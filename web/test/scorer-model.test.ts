@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { ApiError } from '@/lib/api'
 import { EXTEND_MAX_MS, EXTEND_MIN_MS } from '@shared/types'
 import {
@@ -8,8 +8,9 @@ import {
 } from '@/routes/scorer/actions'
 import {
   addTimeRefusal, clockRefusal, minusRefusal, REASONS, scoreRefusal, scorerRefusals, undoRefusal,
-  CLOCK_RUNNING, EVENT_DONE, EXTEND_EVENT,
+  CLOCK_RUNNING, CLOCK_UNSTARTED, EVENT_DONE, EXTEND_EVENT,
 } from '@/routes/scorer/refusals'
+import { loadLedger, pruneLedgers, saveLedger } from '@/routes/scorer/ledger'
 import { fitsScorer } from '@/routes/scorer/viewport'
 import {
   ALERT, CLOCK_ROW, COMMIT, CONTACT_LINE, HEAD_LINE, IPAD_SCREEN_HEIGHT, LINE,
@@ -223,24 +224,36 @@ describe('refusals', () => {
   describe('the add-time refusal', () => {
     const running = { ...live, clock: { ...live.clock, startedAt: '2026-10-03T16:00:00.000Z' } }
     const expired = { ...live, clock: { elapsedMs: 300_000, startedAt: null, lengthMs: 300_000 } }
+    const paused = { ...live, clock: { elapsedMs: 45_000, startedAt: null, lengthMs: 300_000 } }
 
-    it('refuses only while the clock runs, and takes an expired or a paused one', () => {
-      expect(addTimeRefusal(true, running)).toBe(CLOCK_RUNNING)
-      expect(addTimeRefusal(true, expired)).toBeNull()
-      expect(addTimeRefusal(true, live)).toBeNull()
+    it('refuses while the clock runs, and takes an expired or a paused one', () => {
+      expect(addTimeRefusal(true, running, false)).toBe(CLOCK_RUNNING)
+      expect(addTimeRefusal(true, expired, true)).toBeNull()
+      expect(addTimeRefusal(true, paused, false)).toBeNull()
+    })
+
+    /**
+     * M13. The extension exists to correct a clock that ran, and a match nobody has started
+     * has not run: the control was live on every bout before its first Start, where the only
+     * thing it does is lengthen the round without anyone deciding to.
+     */
+    it('refuses a match that has not started, where there is no clock to correct', () => {
+      expect(addTimeRefusal(true, live, false)).toBe(CLOCK_UNSTARTED)
+      // A clock reading zero because the match is over is a different fact, and it takes time.
+      expect(addTimeRefusal(true, { ...live, clock: { elapsedMs: 0, startedAt: null, lengthMs: 0 } }, true)).toBeNull()
     })
 
     it('is never refused at the same time as the clock control beside it', () => {
-      for (const [match, expired_] of [[running, false], [expired, true], [live, false]] as const) {
-        const both = [clockRefusal(true, match, expired_), addTimeRefusal(true, match)].filter(r => r !== null)
+      for (const [match, expired_] of [[running, false], [expired, true], [paused, false], [live, false]] as const) {
+        const both = [clockRefusal(true, match, expired_), addTimeRefusal(true, match, expired_)].filter(r => r !== null)
         expect(both.length, JSON.stringify(match.clock)).toBeLessThanOrEqual(1)
       }
     })
 
     it('refuses with the whole screen when the screen is refusing', () => {
-      expect(addTimeRefusal(false, live)).toMatch(/Not connected/)
-      expect(addTimeRefusal(true, null)).toMatch(/No match on this mat/)
-      expect(addTimeRefusal(true, { ...live, pendingTerminal: { athleteId: 200, actionKey: 'pin' } })).toMatch(/result is waiting/)
+      expect(addTimeRefusal(false, paused, false)).toMatch(/Not connected/)
+      expect(addTimeRefusal(true, null, false)).toMatch(/No match on this mat/)
+      expect(addTimeRefusal(true, { ...paused, pendingTerminal: { athleteId: 200, actionKey: 'pin' } }, false)).toMatch(/result is waiting/)
     })
   })
 
@@ -263,7 +276,8 @@ describe('refusals', () => {
   })
 
   it('leaves the controls to the match while the event is live', () => {
-    const refusals = scorerRefusals({ connected: true, eventStatus: 'live', match: live, last: null, expired: false })
+    const mid = { ...live, clock: { elapsedMs: 45_000, startedAt: null, lengthMs: 300_000 } }
+    const refusals = scorerRefusals({ connected: true, eventStatus: 'live', match: mid, last: null, expired: false })
     expect(refusals.half).toBeNull()
     expect(refusals.clock).toBeNull()
     expect(refusals.addTime).toBeNull()
@@ -361,6 +375,31 @@ describe('the centre column budget', () => {
     expect(SECONDARY).toBeGreaterThanOrEqual(64)
     expect(MOAT).toBe(32)
     for (const box of [PAD, COMMIT, SECONDARY, REASON, MOAT, ALERT]) expect(box % 4).toBe(0)
+  })
+})
+
+/**
+ * M14. The shelf is session storage, which lives as long as the tab and is shared with
+ * everything else this origin keeps there. A key per match, never removed, is a leak that
+ * grows for exactly as long as one volunteer holds one mat.
+ */
+describe('the local ledger', () => {
+  beforeEach(() => sessionStorage.clear())
+
+  it('keeps only the current match, so a tab does not collect a ledger per bout', () => {
+    for (const id of [10, 11, 12]) saveLedger(id, [action({ seq: 1 })])
+    pruneLedgers(12)
+    expect(loadLedger(12, 1)).toHaveLength(1)
+    expect(loadLedger(10, 1)).toEqual([])
+    expect(loadLedger(11, 1)).toEqual([])
+  })
+
+  it('leaves anything that is not a ledger alone', () => {
+    sessionStorage.setItem('duels:something-else', 'kept')
+    saveLedger(10, [action({ seq: 1 })])
+    pruneLedgers(11)
+    expect(sessionStorage.getItem('duels:something-else')).toBe('kept')
+    expect(loadLedger(10, 1)).toEqual([])
   })
 })
 

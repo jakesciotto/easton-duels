@@ -45,3 +45,22 @@ export function saveLedger(matchId: number, actions: LocalAction[]): void {
     sessionStorage.setItem(key(matchId), JSON.stringify(actions.slice(-LEDGER_CAP)))
   } catch { /* storage blocked or full */ }
 }
+
+/**
+ * A tab holds one mat and scores one match at a time, so every key but the current match's
+ * describes a bout that is finished. Nothing ever removed them: a tablet that ran a mat all
+ * afternoon kept a ledger for every match it had scored, none of which any control can read,
+ * against a quota it shares with everything else this origin stores. The current match's key
+ * is the one that has to survive, because restoring it across a reload is the whole reason
+ * this shelf exists.
+ */
+export function pruneLedgers(keep: number): void {
+  try {
+    const stale: string[] = []
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const k = sessionStorage.key(i)
+      if (k !== null && k.startsWith(PREFIX) && k !== key(keep)) stale.push(k)
+    }
+    for (const k of stale) sessionStorage.removeItem(k)
+  } catch { /* storage blocked */ }
+}

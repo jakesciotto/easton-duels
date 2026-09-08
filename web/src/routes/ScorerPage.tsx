@@ -160,7 +160,7 @@ function Scorer({ binding }: { binding: MatBinding }) {
   // G05: a mat with nothing on it and nothing queued is finished for the day, and telling
   // its volunteer to wait for the organizer is telling them to wait for nothing.
   const idleNote = s.mat && s.mat.current === null && s.mat.onDeck.length === 0
-    ? `Mat ${s.mat.number} complete.`
+    ? `Mat ${s.mat.number} complete`
     : 'No match on this mat. Waiting for the organizer.'
 
   return (

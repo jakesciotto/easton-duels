@@ -30,13 +30,19 @@ export const ELSEWHERE = 'The newest action came from elsewhere.'
 export const EXTEND_EVENT = 'The newest action added time.'
 /** The server refuses an extension while the clock runs, so the control says so first. */
 export const CLOCK_RUNNING = 'Add time while the clock is stopped.'
+/** A bout nobody has started has the length its ruleset gave it, and nothing to correct. */
+export const CLOCK_UNSTARTED = 'Start the clock before adding time.'
 /** After Finish the server refuses every write, whatever the match itself says. */
 export const EVENT_DONE = 'This event is finished.'
 
-/** Every reason that prints in the reserved line, for the length check that guards it. */
+/**
+ * Every refusal sentence, for the length check that guards the one line the centre column
+ * reserves. It covers reasons the column chooses not to print as well, because which of
+ * them reaches the line is a decision the column makes and can change.
+ */
 export const REASONS = [
   OFFLINE, PENDING, NOTHING, NO_MATCH, ENDED, NOT_STARTED, TIME_UP, CLOCK_EVENT, ELSEWHERE,
-  EXTEND_EVENT, CLOCK_RUNNING, EVENT_DONE,
+  EXTEND_EVENT, CLOCK_RUNNING, CLOCK_UNSTARTED, EVENT_DONE,
 ]
 
 function unavailable(connected: boolean, match: MatchView | null): string | null {
@@ -67,14 +73,20 @@ export function clockRefusal(connected: boolean, match: MatchView | null, expire
 
 /**
  * The extension. The server sweeps an overdue clock into a pause before it writes one, so an
- * expired clock takes time as readily as a paused one; a RUNNING clock is the single state it
- * turns down, and this is the sentence that says so before the tap rather than after it.
+ * expired clock takes time as readily as a paused one; a RUNNING clock is the state it turns
+ * down, and this is the sentence that says so before the tap rather than after it.
+ *
+ * The server takes an extension on a match that has not started too, and there it is not a
+ * correction at all: the length came from the ruleset, nothing has run against it, and the
+ * only thing the press does is lengthen the bout without anybody deciding to. A clock that
+ * has run for zero milliseconds and is not out of time is a clock nobody has started.
  */
-export function addTimeRefusal(connected: boolean, match: MatchView | null): string | null {
+export function addTimeRefusal(connected: boolean, match: MatchView | null, expired: boolean): string | null {
   const gone = unavailable(connected, match)
   if (gone) return gone
   if (match!.pendingTerminal) return PENDING
   if (match!.clock.startedAt !== null) return CLOCK_RUNNING
+  if (match!.clock.elapsedMs === 0 && !expired) return CLOCK_UNSTARTED
   return null
 }
 
@@ -159,7 +171,7 @@ export function scorerRefusals(input: {
   return {
     half: done ?? scoreRefusal(connected, match),
     clock: done ?? clockRefusal(connected, match, expired),
-    addTime: done ?? addTimeRefusal(connected, match),
+    addTime: done ?? addTimeRefusal(connected, match, expired),
     undo: done ?? undoRefusal(connected, match, last, expired),
     minusA: done ?? (match ? minusRefusal(connected, match, last, match.a.athleteId) : null),
     minusB: done ?? (match ? minusRefusal(connected, match, last, match.b.athleteId) : null),
