@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { Ellipsis } from 'lucide-react'
 import { Menu } from '@base-ui/react/menu'
-import type { MatView, MatchSide, MatchView, Snapshot } from '@shared/types'
+import type { EventMode, MatView, MatchSide, MatchView, Snapshot } from '@shared/types'
 import { formatClock, remainingMs } from '@shared/clock'
 import { ApiError } from '@/lib/api'
 import { adminApi, useAdminMutation } from '@/lib/queries'
@@ -20,9 +20,10 @@ import { Connecting } from '@/components/Connecting'
 import { QrCode } from '@/components/QrCode'
 import { TeamPlate } from '@/components/TeamPlate'
 import { ResultDialog } from './ResultDialog'
+import { FinishEventDialog } from './FinishEventDialog'
 import {
-  NEXT_QUEUE_CAP, lastResultOf, matPanelModel, needsDecision, queueRemainderLabel, resultScore,
-  resultSentence, resultTime, waitingLabel, type PanelTone,
+  NEXT_QUEUE_CAP, lastResultOf, matPanelModel, needsDecision, pendingQueueDepth, queueRemainderLabel,
+  resultScore, resultSentence, resultTime, waitingLabel, type PanelTone,
 } from './live-panel'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -73,6 +74,8 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
 
   const status = useAdminMutation(eventId, (s: 'live' | 'done') => adminApi(`/api/events/${eventId}`, { method: 'PATCH', body: { status: s } }))
   const act = useAdminMutation(eventId, (v: { id: number; action: 'reopen' | 'skip' }) => adminApi(`/api/matches/${v.id}/${v.action}`, { method: 'POST' }))
+  // G02: an idle mat has nothing to trigger its own advance, so the panel calls it.
+  const advance = useAdminMutation(eventId, (matId: number) => adminApi(`/api/mats/${matId}/advance`, { method: 'POST' }))
   const end = useAdminMutation(eventId, (v: { id: number; entryId: string; lastSeq: number; winnerAthleteId?: number }) =>
     adminApi(`/api/matches/${v.id}/end`, {
       method: 'POST',
@@ -82,8 +85,9 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
     }))
 
   // Only the most recently started action's error stays visible.
-  const runStart = () => { act.reset(); end.reset(); status.mutate('live') }
-  const runAct = (v: { id: number; action: 'reopen' | 'skip' }) => { status.reset(); end.reset(); act.mutate(v) }
+  const runStart = () => { act.reset(); end.reset(); advance.reset(); status.mutate('live') }
+  const runAct = (v: { id: number; action: 'reopen' | 'skip' }) => { status.reset(); end.reset(); advance.reset(); act.mutate(v) }
+  const runAdvance = (matId: number) => { status.reset(); act.reset(); end.reset(); advance.mutate(matId) }
   const closeFinish = () => {
     setFinishOpen(false)
     status.reset()
@@ -91,6 +95,7 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
   const runFinish = () => {
     act.reset()
     end.reset()
+    advance.reset()
     status.mutate('done', { onSuccess: closeFinish })
   }
 
@@ -99,6 +104,7 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
   const runEnd = (target: EndTarget, winnerAthleteId?: number) => {
     status.reset()
     act.reset()
+    advance.reset()
     const { match } = target
     const entryId = endIds.current[match.id] ?? (endIds.current[match.id] = newEventId())
     // The action lands on the room, not on the picture: while the rack is paused the
@@ -125,8 +131,9 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
   }
 
   // While the dialog is open a failed finish is shown inside it only, and a decision
-  // the dialog is asking for is not an error the rack has to repeat.
-  const error = (finishOpen ? null : status.error) ?? act.error ?? (ending ? null : end.error)
+  // the dialog is asking for is not an error the rack has to repeat. A refused advance
+  // (409 match_state) prints the server's own reason here like every other refusal.
+  const error = (finishOpen ? null : status.error) ?? act.error ?? advance.error ?? (ending ? null : end.error)
   const matUrl = connect ? `${connect.url}/mat?event=${eventId}` : ''
   const teamColor = (teamId: number | null) => detail.teams.find(t => t.id === teamId)?.color ?? detail.teams[0].color
 
@@ -189,12 +196,15 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
                   key={mat.id}
                   mat={mat}
                   view={view}
+                  mode={entryMode ? 'entry' : 'live'}
                   paused={paused}
                   lastSuccessAt={lastSuccessAt}
                   pollIntervalMs={pollIntervalMs}
-                  busy={end.isPending && mat.current !== null && end.variables?.id === mat.current.id}
+                  busy={(end.isPending && mat.current !== null && end.variables?.id === mat.current.id)
+                    || (advance.isPending && advance.variables === mat.id)}
                   teamColor={teamColor}
                   onPrimary={onPrimary}
+                  onAdvance={runAdvance}
                   onSkip={id => runAct({ id, action: 'skip' })}
                   onReopen={id => runAct({ id, action: 'reopen' })}
                   onEditResult={setEditing}
@@ -205,19 +215,16 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
         </>
       )}
 
-      <Dialog open={finishOpen} onOpenChange={o => { if (o) setFinishOpen(true); else closeFinish() }}>
-        <DialogContent className={dialogSurface(512)}>
-          <DialogHeader><DialogTitle>Finish the event?</DialogTitle></DialogHeader>
-          <DialogBody className={dialogBody}>
-            <p className="t3 text-gray-11">The board switches to the final result. Matches that are still running stay where they are.</p>
-            {status.error && <Alert><AlertTitle>The event did not finish</AlertTitle><AlertDescription>{status.error.message}</AlertDescription></Alert>}
-          </DialogBody>
-          <DialogFooter className={dialogFooter}>
-            <Button type="button" variant="secondary" onClick={closeFinish}>Cancel</Button>
-            <Button type="button" variant="destructive" disabled={status.isPending} onClick={runFinish}>Finish event</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* One Finish dialog for the whole event, so this tab and the Entry tab ask the
+          same question and both name the mats that would be cut off mid-match. */}
+      <FinishEventDialog
+        open={finishOpen}
+        onOpenChange={o => { if (o) setFinishOpen(true); else closeFinish() }}
+        detail={detail}
+        pending={status.isPending}
+        error={status.error}
+        onFinish={runFinish}
+      />
 
       <EndDialog
         target={ending}
@@ -285,15 +292,17 @@ function ConnectCard({ connect, eventId, matUrl, collapsed, matCount }: {
   )
 }
 
-function MatPanel({ mat, view, paused, lastSuccessAt, pollIntervalMs, busy, teamColor, onPrimary, onSkip, onReopen, onEditResult }: {
+function MatPanel({ mat, view, mode, paused, lastSuccessAt, pollIntervalMs, busy, teamColor, onPrimary, onAdvance, onSkip, onReopen, onEditResult }: {
   mat: MatView
   view: Snapshot
+  mode: EventMode
   paused: boolean
   lastSuccessAt: number | null
   pollIntervalMs: number
   busy: boolean
   teamColor: (teamId: number | null) => string
   onPrimary: (target: EndTarget) => void
+  onAdvance: (matId: number) => void
   onSkip: (matchId: number) => void
   onReopen: (matchId: number) => void
   onEditResult: (match: MatchView) => void
@@ -307,13 +316,15 @@ function MatPanel({ mat, view, paused, lastSuccessAt, pollIntervalMs, busy, team
   const remaining = paused ? held : live.remainingMs
   const expired = clock !== null && remaining <= 0
 
-  const model = matPanelModel(mat, view.event.status, expired)
+  const model = matPanelModel(mat, view.event.status, expired, mode)
   const last = lastResultOf(view.matches, mat.id)
   // Finding 1 / 6.9: capped at four pairs so a deep rack cannot push the panel's
-  // primary control below the fold; the remainder line still states the depth.
+  // primary control below the fold; the remainder line still states the depth, counted
+  // from the whole match list because onDeck itself stops at five.
   const rest = mat.onDeck.slice(1)
   const queue = rest.slice(0, NEXT_QUEUE_CAP)
-  const queueRemainder = rest.length - queue.length
+  const shown = mat.onDeck.length === 0 ? 0 : 1 + queue.length
+  const queueRemainder = Math.max(0, pendingQueueDepth(view.matches, mat) - shown)
 
   return (
     <section
@@ -346,7 +357,7 @@ function MatPanel({ mat, view, paused, lastSuccessAt, pollIntervalMs, busy, team
       <div className="min-w-0">
         <Lane label="Now">
           {current === null
-            ? <p className="t3 text-gray-10">No match bound</p>
+            ? <p className="t3 text-gray-10">{model.nowNote}</p>
             : (
               <div className={NOW_COLS}>
                 {[current.a, current.b].map(side => (
@@ -407,22 +418,27 @@ function MatPanel({ mat, view, paused, lastSuccessAt, pollIntervalMs, busy, team
         </Lane>
       </div>
 
-      <div className="mt-auto pt-3">
-        {/*
-          One control, and its appearance is the report. The attend fill takes no hover
-          colour: the system holds exactly one --attend value, and a hover step would
-          have to invent a second.
-        */}
-        <Button
-          size="lg"
-          variant="secondary"
-          disabled={model.control.disabled || busy}
-          className={cn('w-full', model.control.tone === 'attend' && 'bg-attend text-black shadow-primary hover:bg-attend active:bg-attend')}
-          onClick={() => { if (current) onPrimary({ match: current, matNumber: mat.number }) }}
-        >
-          {model.control.label}
-        </Button>
-      </div>
+      {model.control !== null && (
+        <div className="mt-auto pt-3">
+          {/*
+            One control, and its appearance is the report. The attend fill takes no hover
+            colour: the system holds exactly one --attend value, and a hover step would
+            have to invent a second.
+          */}
+          <Button
+            size="lg"
+            variant="secondary"
+            disabled={model.control.disabled || busy}
+            className={cn('w-full', model.control.tone === 'attend' && 'bg-attend text-black shadow-primary hover:bg-attend active:bg-attend')}
+            onClick={() => {
+              if (model.control?.action === 'advance') onAdvance(mat.id)
+              else if (model.control?.action === 'end' && current) onPrimary({ match: current, matNumber: mat.number })
+            }}
+          >
+            {model.control.label}
+          </Button>
+        </div>
+      )}
     </section>
   )
 }

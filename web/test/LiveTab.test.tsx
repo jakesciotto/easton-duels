@@ -6,7 +6,7 @@ import { MemoryRouter } from 'react-router'
 import type { EventMode, MatchView, Snapshot } from '@shared/types'
 import { LiveTab } from '@/routes/event/LiveTab'
 import { setAdminToken } from '@/lib/auth'
-import { DESK_NOTE, DESK_NOTE_DETAIL } from '@/lib/eventMode'
+import { DESK_NOTE, DESK_NOTE_DETAIL, DESK_PANEL_WORD, deskMatNote } from '@/lib/eventMode'
 import type { EventDetail } from '@/lib/types'
 import { fakeFetch, snapshotFeed, type Reply, sampleMatch, sampleSnapshot } from './fakes'
 
@@ -20,6 +20,21 @@ const detail: EventDetail = {
   event: { id: 1, name: 'Fall Duels', date: '2026-10-03', matCount: 1, matCode: '0420', status: 'live', mode: 'live', maxAgeGap: 1, maxWeightGap: 10, sameGender: false, createdAt: 'x' },
   teams: [{ id: 1, eventId: 1, name: 'Ridgeline', color: 'red', position: 0 }, { id: 2, eventId: 1, name: 'Lakeside', color: 'blue', position: 1 }],
   athletes: [], rulesets: [], mats: [{ id: 1, eventId: 1, number: 1, currentMatchId: 10 }], matches: [], candidateCount: 0,
+}
+
+// The same event as `detail`, with mat 1 actually holding the live match its
+// currentMatchId points at, which is what the shared Finish dialog reads.
+const withLiveMat: EventDetail = {
+  ...detail,
+  athletes: [
+    { id: 100, eventId: 1, teamId: 1, firstName: 'Mateo', lastName: 'Rivera', age: 9, ageSource: 'manual', weightLbs: 62, weightSource: 'manual', belt: 'grey', gender: 'M', source: 'manual', wlUid: null, wlLocation: null, leaderboardId: null, erp: null },
+    { id: 200, eventId: 1, teamId: 2, firstName: 'Olivia', lastName: 'Kim', age: 9, ageSource: 'manual', weightLbs: 60, weightSource: 'manual', belt: 'grey-white', gender: 'F', source: 'manual', wlUid: null, wlLocation: null, leaderboardId: null, erp: null },
+  ],
+  matches: [{
+    id: 10, eventId: 1, matId: 1, orderIndex: 1, rulesetId: 1, lengthSec: 300, athleteAId: 100, athleteBId: 200,
+    status: 'live', winnerAthleteId: null, winType: null, pointsA: 6, pointsB: 2, clockElapsedMs: 0,
+    clockStartedAt: SERVER_NOW, pendingTerminalAthleteId: null, pendingTerminalKey: null, lastSeq: 0, why: null,
+  }],
 }
 
 const running = { elapsedMs: 0, startedAt: SERVER_NOW, lengthMs: 300_000 }
@@ -124,7 +139,11 @@ describe('LiveTab', () => {
     expect(within(one).getByText('Last result')).toBeInTheDocument()
     expect(within(one).getByText('No match bound')).toBeInTheDocument()
     expect(within(one).getByText('Mat 1 complete')).toBeInTheDocument()
-    expect(within(one).getByRole('button', { name: 'Nothing left to record' })).toBeDisabled()
+    // 7.10 / 6.9: an exhausted mat gets no primary control at all. A disabled button on
+    // every panel for the rest of the afternoon is the information-free blank with a
+    // border around it, and nothing on it can be pressed.
+    expect(within(one).queryByRole('button', { name: 'Nothing left to record' })).not.toBeInTheDocument()
+    expect(within(one).queryByRole('button', { name: 'Call the next match' })).not.toBeInTheDocument()
     expect(within(one).getByText('Mateo Rivera beat Olivia Kim by submission')).toBeInTheDocument()
     expect(within(one).getByText('4-1')).toBeInTheDocument()
   })
@@ -146,29 +165,89 @@ describe('LiveTab', () => {
     expect(within(one).getByText('Ivy Nolan vs Kai Brooks')).toBeInTheDocument()
   })
 
-  // Finding 1: an unbounded queue pushed the panel's own primary control (the one
-  // control the panel exists to hold) below the fold on a deep rack.
-  it('caps the queue at four pairs and states the count left off', async () => {
+  /**
+   * Finding 1: an unbounded queue pushed the panel's own primary control (the one control
+   * the panel exists to hold) below the fold on a deep rack.
+   *
+   * G06: the depth line is counted from the whole match list, not from `onDeck`. The
+   * serializer caps `onDeck` at ON_DECK_DEPTH (five) and the panel shows one pair plus
+   * four lines, so a remainder derived from `onDeck` was always zero and the line was
+   * dead code. The fixture below is what the server can actually produce: five on deck
+   * and eleven pending on the mat.
+   */
+  it('caps the queue at four pairs and counts the depth the server would not send', async () => {
     const deck = [
       onDeckMatch(11, 'Ava Park', 'Noah Tran'),
       onDeckMatch(12, 'Emma Cole', 'Ben Ortiz'),
       onDeckMatch(13, 'Sofia Diaz', 'Jayden Ruiz'),
       onDeckMatch(14, 'Maya Lopez', 'Liam Shaw'),
       onDeckMatch(15, 'Ivy Nolan', 'Kai Brooks'),
+    ]
+    const behind = [
       onDeckMatch(16, 'Zoe Chen', 'Leo Park'),
       onDeckMatch(17, 'Mia Cruz', 'Eli Wong'),
+      onDeckMatch(18, 'Ruby Hale', 'Owen Diaz'),
+      onDeckMatch(19, 'Nina Vos', 'Theo Marsh'),
+      onDeckMatch(20, 'Cleo Banks', 'Jonah Reed'),
+      onDeckMatch(21, 'Iris Doyle', 'Milo Frank'),
     ]
-    const feed = snapshotFeed(oneMat({ onDeck: deck, bound: true }))
+    const current = scored()
+    const feed = snapshotFeed(oneMat({ onDeck: deck, bound: true }, [settled, current, ...deck, ...behind]))
     mount(url => feed.handle(url) ?? connectOnly(url))
     const one = await panel(1)
-    // deck[0] (Ava vs Noah) is the NEXT pair itself; the six behind it are capped at four.
+    // deck[0] (Ava vs Noah) is the NEXT pair itself; the four behind it are the queue.
     expect(within(one).getByText('Emma Cole vs Ben Ortiz')).toBeInTheDocument()
     expect(within(one).getByText('Sofia Diaz vs Jayden Ruiz')).toBeInTheDocument()
     expect(within(one).getByText('Maya Lopez vs Liam Shaw')).toBeInTheDocument()
     expect(within(one).getByText('Ivy Nolan vs Kai Brooks')).toBeInTheDocument()
     expect(within(one).queryByText('Zoe Chen vs Leo Park')).not.toBeInTheDocument()
-    expect(within(one).queryByText('Mia Cruz vs Eli Wong')).not.toBeInTheDocument()
-    expect(within(one).getByText('2 more matches queued')).toBeInTheDocument()
+    // Eleven pending on the mat, five of them printed, so six are left off.
+    expect(within(one).getByText('and 6 more')).toBeInTheDocument()
+  })
+
+  it('prints no depth line when the whole queue is on screen', async () => {
+    const deck = [onDeckMatch(11, 'Ava Park', 'Noah Tran'), onDeckMatch(12, 'Emma Cole', 'Ben Ortiz')]
+    const current = scored()
+    const feed = snapshotFeed(oneMat({ onDeck: deck, bound: true }, [settled, current, ...deck]))
+    mount(url => feed.handle(url) ?? connectOnly(url))
+    const one = await panel(1)
+    expect(within(one).getByText('Emma Cole vs Ben Ortiz')).toBeInTheDocument()
+    expect(within(one).queryByText(/^and \d+ more$/)).not.toBeInTheDocument()
+  })
+
+  /**
+   * G02. A mat that goes idle with a queue behind it has nothing to trigger its own
+   * advance: the server binds the next match when one ends or is skipped, and a match
+   * added to the mat, moved onto it, or a mat created after Start is none of those. The
+   * panel used to print "Nothing is bound to mat 1" on a disabled control, which is a
+   * report of a state with no way out of it.
+   */
+  it('calls the next match onto an idle mat that still has a queue', async () => {
+    const deck = [onDeckMatch(11, 'Ava Park', 'Noah Tran')]
+    const feed = snapshotFeed(oneMat({ current: null, onDeck: deck, bound: true }, [settled, ...deck]))
+    const f = mount(url => feed.handle(url) ?? connectOnly(url))
+    const one = await panel(1)
+    expect(one).toHaveAttribute('data-state', 'attend')
+    expect(within(one).getByText('Nothing bound')).toBeInTheDocument()
+
+    await userEvent.setup().click(within(one).getByRole('button', { name: 'Call the next match' }))
+    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/mats/1/advance' && c.init?.method === 'POST')).toBe(true))
+  })
+
+  it('prints the server reason when the mat is already showing a match', async () => {
+    const deck = [onDeckMatch(11, 'Ava Park', 'Noah Tran')]
+    const feed = snapshotFeed(oneMat({ current: null, onDeck: deck, bound: true }, [settled, ...deck]))
+    mount((url, init) => {
+      const fromFeed = feed.handle(url)
+      if (fromFeed) return fromFeed
+      if (url === '/api/mats/1/advance' && init?.method === 'POST') {
+        return { status: 409, json: { error: { code: 'match_state', message: 'this mat is already showing a match' } } }
+      }
+      return connectOnly(url)
+    })
+    const one = await panel(1)
+    await userEvent.setup().click(within(one).getByRole('button', { name: 'Call the next match' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('this mat is already showing a match')
   })
 
   it('repaints the panel and its control when the clock runs out', async () => {
@@ -318,6 +397,24 @@ describe('LiveTab', () => {
     await vi.waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
+  /**
+   * G03. Both tabs ask the one question through the one dialog, so the Live tab now names
+   * the mats a finish would cut off. The sentence it replaced said the opposite of what
+   * happens: a finished event refuses every write, so a match left running is not a match
+   * that stays where it is, it is a result nobody can record.
+   */
+  it('names the mats still on a match in the shared finish dialog', async () => {
+    const feed = snapshotFeed(oneMat({ bound: true }))
+    mount(url => feed.handle(url) ?? connectOnly(url), withLiveMat)
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Finish event' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('Finish the event?')).toBeInTheDocument()
+    expect(within(dialog).getByText(/mat is still on a match/)).toBeInTheDocument()
+    expect(dialog).toHaveTextContent('1 mat is still on a match.')
+    expect(within(dialog).getByText('Mateo Rivera vs Olivia Kim')).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Keep scoring' })).toBeInTheDocument()
+  })
+
   it('keeps the finish dialog open when the server refuses', async () => {
     const feed = snapshotFeed(oneMat({ bound: true }))
     mount((url, init) => {
@@ -408,6 +505,46 @@ describe('LiveTab in entry mode', () => {
     expect(await screen.findByText('0420')).toBeInTheDocument()
     expect(screen.queryByText(DESK_NOTE)).not.toBeInTheDocument()
     expect(screen.queryByText(/No iPad is scoring these mats/)).not.toBeInTheDocument()
+  })
+
+  /**
+   * G10. No tablet ever binds in desk mode and no match ever goes live, so every bound
+   * check reported a fault that is the configuration working as designed: the rack read
+   * amber "No scorer" or "Nothing bound" on every panel, all afternoon. The panel keeps
+   * its lanes, because the running order per mat is how the desk answers when a child is
+   * up, and drops only the parts that belong to a tablet.
+   */
+  it('drops the bound checks, the amber and the primary control on every panel', async () => {
+    const deck = [onDeckMatch(11, 'Ava Park', 'Noah Tran'), onDeckMatch(12, 'Emma Cole', 'Ben Ortiz')]
+    const feed = snapshotFeed(atMode(
+      oneMat({ current: null, onDeck: deck, bound: false }, [settled, ...deck]),
+      'entry',
+    ))
+    mount(url => feed.handle(url) ?? connectOnly(url), entryDetail)
+    const one = await panel(1)
+    expect(one).toHaveAttribute('data-state', 'neutral')
+    expect(within(one).getByText(DESK_PANEL_WORD)).toBeInTheDocument()
+    expect(within(one).getByText(deskMatNote(1))).toBeInTheDocument()
+    expect(within(one).queryByText('No scorer')).not.toBeInTheDocument()
+    expect(within(one).queryByText('Nothing bound')).not.toBeInTheDocument()
+    expect(within(one).queryByText('No match bound')).not.toBeInTheDocument()
+
+    // The NEXT lane still carries that mat's designed order, and the LAST RESULT lane
+    // still carries what the desk typed.
+    expect(within(one).getByText('Ava Park')).toBeInTheDocument()
+    expect(within(one).getByText('Emma Cole vs Ben Ortiz')).toBeInTheDocument()
+    expect(within(one).getByText('Mateo Rivera beat Olivia Kim by submission')).toBeInTheDocument()
+
+    // Nothing on the panel binds, ends or calls a match, so it offers no press at all.
+    expect(within(one).queryByRole('button', { name: 'Call the next match' })).not.toBeInTheDocument()
+    expect(within(one).queryByRole('button', { name: 'End match' })).not.toBeInTheDocument()
+  })
+
+  it('says the mat is complete once its designed order runs out', async () => {
+    const feed = snapshotFeed(atMode(oneMat({ current: null, bound: false }, [settled]), 'entry'))
+    mount(url => feed.handle(url) ?? connectOnly(url), entryDetail)
+    const one = await panel(1)
+    expect(within(one).getByText('Mat 1 complete')).toBeInTheDocument()
   })
 
   /**

@@ -64,30 +64,63 @@ function matList(numbers: number[]): string {
   return `mats ${numbers.slice(0, -1).join(', ')} and ${numbers[numbers.length - 1]}`
 }
 
+function asSentence(clause: string): string {
+  return `${clause[0].toUpperCase()}${clause.slice(1)}`
+}
+
 /**
  * Why the desk cannot take this event over yet, or null when the switch is a plain tap.
  *
- * Switching to the desk repaints the television as the Final Score panel within one poll,
- * so a mat that is bound to a tablet or carrying a match would go on being scored by a
- * room that can no longer see it. Refuse rather than ask (6.8): the control is disabled
- * and this sentence is printed beside it, naming the mat, instead of a dialog asking an
- * organizer to confirm something they reached for by accident.
+ * Only a clock that is actually running refuses. The earlier guard also refused for a
+ * bound mat and for any mat carrying a match, and once an idle mat calls the next match
+ * the instant one ends, every mat carries one all afternoon: the control was disabled for
+ * the whole event and the desk fallback the setting exists to reach was unreachable. A
+ * running clock is the one state where the switch would strand a referee mid bout, so it
+ * is the one state that refuses (6.8), with the mat named.
  *
- * A stream with no snapshot yet is refused too. The guard cannot see the mats, and the
- * event detail says nothing about which of them hold a tablet, so the honest answer for
- * that one poll is the sentence the Live tab already prints for the same silence.
+ * A mat holding a paused or not yet started match is a question rather than a refusal, and
+ * deskSwitchMidMatch below is what the shell asks it with.
+ *
+ * A stream with no snapshot yet is refused too. The guard cannot see the mats, so the
+ * honest answer for that one poll is the sentence the Live tab already prints for the
+ * same silence.
  */
 export function deskSwitchRefusal(snapshot: Snapshot | null): string | null {
   if (snapshot === null) return 'Waiting for the first update from the server.'
-  const bound = snapshot.mats.filter(m => m.bound).map(m => m.number)
-  const running = snapshot.mats.filter(m => !m.bound && m.current !== null).map(m => m.number)
-  if (bound.length === 0 && running.length === 0) return null
-  const clauses = [
-    bound.length > 0 ? `${matList(bound)} ${bound.length === 1 ? 'has' : 'have'} an iPad connected` : null,
-    running.length > 0 ? `${matList(running)} ${running.length === 1 ? 'is' : 'are'} on a match` : null,
-  ].filter((clause): clause is string => clause !== null)
-  const said = clauses.map(clause => `${clause[0].toUpperCase()}${clause.slice(1)}.`).join(' ')
-  return `${said} The board drops the mat rack as soon as the desk takes over.`
+  const running = snapshot.mats.flatMap(m => (m.current !== null && m.current.clock.startedAt !== null ? [m.number] : []))
+  if (running.length === 0) return null
+  const said = asSentence(`${matList(running)} ${running.length === 1 ? 'has' : 'have'} a clock running`)
+  return `${said}. The board drops the mat rack as soon as the desk takes over.`
+}
+
+/** A mat the switch would leave holding a match nobody can score. */
+export interface MidMatchMat { number: number; pair: string }
+
+/**
+ * The mats that are mid-match with the clock stopped: paused between rounds, or bound and
+ * waiting for the first whistle. Nothing is being stranded mid bout, so the switch is
+ * allowed, but the result on each of them stops being the tablet's job the moment the
+ * board repaints, which is a consequence an organizer has to be told once.
+ */
+export function deskSwitchMidMatch(snapshot: Snapshot | null): MidMatchMat[] {
+  if (snapshot === null) return []
+  return snapshot.mats
+    .flatMap(m => {
+      const current = m.current
+      if (current === null || current.status === 'done' || current.clock.startedAt !== null) return []
+      return [{ number: m.number, pair: `${current.a.name} vs ${current.b.name}` }]
+    })
+    .sort((x, y) => x.number - y.number)
+}
+
+/** The consequence, stated once for the whole set rather than repeated per mat. */
+export function deskSwitchConsequence(mats: MidMatchMat[]): string {
+  const numbers = mats.map(m => m.number)
+  const said = asSentence(`${matList(numbers)} ${numbers.length === 1 ? 'is' : 'are'} mid-match`)
+  const rest = numbers.length === 1
+    ? 'Its result will have to be typed at the desk.'
+    : 'Their results will have to be typed at the desk.'
+  return `${said}. ${rest}`
 }
 
 /**
@@ -97,3 +130,16 @@ export function deskSwitchRefusal(snapshot: Snapshot | null): string | null {
  * recorded, and the team score counts it twice.
  */
 export const MAT_NOTE = 'The mats own the results in this event. Type a result here only when a tablet has failed.'
+
+/**
+ * The Live tab keeps its mat rack in desk mode, because the running order per mat is
+ * still what the desk reads to answer "when is my kid up". Each panel says why its NOW
+ * lane is empty in DESK_NOTE's voice, so the rack never reads as a rack of failures.
+ */
+export const deskMatNote = (matNumber: number): string => `${DESK_LEAD}, so nothing scores mat ${matNumber}.`
+
+/** The state word beside the mat number when the desk owns the results. */
+export const DESK_PANEL_WORD = 'From the desk'
+
+/** 6.7: a ruleset is the tablet's vocabulary, and in desk mode no tablet reads it. */
+export const DESK_RULESET_NOTE = 'Rulesets apply when tablets score the mats, and this event runs from the desk.'
