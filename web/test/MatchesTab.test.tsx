@@ -482,3 +482,63 @@ describe('MatchesTab settled row actions', () => {
     expect(await screen.findByText(CERTIFIED_REFUSAL)).toBeInTheDocument()
   })
 })
+
+/**
+ * 6.8: a certified event refuses rather than asks. Every control that would write is
+ * dead before it is pressed, and the reason is printed beside them, rather than each one
+ * being accepted and answered with a 409 a second later.
+ */
+describe('MatchesTab on a certified event', () => {
+  const mountCertified = () => {
+    const snapshot = sampleSnapshot({ event: { ...sampleSnapshot().event, id: 7, status: 'certified' }, mats: [], matches: [] })
+    return mountStreaming(snapshot, { ...detail, event: { ...detail.event, status: 'certified' } })
+  }
+
+  it('kills the toolbar pair and prints the reason once', async () => {
+    mountCertified()
+    expect(await screen.findByText(CERTIFIED_REFUSAL)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Regenerate' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Add match' })).toBeDisabled()
+  })
+
+  it('kills every control on a pending row, the reorder handle included', async () => {
+    mountCertified()
+    await screen.findByText(CERTIFIED_REFUSAL)
+    const row = within(pendingRows()[0])
+    for (const name of [`Reorder ${M1}`, `Move ${M1} up`, `Move ${M1} down`, `Delete ${M1}`]) {
+      expect(row.getByRole('button', { name }), name).toBeDisabled()
+    }
+    expect(row.getByRole('combobox', { name: `Mat for ${M1}` })).toBeDisabled()
+    expect(row.getByRole('combobox', { name: `Ruleset for ${M1}` })).toBeDisabled()
+    expect(row.getByLabelText(`Length for ${M1}`)).toBeDisabled()
+    // The competitor swap is a button on each side of the pair.
+    expect(row.getByRole('button', { name: 'Mateo Rivera, Ridgeline' })).toBeDisabled()
+    expect(row.getByRole('button', { name: 'Olivia Kim, Lakeside' })).toBeDisabled()
+  })
+
+  // The running order cannot be dragged into a new one. Two things stop it, the disabled
+  // handle and the empty sensor list, and this asserts the outcome rather than either.
+  it('cannot start a drag, and sends no new order', async () => {
+    const { f } = mountCertified()
+    await screen.findByText(CERTIFIED_REFUSAL)
+    const grip = within(pendingRows()[0]).getByRole('button', { name: `Reorder ${M1}` })
+    const down = createEvent.pointerDown(grip, { button: 0, clientX: 0, clientY: 0 })
+    Object.defineProperty(down, 'isPrimary', { value: true })
+    fireEvent(grip, down)
+    fireEvent.pointerMove(document, { clientX: 0, clientY: 40 })
+    expect(document.querySelector('[data-dragging="true"]')).toBeNull()
+    fireEvent.pointerUp(document, { clientX: 0, clientY: 40 })
+    await new Promise(resolve => setTimeout(resolve, 60))
+    expect(f.calls.some(c => c.url.endsWith('/matches/reorder'))).toBe(false)
+  })
+
+  it('leaves every one of them alive while the event is still open', async () => {
+    mountStreaming(sampleSnapshot({ event: { ...sampleSnapshot().event, id: 7, status: 'live' }, mats: [], matches: [] }))
+    const row = within((await screen.findAllByRole('row')).find(r => within(r).queryByRole('button', { name: `Delete ${M1}` })) as HTMLElement)
+    expect(row.getByRole('button', { name: `Delete ${M1}` })).toBeEnabled()
+    expect(row.getByRole('button', { name: `Reorder ${M1}` })).toBeEnabled()
+    expect(row.getByRole('combobox', { name: `Mat for ${M1}` })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Add match' })).toBeEnabled()
+    expect(screen.queryByText(CERTIFIED_REFUSAL)).not.toBeInTheDocument()
+  })
+})

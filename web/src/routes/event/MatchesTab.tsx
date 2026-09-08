@@ -7,7 +7,7 @@ import { GripVerticalIcon } from 'lucide-react'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import { useSnapshot } from '@/lib/useSnapshot'
 import { pollIntervalForSnapshot } from '@/lib/pollInterval'
-import { modeOf, statusOf, writeErrorMessage } from '@/lib/eventMode'
+import { CERTIFIED_REFUSAL, modeOf, statusOf, writeErrorMessage } from '@/lib/eventMode'
 import type { EventDetail, MatchRow, TeamRow } from '@/lib/types'
 import { athleteName, winTypeLabel } from '@/lib/format'
 import { moveId } from '@/lib/reorder'
@@ -52,9 +52,11 @@ type NameOf = (athleteId: number, team: TeamRow) => string
 
 interface Option { value: string; label: string }
 
-function CompetitorLine({ team, name, onHover, onPick }: {
+function CompetitorLine({ team, name, disabled = false, title, onHover, onPick }: {
   team: TeamRow
   name: string
+  disabled?: boolean
+  title?: string
   onHover: (on: boolean) => void
   onPick: () => void
 }) {
@@ -62,13 +64,14 @@ function CompetitorLine({ team, name, onHover, onPick }: {
     <button
       type="button"
       aria-label={`${name}, ${team.name}`}
-      title={name}
+      title={title ?? name}
+      disabled={disabled}
       onClick={onPick}
       onMouseEnter={() => onHover(true)}
       onMouseLeave={() => onHover(false)}
       onFocus={() => onHover(true)}
       onBlur={() => onHover(false)}
-      className="-mx-2 flex h-8 min-w-0 items-center gap-2 rounded-md px-2 text-left outline-none transition-colors duration-150 ease-standard hover:bg-gray-3 focus-visible:shadow-focus active:bg-gray-4"
+      className="-mx-2 flex h-8 min-w-0 items-center gap-2 rounded-md px-2 text-left outline-none transition-colors duration-150 ease-standard hover:bg-gray-3 focus-visible:shadow-focus active:bg-gray-4 disabled:pointer-events-none disabled:opacity-50"
     >
       <TeamPlate color={team.color} name={team.name} size="inline" showName={false} />
       <span className="truncate t3">{name}</span>
@@ -145,9 +148,11 @@ function LiveStrip({ line, teamA, teamB, nameA, nameB, serverNow, lastSuccessAt,
  * dropped whenever the served value moves and whenever a write is refused, so a value
  * on screen is either the served one or one the operator is still typing.
  */
-function LengthCell({ label, value, onSave }: {
+function LengthCell({ label, value, disabled = false, title, onSave }: {
   label: string
   value: number
+  disabled?: boolean
+  title?: string
   onSave: (v: number, onRefused: () => void) => void
 }) {
   const [draft, setDraft] = useState<string | null>(null)
@@ -174,15 +179,17 @@ function LengthCell({ label, value, onSave }: {
       aria-label={label}
       inputMode="numeric"
       autoComplete="off"
+      disabled={disabled}
+      title={title}
       value={draft ?? String(value)}
       onChange={e => setDraft(e.target.value)}
       onBlur={commit}
-      className="fig fig-4 h-8 w-full rounded-md bg-transparent px-3 text-right outline-none transition-colors duration-150 ease-standard hover:bg-gray-3 focus-visible:bg-gray-3 focus-visible:shadow-focus"
+      className="fig fig-4 h-8 w-full rounded-md bg-transparent px-3 text-right outline-none transition-colors duration-150 ease-standard hover:bg-gray-3 focus-visible:bg-gray-3 focus-visible:shadow-focus disabled:opacity-50"
     />
   )
 }
 
-function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, doubleBooked, entryMode, highlight, onHover, onPick, onPatch, onDelete, onMove }: {
+function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, doubleBooked, entryMode, certified, highlight, onHover, onPick, onPatch, onDelete, onMove }: {
   line: MatchLine
   teams: TeamRow[]
   name: NameOf
@@ -192,6 +199,8 @@ function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, d
   count: number
   doubleBooked: boolean
   entryMode: boolean
+  /** 6.8: a certified event refuses rather than asks, so every control here is dead. */
+  certified: boolean
   highlight: boolean
   onHover: Hover
   onPick: (p: Pick) => void
@@ -220,7 +229,9 @@ function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, d
       <TableCell className="w-[var(--col-act)] pr-0">
         <Button
           type="button" variant="ghost" size="icon" aria-label={`Reorder ${row}`}
-          className="cursor-grab" {...attributes} {...listeners}
+          className={certified ? undefined : 'cursor-grab'}
+          disabled={certified} title={certified ? CERTIFIED_REFUSAL : undefined}
+          {...(certified ? {} : attributes)} {...(certified ? {} : listeners)}
         >
           <GripVerticalIcon />
         </Button>
@@ -237,7 +248,7 @@ function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, d
           onValueChange={v => { const next = String(v ?? ''); onPatch(m.id, { matId: next ? Number(next) : null }) }}
           items={matItems}
         >
-          <SelectTrigger size="sm" aria-label={`Mat for ${row}`}><SelectValue /></SelectTrigger>
+          <SelectTrigger size="sm" aria-label={`Mat for ${row}`} disabled={certified} title={certified ? CERTIFIED_REFUSAL : undefined}><SelectValue /></SelectTrigger>
           <SelectContent>
             {matItems.map(i => <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>)}
           </SelectContent>
@@ -246,12 +257,12 @@ function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, d
       <TableCell className="min-w-0">
         <div className="grid min-w-0">
           <CompetitorLine
-            team={teamA} name={nameA}
+            team={teamA} name={nameA} disabled={certified} title={certified ? CERTIFIED_REFUSAL : undefined}
             onHover={on => onHover(on ? m.athleteAId : null)}
             onPick={() => onPick({ matchId: m.id, side: 'a', teamId: teamA.id })}
           />
           <CompetitorLine
-            team={teamB} name={nameB}
+            team={teamB} name={nameB} disabled={certified} title={certified ? CERTIFIED_REFUSAL : undefined}
             onHover={on => onHover(on ? m.athleteBId : null)}
             onPick={() => onPick({ matchId: m.id, side: 'b', teamId: teamB.id })}
           />
@@ -284,6 +295,8 @@ function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, d
           <LengthCell
             label={`Length for ${row}`}
             value={m.lengthSec}
+            disabled={certified}
+            title={certified ? CERTIFIED_REFUSAL : undefined}
             onSave={(lengthSec, onRefused) => onPatch(m.id, { lengthSec }, onRefused)}
           />
         </TableCell>
@@ -294,7 +307,7 @@ function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, d
           onValueChange={v => { const next = String(v ?? ''); if (next) onPatch(m.id, { rulesetId: Number(next) }) }}
           items={rulesetItems}
         >
-          <SelectTrigger size="sm" aria-label={`Ruleset for ${row}`}><SelectValue /></SelectTrigger>
+          <SelectTrigger size="sm" aria-label={`Ruleset for ${row}`} disabled={certified} title={certified ? CERTIFIED_REFUSAL : undefined}><SelectValue /></SelectTrigger>
           <SelectContent>
             {rulesetItems.map(i => <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>)}
           </SelectContent>
@@ -302,10 +315,10 @@ function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, d
       </TableCell>
       <TableCell className="w-px whitespace-nowrap">
         <div className="flex items-center gap-2">
-          <Button size="sm" variant="ghost" aria-label={`Move ${row} up`} disabled={index === 0} onClick={() => onMove(index, -1)}>Up</Button>
-          <Button size="sm" variant="ghost" aria-label={`Move ${row} down`} disabled={index === count - 1} onClick={() => onMove(index, 1)}>Down</Button>
+          <Button size="sm" variant="ghost" aria-label={`Move ${row} up`} title={certified ? CERTIFIED_REFUSAL : undefined} disabled={certified || index === 0} onClick={() => onMove(index, -1)}>Up</Button>
+          <Button size="sm" variant="ghost" aria-label={`Move ${row} down`} title={certified ? CERTIFIED_REFUSAL : undefined} disabled={certified || index === count - 1} onClick={() => onMove(index, 1)}>Down</Button>
           {/* 7.7: a destructive control never sits flush against the row's most repeated one. */}
-          <Button size="sm" variant="destructive" className="ml-4" aria-label={`Delete ${row}`} onClick={() => onDelete(m.id)}>Delete</Button>
+          <Button size="sm" variant="destructive" className="ml-4" aria-label={`Delete ${row}`} title={certified ? CERTIFIED_REFUSAL : undefined} disabled={certified} onClick={() => onDelete(m.id)}>Delete</Button>
         </div>
       </TableCell>
     </TableRow>
@@ -396,7 +409,10 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
   // Which pending matches this browser has moved by hand, so Regenerate can state what it
   // is about to discard. The server stores an order, not who chose it.
   const [handOrdered, setHandOrdered] = useState<number[]>([])
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
+  // A certified event has no sensor at all, so a drag cannot start. Disabling the handle
+  // alone would still let a pointer press land on the row and begin one.
+  const pointer = useSensor(PointerSensor, { activationConstraint: { distance: 4 } })
+  const sensors = useSensors(...(certified ? [] : [pointer]))
 
   const lines = useMemo(() => matchLines(detail, snapshot), [detail, snapshot])
   const live = useMemo(() => lines.filter(l => l.lane === 'live'), [lines])
@@ -529,11 +545,13 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
     // committed, while this is set.
     <div className="grid gap-6" data-dragging={dragging ? 'true' : undefined}>
       <div className="flex flex-wrap items-center gap-3">
-        <Button size="sm" onClick={onGenerateClick} disabled={generate.isPending || blocked !== null}>
+        <Button size="sm" onClick={onGenerateClick} disabled={certified || generate.isPending || blocked !== null}>
           {hasPending ? 'Regenerate' : 'Generate'}
         </Button>
-        <Button size="sm" variant="secondary" onClick={() => setAddOpen(true)}>Add match</Button>
-        {blocked && <span className="t2 text-gray-10">{blocked}</span>}
+        <Button size="sm" variant="secondary" disabled={certified} onClick={() => setAddOpen(true)}>Add match</Button>
+        {/* 6.8: the reason a control is dead is printed once, beside the controls it kills,
+            rather than waiting for somebody to press one and read a banner. */}
+        {certified ? <span className="t2 text-gray-10">{CERTIFIED_REFUSAL}</span> : blocked && <span className="t2 text-gray-10">{blocked}</span>}
         {/* 7.12: one polite region per screen, in the DOM and empty from the first render. */}
         <span aria-live="polite" className="t2 text-gray-10">{summary ?? ''}</span>
       </div>
@@ -609,7 +627,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
                     <TableCell colSpan={pendingColumns(entryMode)} className="p-0">
                       <EmptyState
                         message="No matches yet."
-                        action={<Button size="sm" variant="ghost" disabled={blocked !== null || generate.isPending} onClick={onGenerateClick}>Generate matchups</Button>}
+                        action={<Button size="sm" variant="ghost" disabled={certified || blocked !== null || generate.isPending} onClick={onGenerateClick}>Generate matchups</Button>}
                       />
                     </TableCell>
                   </TableRow>
@@ -617,7 +635,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
                   <PendingRow
                     key={l.row.id} line={l} teams={detail.teams} name={nameOf}
                     matItems={matItems} rulesetItems={rulesetItems} index={i} count={pending.length}
-                    doubleBooked={doubleBooked.has(l.row.id)} entryMode={entryMode}
+                    doubleBooked={doubleBooked.has(l.row.id)} entryMode={entryMode} certified={certified}
                     highlight={holds(l)} onHover={setHovered}
                     onPick={setPick} onPatch={onPatchAction} onDelete={onDeleteAction} onMove={onMovePending}
                   />
