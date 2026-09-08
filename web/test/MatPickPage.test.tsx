@@ -89,13 +89,16 @@ describe('MatPickPage', () => {
     expect(f.calls.some(c => c.url === '/api/events/1/mats/2/bind')).toBe(true)
   })
 
-  it('offers to open or unbind an existing binding', async () => {
-    fakeFetch(() => ({ json: {} }))
+  it('offers to open or unbind an existing binding, and tells the server about the unbind', async () => {
+    const f = fakeFetch(() => ({ json: {} }))
     setMatBinding({ eventId: 1, matId: 2, matNumber: 2, eventName: 'Fall Duels', token: 'mat-tok' })
     mount('/mat')
     expect(await screen.findByText(/bound to Mat 2/)).toBeInTheDocument()
     await userEvent.setup().click(screen.getByRole('button', { name: 'Unbind this device' }))
     expect(getMatBinding()).toBeNull()
+    // M11: the mat reads free at once, so a re-bind from this same iPad needs no takeover
+    // and the Live tab stops saying a scorer is on it a minute early.
+    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/mats/2/unbind' && c.init?.method === 'POST')).toBe(true))
   })
 
   it('shows the picker with a notice when the stored binding is for a different event', async () => {

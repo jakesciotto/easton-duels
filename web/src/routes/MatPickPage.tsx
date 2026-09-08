@@ -8,6 +8,7 @@ import { BIND_LOSS_COPY, isBindLoss } from '@/lib/matBinding'
 import { POLL_DATA_ENTRY_MS } from '@/lib/pollInterval'
 import { useWakeLock } from '@/lib/useWakeLock'
 import { unlockAudio } from '@/lib/sounds'
+import { unbind } from '@/lib/scoring'
 import { CodeField } from '@/components/CodeField'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Toggle } from '@/components/ui/toggle'
@@ -199,7 +200,16 @@ export default function MatPickPage() {
           </div>
           <div className="grid gap-2">
             <Link to={`/mat/${binding.matId}`} className={buttonVariants({ size: 'lg' })}>Open scorer</Link>
-            <Button size="lg" variant="destructive" onClick={() => { clearMatBinding(); setBinding(null) }}>Unbind this device</Button>
+            {/* The server hears about it too, so the mat reads free at once rather than after
+                the reap window, and a re-bind from this same iPad needs no takeover. The local
+                binding goes either way: a tablet that cannot reach the server is not scoring. */}
+            <Button
+              size="lg"
+              variant="destructive"
+              onClick={() => { void unbind(binding.matId, binding.token).catch(() => {}); clearMatBinding(); setBinding(null) }}
+            >
+              Unbind this device
+            </Button>
           </div>
         </div>
       </main>

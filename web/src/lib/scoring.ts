@@ -39,6 +39,11 @@ export function heartbeat(matId: number, token: string): Promise<{ ok: boolean }
   return api(`/api/mats/${matId}/heartbeat`, { method: 'POST', body: {}, token })
 }
 
+/** Hands the mat back so the next bind, from this tablet or another, needs no takeover. */
+export function unbind(matId: number, token: string): Promise<{ ok: boolean }> {
+  return api(`/api/mats/${matId}/unbind`, { method: 'POST', body: {}, token })
+}
+
 /**
  * Adds time to a clock that ran out. Its own event id, like every other write here, so the
  * retry inside withRetry cannot add the minute twice; the caller's retry after a 409

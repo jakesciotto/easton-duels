@@ -13,7 +13,7 @@ import { appendMatchEvent, endMatch, extendClock, undoLastMatchEvent, loadMatch,
 import { advanceMat, reopenMatch, setResult, skipMatch } from '../match/mats.js'
 import { expireOverdue } from '../match/lazyExpiry.js'
 import { toMatchView, buildSnapshot } from '../live/snapshot.js'
-import { bindMat, heartbeatMat } from '../live/bound.js'
+import { bindMat, heartbeatMat, unbindMat } from '../live/bound.js'
 import { EXTEND_MAX_MS, EXTEND_MIN_MS } from '../shared/types.js'
 
 export const scoringRoutes = new Hono<Env>()
@@ -103,13 +103,21 @@ scoringRoutes.post('/mats/:matId/advance', requireAdmin, async c => {
   const advanced = await db.transaction(async tx => {
     if (mat.currentMatchId !== null) {
       const current = await tx.select({ status: matches.status }).from(matches).where(eq(matches.id, mat.currentMatchId)).get()
-      if (current?.status === 'live') throw new MatchStateError('this mat is already showing a match')
+      if (current?.status === 'live') throw new MatchStateError('This mat is already showing a match')
     }
     const next = await advanceMat(tx, matId)
     if (next) await bumpVersion(tx, mat.eventId)
     return next
   })
   return respondOptional(c, mat.eventId, advanced)
+})
+
+scoringRoutes.post('/mats/:matId/unbind', requireMatOrAdmin(c => Number(c.req.param('matId'))), async c => {
+  const { db } = c.get('ctx')
+  const mat = await db.select().from(mats).where(eq(mats.id, Number(c.req.param('matId')))).get()
+  if (!mat) return errorJson(c, 404, 'not_found', 'mat not found')
+  await unbindMat(db, mat.id, mat.eventId)
+  return c.json({ ok: true })
 })
 
 scoringRoutes.post('/mats/:matId/heartbeat', requireMatOrAdmin(c => Number(c.req.param('matId'))), async c => {

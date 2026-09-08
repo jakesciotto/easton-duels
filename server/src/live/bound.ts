@@ -39,6 +39,19 @@ export async function bindMat(db: DbLike, matId: number, eventId: number, nowMs:
   })
 }
 
+// The tablet's own way off a mat. Without it a device that unbound locally kept the
+// server's flag for the whole reap window, so the Live tab said "No scorer" a minute late
+// and the same tablet re-entering the code was refused with a sentence about another iPad.
+// The epoch moves so the token the tablet just dropped stops being accepted too.
+export async function unbindMat(db: DbLike, matId: number, eventId: number): Promise<void> {
+  await db.transaction(async tx => {
+    const row = await tx.select({ bindEpoch: mats.bindEpoch }).from(mats).where(eq(mats.id, matId)).get()
+    if (!row) throw new MatchStateError('mat not found')
+    await tx.update(mats).set({ bound: false, lastHeartbeatAt: null, bindEpoch: row.bindEpoch + 1 }).where(eq(mats.id, matId)).run()
+    await bumpVersion(tx, eventId)
+  })
+}
+
 export async function reapBound(db: DbLike, eventId: number, nowMs: number): Promise<void> {
   const cutoff = new Date(nowMs - BOUND_WINDOW_MS).toISOString()
   const stale = await db.select({ id: mats.id }).from(mats)

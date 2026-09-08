@@ -251,3 +251,23 @@ describe('scoring flow', () => {
     expect((await call(app, 'POST', `/api/matches/${second}/skip`, { id: 'no' }, adminToken)).status).toBe(422)
   })
 })
+
+describe('unbind', () => {
+  it('frees the mat at once so the same iPad can bind again without a takeover', async () => {
+    const { app, db } = await createTestApp()
+    const s = await seedEvent(db, { live: true })
+    const bind = `/api/events/${s.eventId}/mats/${s.matIds[0]}/bind`
+    const first = await call(app, 'POST', bind, { code: '0420' })
+    expect(first.status).toBe(200)
+    expect((await call(app, 'POST', `/api/mats/${s.matIds[0]}/unbind`, {}, first.body.token)).status).toBe(200)
+    expect((await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)).body.snapshot.mats[0].bound).toBe(false)
+    // No takeover needed: the mat is free, not held by a silent tablet.
+    const again = await call(app, 'POST', bind, { code: '0420' })
+    expect(again.status).toBe(200)
+    expect(again.body.token).not.toBe(first.body.token)
+    // The token the tablet dropped is dead too.
+    const stale = await call(app, 'POST', `/api/mats/${s.matIds[0]}/heartbeat`, {}, first.body.token)
+    expect(stale.status).toBe(401)
+    expect(stale.body.error.code).toBe('token_stale')
+  })
+})
