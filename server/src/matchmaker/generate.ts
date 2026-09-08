@@ -26,7 +26,7 @@ export async function generateMatches(db: DbLike, eventId: number): Promise<Gene
       await tx.delete(matches).where(inArray(matches.id, stale)).run()
     }
 
-    const constraints = { maxAgeGap: ev.maxAgeGap, maxWeightGap: ev.maxWeightGap, sameGender: ev.sameGender }
+    const constraints = { sameGender: ev.sameGender }
     const costs = A.map(a => B.map(b => pairCost(a, b, constraints)))
     const assignment = solveAssignment(costs.map(row => row.map(x => x.cost)))
     const pairs: { a: AthleteRow; b: AthleteRow; why: string }[] = []

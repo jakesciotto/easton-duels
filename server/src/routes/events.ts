@@ -23,8 +23,6 @@ export const teamSchema = z.object({ name: z.string().trim().min(1).max(40), col
 // there is nothing to gain from refusing a half-filled pair at the edge.
 const contactName = z.string().trim().max(60)
 const contactPhone = z.string().trim().max(30)
-const maxAgeGap = z.number().int().min(0).max(10)
-const maxWeightGap = z.number().int().min(0).max(100)
 const sameGender = z.boolean()
 
 const createEventSchema = z.object({
@@ -35,8 +33,6 @@ const createEventSchema = z.object({
   contactName: contactName.optional(),
   contactPhone: contactPhone.optional(),
   teams: z.tuple([teamSchema, teamSchema]),
-  maxAgeGap: maxAgeGap.optional(),
-  maxWeightGap: maxWeightGap.optional(),
   sameGender: sameGender.optional(),
 })
 
@@ -48,8 +44,6 @@ const patchEventSchema = z.object({
   mode: z.enum(['live', 'entry']).optional(),
   contactName: contactName.optional(),
   contactPhone: contactPhone.optional(),
-  maxAgeGap: maxAgeGap.optional(),
-  maxWeightGap: maxWeightGap.optional(),
   sameGender: sameGender.optional(),
 })
 
@@ -105,7 +99,7 @@ eventRoutes.post('/events', requireAdmin, validate('json', createEventSchema), a
       name: body.name, date: body.date, matCount: body.matCount, matCode: randomMatCode(),
       mode: body.mode ?? 'live',
       contactName: blankToNull(body.contactName), contactPhone: blankToNull(body.contactPhone),
-      maxAgeGap: body.maxAgeGap ?? 1, maxWeightGap: body.maxWeightGap ?? 10, sameGender: body.sameGender ?? false,
+      sameGender: body.sameGender ?? false,
       createdAt: new Date().toISOString(),
     }).returning().get()
     await tx.insert(teams).values(body.teams.map((t, i) => ({ eventId: ev.id, name: t.name, color: t.color, position: i }))).run()

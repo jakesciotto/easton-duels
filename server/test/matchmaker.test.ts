@@ -4,7 +4,7 @@ import { solveAssignment } from '../src/matchmaker/hungarian.js'
 import { pairCost, beltDistance, EXCLUDED, type Matchable } from '../src/matchmaker/cost.js'
 import { generateMatches } from '../src/matchmaker/generate.js'
 import { freshDb, seedEvent } from './fixtures.js'
-import { events, matches } from '../src/db/schema.js'
+import { events, matches, athletes } from '../src/db/schema.js'
 import { endMatch, loadMatch } from '../src/match/events.js'
 
 describe('solveAssignment', () => {
@@ -23,7 +23,7 @@ describe('solveAssignment', () => {
 })
 
 const kid = (o: Partial<Matchable>): Matchable => ({ id: 1, age: 8, weightLbs: 60, belt: 'grey', gender: 'M', erp: null, ...o })
-const c = { maxAgeGap: 1, maxWeightGap: 10, sameGender: false }
+const c = { sameGender: false }
 
 describe('pairCost', () => {
   it('uses the ERP gap when both are rated', () => {
@@ -34,9 +34,10 @@ describe('pairCost', () => {
     expect(r.cost).toBeCloseTo(1 + 0.5 + 0.5, 5)
     expect(r.why).toBe('belt + age + weight')
   })
-  it('excludes on age, weight, gender, and missing data', () => {
-    expect(pairCost(kid({}), kid({ id: 2, age: 10 }), c).cost).toBe(EXCLUDED)
-    expect(pairCost(kid({}), kid({ id: 2, weightLbs: 75 }), c).cost).toBe(EXCLUDED)
+  it('excludes on gender and missing data, but a wide age or weight gap only costs more', () => {
+    // B2: the two hard exclusions are gone. A pair 22 years and 140 pounds apart still
+    // gets a cost, not a refusal; the gym's soft cost already prefers the closer pair.
+    expect(pairCost(kid({}), kid({ id: 2, age: 30, weightLbs: 200 }), c).cost).toBeLessThan(EXCLUDED)
     expect(pairCost(kid({}), kid({ id: 2, gender: 'F' }), { ...c, sameGender: true }).cost).toBe(EXCLUDED)
     expect(pairCost(kid({}), kid({ id: 2, gender: 'F' }), c).cost).toBeLessThan(EXCLUDED)
     expect(pairCost(kid({ age: null }), kid({ id: 2 }), c).cost).toBe(EXCLUDED)
@@ -69,7 +70,10 @@ describe('generateMatches', () => {
   it('leaves excluded kids unpaired and lists them', async () => {
     const db = await freshDb()
     const s = await seedEvent(db, { matches: 0 })
-    await db.update(events).set({ maxAgeGap: 0 }).where(eq(events.id, s.eventId)).run()
+    // Age and weight no longer exclude a pair, so sameGender is the lever: a1 and b1
+    // are brought to the same gender so they pair, and a2 stays cross gender from b2.
+    await db.update(events).set({ sameGender: true }).where(eq(events.id, s.eventId)).run()
+    await db.update(athletes).set({ gender: 'M' }).where(eq(athletes.id, s.b1)).run()
     const r = await generateMatches(db, s.eventId)
     expect(r.created).toBe(1)
     expect(r.unpairedA).toEqual([s.a2])

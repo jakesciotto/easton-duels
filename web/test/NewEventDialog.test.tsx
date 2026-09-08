@@ -56,7 +56,9 @@ describe('NewEventDialog', () => {
     await vi.waitFor(() => expect(f.calls.some(c => c.init?.method === 'POST')).toBe(true))
     const body = f.body(f.calls.findIndex(c => c.init?.method === 'POST'))
     expect(body.teams).toEqual([{ name: 'Ridgeline', color: 'red' }, { name: 'Lakeside', color: 'teal' }])
-    expect(body).toMatchObject({ matCount: 1, maxAgeGap: 1, maxWeightGap: 10 })
+    expect(body).toMatchObject({ matCount: 1 })
+    expect(body).not.toHaveProperty('maxAgeGap')
+    expect(body).not.toHaveProperty('maxWeightGap')
   })
 
   it('previews the board code from the name as it is typed', async () => {

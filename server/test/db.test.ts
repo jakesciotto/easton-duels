@@ -14,7 +14,7 @@ describe('db', () => {
     ]).run()
     expect(await db.select().from(teams).where(eq(teams.eventId, ev.id)).all()).toHaveLength(2)
     expect(ev.status).toBe('setup')
-    expect(ev.maxAgeGap).toBe(1)
+    expect(ev.sameGender).toBe(false)
   })
 
   it('cascades athletes on event delete and nulls team on team delete', async () => {

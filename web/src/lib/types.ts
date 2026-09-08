@@ -8,8 +8,6 @@ export interface EventRow {
   matCode: string
   status: EventStatus
   mode: EventMode
-  maxAgeGap: number
-  maxWeightGap: number
   sameGender: boolean
   createdAt: string
   /**

@@ -57,6 +57,13 @@
       "when": 1788879296237,
       "tag": "0007_sad_vanisher",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1788882909195,
+      "tag": "0008_tense_hydra",
+      "breakpoints": true
     }
   ]
 }

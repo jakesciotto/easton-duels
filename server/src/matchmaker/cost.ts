@@ -2,7 +2,7 @@ import { KIDS_BELTS } from '../shared/types.js'
 
 export const EXCLUDED = 1e6
 
-export interface Constraints { maxAgeGap: number; maxWeightGap: number; sameGender: boolean }
+export interface Constraints { sameGender: boolean }
 
 export interface Matchable {
   id: number
@@ -34,8 +34,6 @@ export function pairCost(a: Matchable, b: Matchable, c: Constraints): { cost: nu
   if (a.age === null || b.age === null || a.weightLbs === null || b.weightLbs === null) return { cost: EXCLUDED, why: 'missing age or weight' }
   const ageGap = Math.abs(a.age - b.age)
   const weightGap = Math.abs(a.weightLbs - b.weightLbs)
-  if (ageGap > c.maxAgeGap) return { cost: EXCLUDED, why: `age gap ${ageGap}` }
-  if (weightGap > c.maxWeightGap) return { cost: EXCLUDED, why: `weight gap ${weightGap}` }
   if (c.sameGender && a.gender && b.gender && genderKey(a.gender) !== genderKey(b.gender)) return { cost: EXCLUDED, why: 'gender' }
   if (a.erp !== null && b.erp !== null) return { cost: Math.abs(a.erp - b.erp), why: `ERP ${a.erp.toFixed(1)} vs ${b.erp.toFixed(1)}` }
   return { cost: beltDistance(a.belt, b.belt) + ageGap * 0.5 + weightGap / 10, why: 'belt + age + weight' }

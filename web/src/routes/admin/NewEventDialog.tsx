@@ -161,8 +161,6 @@ export function NewEventDialog({ open, onOpenChange, onCreated }: { open: boolea
   const [matCount, setMatCount] = useState('1')
   const [teamA, setTeamA] = useState<Team>({ name: '', color: 'red' })
   const [teamB, setTeamB] = useState<Team>({ name: '', color: 'blue' })
-  const [maxAgeGap, setMaxAgeGap] = useState('1')
-  const [maxWeightGap, setMaxWeightGap] = useState('10')
   const [sameGender, setSameGender] = useState(false)
   const [contactName, setContactName] = useState('')
   const [contactPhone, setContactPhone] = useState('')
@@ -178,8 +176,6 @@ export function NewEventDialog({ open, onOpenChange, onCreated }: { open: boolea
     setMatCount('1')
     setTeamA({ name: '', color: 'red' })
     setTeamB({ name: '', color: 'blue' })
-    setMaxAgeGap('1')
-    setMaxWeightGap('10')
     setSameGender(false)
     setContactName('')
     setContactPhone('')
@@ -187,16 +183,14 @@ export function NewEventDialog({ open, onOpenChange, onCreated }: { open: boolea
   }, [open])
 
   const mats = whole(matCount, 1, 8)
-  const ageGap = whole(maxAgeGap, 0, 10)
-  const weightGap = whole(maxWeightGap, 0, 100)
-  const counts = mats !== null && ageGap !== null && weightGap !== null
+  const counts = mats !== null
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
     if (!counts) return
     create.mutate({
       name, date, mode, matCount: mats, teams: [teamA, teamB],
-      maxAgeGap: ageGap, maxWeightGap: weightGap, sameGender,
+      sameGender,
       contactName: contactName.trim(), contactPhone: contactPhone.trim(),
     }, {
       onSuccess: detail => {
@@ -237,11 +231,7 @@ export function NewEventDialog({ open, onOpenChange, onCreated }: { open: boolea
             </div>
             <HeroPreview a={teamA} b={teamB} />
 
-            <div className="grid gap-4 sm:grid-cols-3">
-              <CountField id="mats" label="Mats" value={matCount} min={1} max={8} onChange={setMatCount} />
-              <CountField id="age-gap" label="Max age gap (years)" value={maxAgeGap} min={0} max={10} onChange={setMaxAgeGap} />
-              <CountField id="weight-gap" label="Max weight gap (lb)" value={maxWeightGap} min={0} max={100} onChange={setMaxWeightGap} />
-            </div>
+            <CountField id="mats" label="Mats" value={matCount} min={1} max={8} onChange={setMatCount} />
 
             <div className="flex items-center gap-2">
               <Checkbox id="same-gender" checked={sameGender} onCheckedChange={v => setSameGender(v)} />

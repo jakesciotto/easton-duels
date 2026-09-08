@@ -17,8 +17,6 @@ export const events = sqliteTable('events', {
   // desk types every result and no tablet scores a mat. 'live' means the mats drive it.
   // Existing events default to 'live', which is the behaviour they were created under.
   mode: text('mode', { enum: ['live', 'entry'] }).notNull().default('live'),
-  maxAgeGap: integer('max_age_gap').notNull().default(1),
-  maxWeightGap: integer('max_weight_gap').notNull().default(10),
   sameGender: integer('same_gender', { mode: 'boolean' }).notNull().default(false),
   // Who a volunteer calls when something goes wrong. Every surface prints the pair, so a
   // half-filled contact is worse than none and reads as absent.
