@@ -57,13 +57,13 @@ export function operatorEngaged(): boolean {
  */
 let granted: Element | null = null
 
+const GRANT_ENDERS = ['keydown', 'pointerdown', 'blur'] as const
+
 function releaseGrant(): void {
   if (!granted) return
   for (const type of GRANT_ENDERS) granted.removeEventListener(type, releaseGrant)
   granted = null
 }
-
-const GRANT_ENDERS = ['keydown', 'pointerdown', 'blur'] as const
 
 export function focusWithoutEngaging(el: HTMLElement | null | undefined): void {
   releaseGrant()

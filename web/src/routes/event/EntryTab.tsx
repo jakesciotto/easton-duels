@@ -63,6 +63,8 @@ interface CorrectionBody { entryId: string; pointsA: number; pointsB: number; wi
 interface EntryResponse { match?: EntryMatch | null; version?: number }
 // The POST answers 201 for a write it made and 200 for one it deduped.
 interface EntryResult { res: EntryResponse; duplicate: boolean }
+// The result this attempt asked the server to store, to compare against the one it returns.
+interface Sent { winnerAthleteId: number; winType: WinType; scores: Record<number, number> }
 
 export function EntryTab({ detail }: { detail: EventDetail }) {
   const eventId = detail.event.id
@@ -186,8 +188,6 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     setFailure(RESTORED_NEW_ENTRY)
     sentShape.current = entryShape(kept)
   }
-
-  interface Sent { winnerAthleteId: number; winType: WinType; scores: Record<number, number> }
 
   const onSaved = (out: EntryResult | undefined, key: string, typed: string, sent: Sent, payload: Form) => {
     settle()
