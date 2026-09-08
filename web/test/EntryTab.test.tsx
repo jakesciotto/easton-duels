@@ -799,6 +799,21 @@ describe('EntryTab', () => {
     expect(screen.getByLabelText('Lakeside points')).not.toHaveAttribute('aria-keyshortcuts')
   })
 
+  /**
+   * G33. The head carried the two team codes and the rows carried nothing, so a desk
+   * scanning two hundred rows could only tell whose side a name was on by its column. The
+   * plate is read off the competitor rather than off the column: nothing guarantees
+   * athlete A is on team A, and a wrong colour is worse than none.
+   */
+  it('carries a team plate at each end of every ledger row', () => {
+    mount()
+    const row = screen.getByText('Mateo Rivera').closest('[data-side="a"]')?.parentElement as HTMLElement
+    const sideA = row.querySelector('[data-side="a"]') as HTMLElement
+    const sideB = row.querySelector('[data-side="b"]') as HTMLElement
+    expect(within(sideA).getByText('RID')).toBeInTheDocument()
+    expect(within(sideB).getByText('LAK')).toBeInTheDocument()
+  })
+
   // 2.7: one set of tracks, so a score sits in the same register on every screen.
   it('lays the ledger out on the Ledger Grid tokens', () => {
     mount()
@@ -807,7 +822,9 @@ describe('EntryTab', () => {
     for (const el of [head, row]) {
       // Both scores and the timestamp, in one declaration shared by the head and
       // every row, so the head keeps lining up with its own digits.
-      expect(el.className).toMatch(/var\(--col-num-s\)_88px_var\(--col-num-s\)/)
+      // 6.6 puts the win type in an 84px track, which is its own number and not the
+      // points well's height.
+      expect(el.className).toMatch(/var\(--col-num-s\)_84px_var\(--col-num-s\)/)
       expect(el.className).toMatch(/var\(--col-num-l\)/)
       expect(el.className).not.toMatch(/ch_\+_\d+px/)
     }

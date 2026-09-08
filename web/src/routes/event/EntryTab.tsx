@@ -70,8 +70,10 @@ const WIN_TYPE_KEY: Record<string, WinType> = { p: 'points', s: 'submission', d:
 // (2.7) so a score sits in the same register here as on Roster, Matches and Live.
 // Declared on a mono element or ch measures the sans zero and the head stops lining
 // up with its own digits.
+// The win type track is 6.6's 84px, not the 88px the points well happens to be: the two
+// numbers are unrelated and the row was reading a form field's height as a column width.
 const LEDGER_COLS =
-  'grid grid-cols-[minmax(0,1fr)_var(--col-num-s)_88px_var(--col-num-s)_minmax(0,1fr)_var(--col-num-l)_var(--col-act)_var(--col-act)] items-center gap-x-3 px-3 font-mono t2'
+  'grid grid-cols-[minmax(0,1fr)_var(--col-num-s)_84px_var(--col-num-s)_minmax(0,1fr)_var(--col-num-l)_var(--col-act)_var(--col-act)] items-center gap-x-3 px-3 font-mono t2'
 
 interface NewEntryBody { entryId: string; athleteAId: number; athleteBId: number; pointsA: number; pointsB: number; winnerAthleteId: number; winType: WinType }
 interface CorrectionBody { entryId: string; pointsA: number; pointsB: number; winnerAthleteId: number; winType: WinType }
@@ -482,6 +484,9 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   const pendingRest = pending.length - shownPending.length
   const name = (id: number) => { const k = byId.get(id); return k ? athleteName(k) : 'Unknown' }
   const matNumberOf = (m: MatchRow) => detail.mats.find(mat => mat.id === m.matId)?.number ?? null
+  // Read off the competitor rather than off the column, because the plate is a colour and
+  // a wrong one is worse than none: nothing guarantees athlete A is on team A.
+  const teamOfAthlete = (id: number) => detail.teams.find(t => t.id === byId.get(id)?.teamId) ?? teamA
   const startError = start.error
   // 6.9: a finished event stops taking results, so the form and every path back into it
   // go rather than sit there disabled. Nothing left on the screen says it can be scored.
@@ -675,6 +680,8 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
                 match={m}
                 nameA={name(m.athleteAId)}
                 nameB={name(m.athleteBId)}
+                teamOfA={teamOfAthlete(m.athleteAId)}
+                teamOfB={teamOfAthlete(m.athleteBId)}
                 at={ledgerTime(m.endedAt, savedAt[m.id])}
                 cued={cue?.id === m.id && cue.on}
                 cueing={cue?.id === m.id}
@@ -832,10 +839,15 @@ function WinnerToggle({ kid, team, hint, pressed, onPress, className }: {
 // The paper sheet's row: the winner carries its own mark on whichever side it
 // falls, the win type is a word, and the loser is --gray-10 at 400 and never
 // red, because red means delete in this app.
-function LedgerRow({ match, nameA, nameB, at, cued, cueing, onEdit, onHistory }: {
+function LedgerRow({ match, nameA, nameB, teamOfA, teamOfB, at, cued, cueing, onEdit, onHistory }: {
   match: MatchRow
   nameA: string
   nameB: string
+  /** 6.6: plate, name, score, mark, win type, score, name, plate. The head's two codes
+      say which column is whose; the row's plates say which team each competitor is on,
+      which is the fact a desk scanning two hundred rows is actually looking for. */
+  teamOfA: TeamRow
+  teamOfB: TeamRow
   at: Date | null
   cued: boolean
   cueing: boolean
@@ -855,16 +867,18 @@ function LedgerRow({ match, nameA, nameB, at, cued, cueing, onEdit, onHistory }:
         cued ? 'bg-gray-6' : 'bg-transparent',
       )}
     >
-      <span data-side="a" data-outcome={aWon ? 'win' : 'loss'} className={cn('flex min-w-0 items-center font-sans t3', aWon ? 'font-medium text-white' : 'text-gray-10')}>
+      <span data-side="a" data-outcome={aWon ? 'win' : 'loss'} className={cn('flex min-w-0 items-center gap-2 font-sans t3', aWon ? 'font-medium text-white' : 'text-gray-10')}>
+        <TeamPlate color={teamOfA.color} name={teamOfA.name} size="inline" showName={false} />
         {aWon && <Mark side="left" />}
         <span className="truncate">{nameA}</span>
       </span>
       <span className={cn('fig text-right', aWon ? 'text-white' : 'text-gray-10')}>{match.pointsA}</span>
       <span className="truncate text-center font-sans t2 text-gray-10">{match.winType ? WIN_TYPE_WORD[match.winType] : ''}</span>
       <span className={cn('fig text-right', aWon ? 'text-gray-10' : 'text-white')}>{match.pointsB}</span>
-      <span data-side="b" data-outcome={aWon ? 'loss' : 'win'} className={cn('flex min-w-0 items-center justify-end font-sans t3', aWon ? 'text-gray-10' : 'font-medium text-white')}>
+      <span data-side="b" data-outcome={aWon ? 'loss' : 'win'} className={cn('flex min-w-0 items-center justify-end gap-2 font-sans t3', aWon ? 'text-gray-10' : 'font-medium text-white')}>
         <span className="truncate">{nameB}</span>
         {!aWon && <Mark side="right" />}
+        <TeamPlate color={teamOfB.color} name={teamOfB.name} size="inline" showName={false} />
       </span>
       <span className="text-right t1 text-gray-10">{at === null ? '' : clockLabel(at)}</span>
       {/*
