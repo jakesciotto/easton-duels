@@ -71,6 +71,9 @@ It checks health, PIN auth, event creation, a snapshot poll, and cleanup, and pr
 - Commits run `gitleaks protect --staged` through `.githooks/pre-commit` (`brew install gitleaks`).
 - The repo uses npm workspaces. Install with `npm`, not `pnpm` or `yarn`; either writes a second
   lockfile that npm workspaces do not read.
+- Node 22 only. `.node-version`, `engines` and `engine-strict` refuse anything else at install.
+  Node 26 defines its own `localStorage` global, which shadows jsdom's and fails the web suite.
+  CI and Vercel run 22.
 
 ## Layout
 
