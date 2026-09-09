@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
+import { eq } from 'drizzle-orm'
 import { createTestApp, call } from './helpers.js'
 import { seedEvent } from './fixtures.js'
+import { athletes, rosterCandidates } from '../src/db/schema.js'
 
 const candidate = {
   wlUid: 'u100', firstName: 'Zoe', lastName: 'Martin', belt: 'grey', wlLocation: 'Ridgeline',
@@ -74,5 +76,43 @@ describe('athletes', () => {
     expect(r.body.filter((a: any) => a.source === 'manual')).toHaveLength(6)
     expect(r.body.find((a: any) => a.lastName === 'Cruz')).toMatchObject({ age: null, ageSource: null, teamId: s.teamB })
     expect((await call(app, 'POST', `/api/events/${s.eventId}/athletes`, { bulk: [{ firstName: 'X', lastName: 'Y', teamId: 999 }] }, adminToken)).status).toBe(422)
+  })
+
+  describe('link route', () => {
+    it('422s for a wlUid outside the pool', async () => {
+      const { app, db, adminToken } = await createTestApp()
+      const s = await seedEvent(db, { matches: 0 })
+      const r = await call(app, 'POST', `/api/athletes/${s.a1}/link`, { wlUid: 'missing' }, adminToken)
+      expect(r.status).toBe(422)
+      expect(r.body.error.code).toBe('validation')
+    })
+
+    it('409s when the candidate is already on another athlete of the event', async () => {
+      const { app, db, adminToken } = await createTestApp()
+      const s = await seedEvent(db, { matches: 0 })
+      await db.insert(rosterCandidates).values({ eventId: s.eventId, wlUid: 'w1', firstName: 'Ana', lastName: 'Reyes' }).run()
+      await db.update(athletes).set({ wlUid: 'w1' }).where(eq(athletes.id, s.a2)).run()
+      const r = await call(app, 'POST', `/api/athletes/${s.a1}/link`, { wlUid: 'w1' }, adminToken)
+      expect(r.status).toBe(409)
+      expect(r.body.error.code).toBe('duplicate')
+      expect(r.body.error.message).toMatch(/is already on the roster/)
+    })
+
+    it('links, copying erp and belt from the candidate', async () => {
+      const { app, db, adminToken } = await createTestApp()
+      const s = await seedEvent(db, { matches: 0 })
+      await db.insert(rosterCandidates).values({
+        eventId: s.eventId, wlUid: 'w2', firstName: 'Mateo', lastName: 'Rivera', belt: 'yellow', wlLocation: 'North',
+        leaderboardId: 'mateo-rivera', erp: 4.9, age: 9, weightLbs: 68, gender: 'M',
+      }).run()
+      const r = await call(app, 'POST', `/api/athletes/${s.a1}/link`, { wlUid: 'w2' }, adminToken)
+      expect(r.status).toBe(200)
+      expect(r.body).toMatchObject({ wlUid: 'w2', erp: 4.9, belt: 'yellow', age: 9, ageSource: 'leaderboard', weightLbs: 68, weightSource: 'leaderboard' })
+    })
+
+    it('404s for an unknown athlete', async () => {
+      const { app, adminToken } = await createTestApp()
+      expect((await call(app, 'POST', '/api/athletes/999999/link', { wlUid: 'w1' }, adminToken)).status).toBe(404)
+    })
   })
 })

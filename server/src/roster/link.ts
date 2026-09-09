@@ -9,6 +9,11 @@ import type { MatchReport } from '../shared/types.js'
 type CandidateRow = typeof rosterCandidates.$inferSelect
 type AthleteUpdate = Partial<typeof athletes.$inferInsert>
 
+// The fields linkUpdate reads off a candidate, without id or eventId. A drizzle row
+// fits it directly; upsertCandidates' plain RosterCandidate fits it too, because its
+// wlLocation is a non-null string, narrower than the column's nullable type here.
+type CandidateFields = Pick<CandidateRow, 'wlUid' | 'wlLocation' | 'leaderboardId' | 'erp' | 'belt' | 'gender' | 'age' | 'weightLbs'>
+
 export function fullName(a: { firstName: string; lastName: string }): string {
   return `${a.firstName} ${a.lastName}`
 }
@@ -17,7 +22,7 @@ export function fullName(a: { firstName: string; lastName: string }): string {
  * The fields one candidate writes onto one athlete. `force` is the first link: the
  * paste's age and weight give way. After that a hand typed value keeps.
  */
-export function linkUpdate(existing: Pick<AthleteRow, 'wlUid' | 'ageSource' | 'weightSource'>, cand: CandidateRow): AthleteUpdate {
+export function linkUpdate(existing: Pick<AthleteRow, 'wlUid' | 'ageSource' | 'weightSource'>, cand: CandidateFields): AthleteUpdate {
   const force = existing.wlUid === null
   const update: AthleteUpdate = {
     wlUid: cand.wlUid,

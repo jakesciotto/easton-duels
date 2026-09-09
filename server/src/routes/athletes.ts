@@ -3,13 +3,14 @@ import { z } from 'zod'
 import { and, eq, inArray, or } from 'drizzle-orm'
 import type { Env } from '../context.js'
 import type { DbLike } from '../db/client.js'
-import { events, teams, athletes, matches } from '../db/schema.js'
+import { events, teams, athletes, matches, rosterCandidates } from '../db/schema.js'
 import { validate } from '../lib/validate.js'
 import { errorJson, requireAdmin } from '../auth/middleware.js'
 import { eventDetail } from './events.js'
 import { bumpVersion } from '../match/events.js'
 import { recordAudit } from '../audit/log.js'
 import { assertNotCertified } from '../audit/certify.js'
+import { fullName, linkUpdate } from '../roster/link.js'
 import { KIDS_BELTS } from '../shared/types.js'
 import type { RosterCandidate } from '../roster/types.js'
 
@@ -61,9 +62,7 @@ export async function upsertCandidates(db: DbLike, eventId: number, candidates: 
         }).run()
         continue
       }
-      const update: Partial<typeof athletes.$inferInsert> = { firstName: cand.firstName, lastName: cand.lastName, ...fromLeaderboard }
-      if (existing.ageSource !== 'manual' && cand.age !== null) Object.assign(update, { age: cand.age, ageSource: 'leaderboard' })
-      if (existing.weightSource !== 'manual' && cand.weightLbs !== null) Object.assign(update, { weightLbs: cand.weightLbs, weightSource: 'leaderboard' })
+      const update = { firstName: cand.firstName, lastName: cand.lastName, ...linkUpdate(existing, cand) }
       await tx.update(athletes).set(update).where(eq(athletes.id, existing.id)).run()
     }
     await recordAudit(tx, { eventId, actor: 'admin', action: 'roster_add', detail: { kind: 'candidates', count: candidates.length, teamId } })
@@ -134,6 +133,28 @@ athleteRoutes.patch('/athletes/:athleteId', requireAdmin, validate('json', patch
     await recordAudit(tx, {
       eventId: existing.eventId, actor: 'admin', action: 'roster_edit',
       detail: { athleteId: id, name: `${update.firstName ?? existing.firstName} ${update.lastName ?? existing.lastName}`, fields: Object.keys(update) },
+    })
+    await bumpVersion(tx, existing.eventId)
+  })
+  return c.json(await db.select().from(athletes).where(eq(athletes.id, id)).get())
+})
+
+athleteRoutes.post('/athletes/:athleteId/link', requireAdmin, validate('json', z.object({ wlUid: z.string().min(1) })), async c => {
+  const { db } = c.get('ctx')
+  const id = Number(c.req.param('athleteId'))
+  const existing = await db.select().from(athletes).where(eq(athletes.id, id)).get()
+  if (!existing) return errorJson(c, 404, 'not_found', 'athlete not found')
+  await assertNotCertified(db, existing.eventId)
+  const { wlUid } = c.req.valid('json')
+  const cand = await db.select().from(rosterCandidates).where(and(eq(rosterCandidates.eventId, existing.eventId), eq(rosterCandidates.wlUid, wlUid))).get()
+  if (!cand) return errorJson(c, 422, 'validation', 'no such candidate on this event')
+  const taken = await db.select().from(athletes).where(and(eq(athletes.eventId, existing.eventId), eq(athletes.wlUid, wlUid))).get()
+  if (taken) return errorJson(c, 409, 'duplicate', `${fullName(taken)} is already on the roster`)
+  await db.transaction(async tx => {
+    await tx.update(athletes).set(linkUpdate(existing, cand)).where(eq(athletes.id, id)).run()
+    await recordAudit(tx, {
+      eventId: existing.eventId, actor: 'admin', action: 'roster_link',
+      detail: { kind: 'manual', athleteId: id, name: fullName(existing), wlUid },
     })
     await bumpVersion(tx, existing.eventId)
   })

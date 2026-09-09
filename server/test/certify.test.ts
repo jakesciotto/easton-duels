@@ -61,6 +61,8 @@ const WRITES: Write[] = [
   { name: 'athlete assign', method: 'POST', path: s => `/api/events/${s.eventId}/athletes/assign`, body: s => ({ ids: [s.a1], teamId: s.teamB }) },
   { name: 'athlete delete', method: 'DELETE', path: s => `/api/athletes/${s.a1}` },
   { name: 'roster sync', method: 'POST', path: s => `/api/events/${s.eventId}/roster/sync`, body: () => ({ kBusinesses: ['1'] }) },
+  { name: 'roster match', method: 'POST', path: s => `/api/events/${s.eventId}/roster/match` },
+  { name: 'athlete link', method: 'POST', path: s => `/api/athletes/${s.a1}/link`, body: () => ({ wlUid: 'w0' }) },
   { name: 'match generate', method: 'POST', path: s => `/api/events/${s.eventId}/matches/generate` },
   { name: 'match create', method: 'POST', path: s => `/api/events/${s.eventId}/matches`, body: s => ({ athleteAId: s.a1, athleteBId: s.b2 }) },
   { name: 'match patch', method: 'PATCH', path: s => `/api/matches/${s.matchIds[1]}`, body: () => ({ lengthSec: 240 }) },

@@ -1,12 +1,13 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
-import { asc, eq } from 'drizzle-orm'
+import { asc, count, eq } from 'drizzle-orm'
 import type { Env } from '../context.js'
-import { events, rosterCandidates } from '../db/schema.js'
+import { events, athletes, rosterCandidates } from '../db/schema.js'
 import { validate } from '../lib/validate.js'
 import { errorJson, requireAdmin } from '../auth/middleware.js'
 import { fetchCompetitors } from '../roster/leaderboard.js'
 import { buildCandidates } from '../roster/join.js'
+import { matchRoster } from '../roster/link.js'
 import { WlRequestError } from '../roster/wl.js'
 import { recordAudit } from '../audit/log.js'
 import { assertNotCertified } from '../audit/certify.js'
@@ -69,16 +70,30 @@ rosterRoutes.post('/events/:eventId/roster/sync', requireAdmin, validate('json',
   const candidates = buildCandidates(records, competitors)
   // The pool is a cache of the last import, not append-only history: each sync replaces
   // it wholesale so a competitor who left WL (or was mis-ranked) drops out too. Candidates
-  // are admin-only data outside the live snapshot, so this never bumps the event version.
-  await db.transaction(async tx => {
+  // are admin-only data outside the live snapshot; only the match that runs against the
+  // fresh pool can bump the version, and only when it actually links or refreshes a row.
+  const match = await db.transaction(async tx => {
     await tx.delete(rosterCandidates).where(eq(rosterCandidates.eventId, eventId)).run()
     if (candidates.length > 0) await tx.insert(rosterCandidates).values(candidates.map(cand => ({ eventId, ...cand }))).run()
     await recordAudit(tx, {
       eventId, actor: 'admin', action: 'roster_sync',
       detail: { locations: kBusinesses.length, candidates: candidates.length, warnings: warnings.length },
     })
+    return matchRoster(tx, eventId)
   })
-  return c.json({ candidates, warnings })
+  return c.json({ candidates, warnings, match })
+})
+
+rosterRoutes.post('/events/:eventId/roster/match', requireAdmin, async c => {
+  const { db } = c.get('ctx')
+  const eventId = Number(c.req.param('eventId'))
+  if (!await db.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get()) return errorJson(c, 404, 'not_found', 'event not found')
+  await assertNotCertified(db, eventId)
+  const pool = await db.select({ n: count() }).from(rosterCandidates).where(eq(rosterCandidates.eventId, eventId)).get()
+  if (!pool || pool.n === 0) return errorJson(c, 409, 'no_pool', 'Import from WellnessLiving first.')
+  const report = await db.transaction(tx => matchRoster(tx, eventId))
+  const athleteRows = await db.select().from(athletes).where(eq(athletes.eventId, eventId)).orderBy(asc(athletes.lastName), asc(athletes.firstName)).all()
+  return c.json({ report, athletes: athleteRows })
 })
 
 rosterRoutes.get('/events/:eventId/candidates', requireAdmin, async c => {

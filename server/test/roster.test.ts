@@ -7,7 +7,7 @@ import { buildCandidates } from '../src/roster/join.js'
 import { rosterFromEnv } from '../src/roster/config.js'
 import { WlRequestError } from '../src/roster/wl.js'
 import type { WlBeltRecord, LeaderboardCompetitor } from '../src/roster/types.js'
-import { events, rosterCandidates } from '../src/db/schema.js'
+import { events, athletes, rosterCandidates } from '../src/db/schema.js'
 import { createTestApp, call } from './helpers.js'
 import { seedEvent } from './fixtures.js'
 
@@ -203,5 +203,41 @@ describe('roster routes', () => {
     expect((await call(app, 'GET', '/api/events/999999/candidates', undefined, adminToken)).status).toBe(404)
     await db.delete(events).where(eq(events.id, s.eventId)).run()
     expect(await db.select().from(rosterCandidates).where(eq(rosterCandidates.eventId, s.eventId)).all()).toEqual([])
+  })
+
+  it('carries the match report on the sync response', async () => {
+    const { app, db, adminToken } = await createTestApp({ roster: { wl: fakeWl, leaderboard: null, syncBudgetMs: null } })
+    const s = await seedEvent(db, { matches: 0 })
+    await db.insert(athletes).values({ eventId: s.eventId, firstName: 'Zoe', lastName: 'Martin', source: 'manual' }).run()
+    const r = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['100001'] }, adminToken)
+    expect(r.status).toBe(200)
+    expect(r.body.match.matched).toEqual(['Zoe Martin'])
+    expect(r.body.match.refreshed).toBe(0)
+  })
+})
+
+describe('roster match route', () => {
+  it('404s on an unknown event', async () => {
+    const { app, adminToken } = await createTestApp()
+    expect((await call(app, 'POST', '/api/events/999999/roster/match', undefined, adminToken)).status).toBe(404)
+  })
+
+  it('409s no_pool on an empty pool', async () => {
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db, { matches: 0 })
+    const r = await call(app, 'POST', `/api/events/${s.eventId}/roster/match`, undefined, adminToken)
+    expect(r.status).toBe(409)
+    expect(r.body.error.code).toBe('no_pool')
+  })
+
+  it('links the pool and answers the report plus the athletes', async () => {
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db, { matches: 0 })
+    await db.insert(athletes).values({ eventId: s.eventId, firstName: 'Jonas', lastName: 'Blake', source: 'manual' }).run()
+    await db.insert(rosterCandidates).values({ eventId: s.eventId, wlUid: 'w0', firstName: 'Jonas', lastName: 'Blake', belt: 'yellow', wlLocation: 'North' }).run()
+    const r = await call(app, 'POST', `/api/events/${s.eventId}/roster/match`, undefined, adminToken)
+    expect(r.status).toBe(200)
+    expect(r.body.report.matched).toEqual(['Jonas Blake'])
+    expect(r.body.athletes.find((a: any) => a.lastName === 'Blake')).toMatchObject({ wlUid: 'w0', belt: 'yellow' })
   })
 })
