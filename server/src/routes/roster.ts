@@ -10,7 +10,7 @@ import { buildCandidates } from '../roster/join.js'
 import { syncRoster } from '../roster/sync.js'
 import { WlRequestError } from '../roster/wl.js'
 import { assertNotCertified } from '../audit/certify.js'
-import type { WlBeltRecord, LeaderboardCompetitor, RosterCandidate } from '../roster/types.js'
+import type { WlBeltRecord, WlLocation, LeaderboardCompetitor, RosterCandidate } from '../roster/types.js'
 
 export const rosterRoutes = new Hono<Env>()
 
@@ -24,13 +24,18 @@ rosterRoutes.get('/events/:eventId/wl-locations', requireAdmin, async c => {
   }
 })
 
-rosterRoutes.post('/events/:eventId/roster/sync', requireAdmin, validate('json', z.object({ kBusinesses: z.array(z.string().min(1)).min(1).max(20) })), async c => {
+rosterRoutes.post('/events/:eventId/roster/sync', requireAdmin, validate('json', z.object({ kBusinesses: z.array(z.string().min(1)).min(1).max(20).optional() })), async c => {
   const { db, roster } = c.get('ctx')
   const eventId = Number(c.req.param('eventId'))
-  if (!await db.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get()) return errorJson(c, 404, 'not_found', 'event not found')
+  const ev = await db.select().from(events).where(eq(events.id, eventId)).get()
+  if (!ev) return errorJson(c, 404, 'not_found', 'event not found')
   await assertNotCertified(db, eventId)
   if (!roster.wl) return errorJson(c, 503, 'wl_not_configured', 'WellnessLiving credentials are not set')
   const { kBusinesses } = c.req.valid('json')
+  // The first sync picks the locations and the event remembers them, so every later sync
+  // runs on one press. A dialog that sends a pick changes it.
+  const picked = kBusinesses ?? ev.wlLocations ?? []
+  if (picked.length === 0) return errorJson(c, 422, 'locations_required', 'Pick at least one location.')
   const warnings: string[] = []
   const records: WlBeltRecord[] = []
   // One report per location, each of which can poll for minutes. Without an overall budget
@@ -39,15 +44,22 @@ rosterRoutes.post('/events/:eventId/roster/sync', requireAdmin, validate('json',
   // handed to every location's own fetch, so a report that is still polling when the budget
   // runs out gives up mid-flight instead of only being caught once it returns.
   const deadline = roster.syncBudgetMs === null ? null : Date.now() + roster.syncBudgetMs
-  const outOfTime = (done: number) => `roster sync ran out of time after ${done} of ${kBusinesses.length} locations; sync fewer at once`
+  const outOfTime = (done: number) => `roster sync ran out of time after ${done} of ${picked.length} locations; sync fewer at once`
   let done = 0
   try {
     const byK = new Map((await roster.wl.listLocations()).map(l => [l.kBusiness, l]))
-    for (const k of kBusinesses) {
+    const chosen: WlLocation[] = []
+    for (const k of picked) {
       const loc = byK.get(k)
       if (!loc) return errorJson(c, 422, 'validation', `unknown location ${k}`)
+      chosen.push(loc)
+    }
+    // Stored before the pull, and only once every id is known, so a sync that runs out of
+    // time can be retried on one press and a mistyped id is never remembered.
+    if (kBusinesses !== undefined) await db.update(events).set({ wlLocations: picked }).where(eq(events.id, eventId)).run()
+    for (const loc of chosen) {
       if (deadline !== null && Date.now() > deadline) return errorJson(c, 503, 'wl_error', outOfTime(done))
-      records.push(...await roster.wl.fetchKidsBeltRecords(k, loc.title, deadline ?? undefined))
+      records.push(...await roster.wl.fetchKidsBeltRecords(loc.kBusiness, loc.title, deadline ?? undefined))
       done += 1
     }
   } catch (e) {
@@ -70,7 +82,7 @@ rosterRoutes.post('/events/:eventId/roster/sync', requireAdmin, validate('json',
   // dialog lists. The pool is a cache of the last pull, not append-only history: a
   // competitor who left WellnessLiving drops out of it.
   const candidates = buildCandidates(records, competitors)
-  const report = await db.transaction(tx => syncRoster(tx, eventId, records, competitors, { locations: kBusinesses.length, warnings: warnings.length }))
+  const report = await db.transaction(tx => syncRoster(tx, eventId, records, competitors, { locations: picked.length, warnings: warnings.length }))
   return c.json({ candidates, warnings, report })
 })
 

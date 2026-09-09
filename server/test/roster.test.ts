@@ -205,6 +205,37 @@ describe('roster routes', () => {
     expect(await db.select().from(rosterCandidates).where(eq(rosterCandidates.eventId, s.eventId)).all()).toEqual([])
   })
 
+  it('stores the location pick on the event and runs a later sync without one', async () => {
+    const { app, db, adminToken } = await createTestApp({ roster: { wl: fakeWl, leaderboard: null, syncBudgetMs: null } })
+    const s = await seedEvent(db, { matches: 0 })
+
+    const first = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['100001'] }, adminToken)
+    expect(first.status).toBe(200)
+    const detail = await call(app, 'GET', `/api/events/${s.eventId}`, undefined, adminToken)
+    expect(detail.body.event.wlLocations).toEqual(['100001'])
+
+    const second = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, {}, adminToken)
+    expect(second.status).toBe(200)
+    expect(second.body.candidates).toHaveLength(1)
+  })
+
+  it('422s locations_required when neither the body nor the event names a location', async () => {
+    const { app, db, adminToken } = await createTestApp({ roster: { wl: fakeWl, leaderboard: null, syncBudgetMs: null } })
+    const s = await seedEvent(db, { matches: 0 })
+    const r = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, {}, adminToken)
+    expect(r.status).toBe(422)
+    expect(r.body.error.code).toBe('locations_required')
+    expect(r.body.error.message).toBe('Pick at least one location.')
+  })
+
+  it('never stores a location WellnessLiving does not know', async () => {
+    const { app, db, adminToken } = await createTestApp({ roster: { wl: fakeWl, leaderboard: null, syncBudgetMs: null } })
+    const s = await seedEvent(db, { matches: 0 })
+    expect((await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['999'] }, adminToken)).status).toBe(422)
+    const detail = await call(app, 'GET', `/api/events/${s.eventId}`, undefined, adminToken)
+    expect(detail.body.event.wlLocations).toBeNull()
+  })
+
   it('carries the sync report on the sync response', async () => {
     const { app, db, adminToken } = await createTestApp({ roster: { wl: fakeWl, leaderboard: null, syncBudgetMs: null } })
     const s = await seedEvent(db, { matches: 0 })

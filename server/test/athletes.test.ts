@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { createTestApp, call } from './helpers.js'
 import { seedEvent } from './fixtures.js'
-import { athletes, rosterCandidates } from '../src/db/schema.js'
+import { athletes, auditLog, rosterCandidates } from '../src/db/schema.js'
 
 const candidate = {
   wlUid: 'u100', firstName: 'Zoe', lastName: 'Martin', belt: 'grey', wlLocation: 'Ridgeline',
@@ -113,6 +113,54 @@ describe('athletes', () => {
     it('404s for an unknown athlete', async () => {
       const { app, adminToken } = await createTestApp()
       expect((await call(app, 'POST', '/api/athletes/999999/link', { wlUid: 'w1' }, adminToken)).status).toBe(404)
+    })
+
+    it('clears the suggestion and dates the belt it wrote', async () => {
+      const { app, db, adminToken } = await createTestApp()
+      const s = await seedEvent(db, { matches: 0 })
+      await db.insert(rosterCandidates).values({
+        eventId: s.eventId, wlUid: 'w2', firstName: 'Mateo', lastName: 'Rivera-Lopez', belt: 'yellow',
+        wlLocation: 'Boulder', promotedAt: '2026-03-14',
+      }).run()
+      await db.update(athletes).set({ suggestedWlUid: 'w2', suggestedScore: 0.8 }).where(eq(athletes.id, s.a1)).run()
+
+      const r = await call(app, 'POST', `/api/athletes/${s.a1}/link`, { wlUid: 'w2' }, adminToken)
+
+      expect(r.status).toBe(200)
+      expect(r.body).toMatchObject({ wlUid: 'w2', belt: 'yellow', promotedAt: '2026-03-14', suggestedWlUid: null, suggestedScore: null })
+      expect(typeof r.body.syncedAt).toBe('string')
+      expect(r.body.syncChanges).toMatchObject({ belt: { from: 'grey', to: 'yellow' }, promotedAt: { from: null, to: '2026-03-14' } })
+    })
+  })
+
+  describe('dismiss route', () => {
+    it('appends the uid, clears a suggestion naming it, and records the refusal', async () => {
+      const { app, db, adminToken } = await createTestApp()
+      const s = await seedEvent(db, { matches: 0 })
+      await db.update(athletes).set({ suggestedWlUid: 'w2', suggestedScore: 0.8 }).where(eq(athletes.id, s.a1)).run()
+
+      const r = await call(app, 'POST', `/api/athletes/${s.a1}/dismiss`, { wlUid: 'w2' }, adminToken)
+
+      expect(r.status).toBe(200)
+      expect(r.body).toMatchObject({ dismissedWlUids: ['w2'], suggestedWlUid: null, suggestedScore: null })
+      const rows = await db.select().from(auditLog).where(eq(auditLog.eventId, s.eventId)).all()
+      expect(rows.find(row => row.action === 'roster_edit')?.detail).toMatchObject({ kind: 'dismiss', athleteId: s.a1, name: 'Mateo Rivera', wlUid: 'w2' })
+    })
+
+    it('keeps a suggestion that names another candidate, and never lists a uid twice', async () => {
+      const { app, db, adminToken } = await createTestApp()
+      const s = await seedEvent(db, { matches: 0 })
+      await db.update(athletes).set({ suggestedWlUid: 'w3', suggestedScore: 0.7 }).where(eq(athletes.id, s.a1)).run()
+
+      await call(app, 'POST', `/api/athletes/${s.a1}/dismiss`, { wlUid: 'w2' }, adminToken)
+      const again = await call(app, 'POST', `/api/athletes/${s.a1}/dismiss`, { wlUid: 'w2' }, adminToken)
+
+      expect(again.body).toMatchObject({ dismissedWlUids: ['w2'], suggestedWlUid: 'w3', suggestedScore: 0.7 })
+    })
+
+    it('404s for an unknown athlete', async () => {
+      const { app, adminToken } = await createTestApp()
+      expect((await call(app, 'POST', '/api/athletes/999999/dismiss', { wlUid: 'w1' }, adminToken)).status).toBe(404)
     })
   })
 })

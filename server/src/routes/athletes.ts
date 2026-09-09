@@ -11,6 +11,7 @@ import { bumpVersion } from '../match/events.js'
 import { recordAudit } from '../audit/log.js'
 import { assertNotCertified } from '../audit/certify.js'
 import { fullName, linkUpdate } from '../roster/link.js'
+import { profileChanges } from '../roster/sync.js'
 import { KIDS_BELTS } from '../shared/types.js'
 import type { RosterCandidate } from '../roster/types.js'
 
@@ -153,11 +154,46 @@ athleteRoutes.post('/athletes/:athleteId/link', requireAdmin, validate('json', z
   if (!cand) return errorJson(c, 422, 'validation', 'no such candidate on this event')
   const taken = await db.select().from(athletes).where(and(eq(athletes.eventId, existing.eventId), eq(athletes.wlUid, wlUid))).get()
   if (taken) return errorJson(c, 409, 'duplicate', `${fullName(taken)} is already on the roster`)
+  // The same write a sync makes, because this is a person confirming what a sync offered:
+  // the profile lands, the diff is kept, and the suggestion has been answered.
+  const update = linkUpdate(existing, cand)
   await db.transaction(async tx => {
-    await tx.update(athletes).set(linkUpdate(existing, cand)).where(eq(athletes.id, id)).run()
+    await tx.update(athletes).set({
+      ...update,
+      syncChanges: profileChanges(existing, update),
+      syncedAt: new Date().toISOString(),
+      suggestedWlUid: null,
+      suggestedScore: null,
+    }).where(eq(athletes.id, id)).run()
     await recordAudit(tx, {
       eventId: existing.eventId, actor: 'admin', action: 'roster_link',
       detail: { kind: 'manual', athleteId: id, name: fullName(existing), wlUid },
+    })
+    await bumpVersion(tx, existing.eventId)
+  })
+  return c.json(await db.select().from(athletes).where(eq(athletes.id, id)).get())
+})
+
+// Not them. The candidate is remembered as refused, so no later sync offers it again.
+athleteRoutes.post('/athletes/:athleteId/dismiss', requireAdmin, validate('json', z.object({ wlUid: z.string().min(1) })), async c => {
+  const { db } = c.get('ctx')
+  const id = Number(c.req.param('athleteId'))
+  const existing = await db.select().from(athletes).where(eq(athletes.id, id)).get()
+  if (!existing) return errorJson(c, 404, 'not_found', 'athlete not found')
+  await assertNotCertified(db, existing.eventId)
+  const { wlUid } = c.req.valid('json')
+  const update: Partial<typeof athletes.$inferInsert> = {
+    dismissedWlUids: existing.dismissedWlUids.includes(wlUid) ? existing.dismissedWlUids : [...existing.dismissedWlUids, wlUid],
+  }
+  if (existing.suggestedWlUid === wlUid) {
+    update.suggestedWlUid = null
+    update.suggestedScore = null
+  }
+  await db.transaction(async tx => {
+    await tx.update(athletes).set(update).where(eq(athletes.id, id)).run()
+    await recordAudit(tx, {
+      eventId: existing.eventId, actor: 'admin', action: 'roster_edit',
+      detail: { kind: 'dismiss', athleteId: id, name: fullName(existing), wlUid },
     })
     await bumpVersion(tx, existing.eventId)
   })
