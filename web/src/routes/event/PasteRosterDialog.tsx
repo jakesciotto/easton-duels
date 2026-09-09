@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { writeErrorMessage } from '@/lib/eventMode'
-import { parseRosterPaste } from '@/lib/roster-paste'
+import { FIELD_LABEL, parseRosterPaste, type Field, type PasteMapping } from '@/lib/roster-paste'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import type { EventDetail, ManualKid } from '@/lib/types'
 import { beltLabel, genderLabel } from '@/lib/format'
@@ -14,36 +14,26 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
-interface PreviewLine { n: number; text: string; row: ManualKid | null; problem: string | null }
-
-/**
- * 6.11. The parser reports an error as "line 4: ..." against the whole paste and drops
- * every row once anything fails, which cannot be rendered against the offending line.
- * Re-running it one line at a time gives each line its own verdict for the preview,
- * while the submitted payload still comes from the whole-text parse, so the rule about
- * what is accepted stays in one place.
- */
-function preview(text: string): PreviewLine[] {
-  return text.split(/\r?\n/)
-    .map((line, i) => ({ n: i + 1, text: line }))
-    .filter(l => l.text.trim() !== '')
-    .map(({ n, text: line }) => {
-      const one = parseRosterPaste(line)
-      return { n, text: line, row: one.rows[0] ?? null, problem: one.errors[0]?.replace(/^line \d+: /, '') ?? null }
-    })
+/** 4.2. The header case names its columns and, when any were dropped, names those too. */
+function mappingLine(mapping: PasteMapping): string {
+  if (!mapping.header) return 'No header row. Reading First Last, age, weight, belt, gender.'
+  const columns = mapping.columns.filter((f): f is Field => f !== null).map(f => FIELD_LABEL[f]).join(', ')
+  const ignored = mapping.ignored.length > 0 ? ` Ignored: ${mapping.ignored.join(', ')}.` : ''
+  return `Columns: ${columns}.${ignored}`
 }
 
 export function PasteRosterDialog({ detail, open, onOpenChange }: { detail: EventDetail; open: boolean; onOpenChange: (o: boolean) => void }) {
   const [text, setText] = useState('')
   const [teamId, setTeamId] = useState<number | null>(null)
-  const parsed = useMemo(() => parseRosterPaste(text), [text])
-  const lines = useMemo(() => preview(text), [text])
+  const parsed = useMemo(() => parseRosterPaste(text, detail.teams), [text, detail.teams])
+  const { lines, mapping } = parsed
+  const hasTeamColumn = mapping.columns.includes('team')
   const add = useAdminMutation(detail.event.id, (bulk: ManualKid[]) => adminApi(`/api/events/${detail.event.id}/athletes`, { method: 'POST', body: { bulk } }))
   const teamItems = [{ value: null as number | null, label: 'Unassigned' }, ...detail.teams.map(t => ({ value: t.id as number | null, label: t.name }))]
   const count = parsed.rows.length
 
   const submit = () => {
-    add.mutate(parsed.rows.map(r => ({ ...r, teamId })), {
+    add.mutate(parsed.rows.map(r => ({ ...r, teamId: hasTeamColumn ? (r.teamId ?? null) : teamId })), {
       onSuccess: () => {
         setText('')
         onOpenChange(false)
@@ -56,7 +46,7 @@ export function PasteRosterDialog({ detail, open, onOpenChange }: { detail: Even
       <DialogContent className={dialogSurface(672)}>
         <DialogHeader><DialogTitle>Paste roster</DialogTitle></DialogHeader>
         <DialogBody className={cn(dialogBody, 'gap-4')}>
-          <p className="t2 text-gray-11">One competitor per line: <code className="fig text-gray-10">First Last, age, weight, belt, gender</code>. Everything after the name is optional.</p>
+          <p className="t2 text-gray-11">One competitor per line. Paste from a spreadsheet with a header row, or type <code className="fig text-gray-10">First Last, age, weight, belt, gender</code>.</p>
           <Textarea
             aria-label="Roster text"
             value={text}
@@ -66,13 +56,15 @@ export function PasteRosterDialog({ detail, open, onOpenChange }: { detail: Even
           />
           <div className="flex items-center gap-3">
             <Label htmlFor="paste-team">Put them on</Label>
-            <Select value={teamId} onValueChange={setTeamId} items={teamItems}>
-              <SelectTrigger id="paste-team" className="w-48"><SelectValue placeholder="Unassigned" /></SelectTrigger>
+            <Select value={teamId} onValueChange={setTeamId} items={teamItems} disabled={hasTeamColumn}>
+              <SelectTrigger id="paste-team" className="w-48" title={hasTeamColumn ? 'The paste has a Team column' : undefined}><SelectValue placeholder="Unassigned" /></SelectTrigger>
               <SelectContent>
                 {teamItems.map(i => <SelectItem key={String(i.value)} value={i.value}>{i.label}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
+
+          {lines.length > 0 && <p className="t2 text-gray-10">{mappingLine(mapping)}</p>}
 
           {lines.length > 0 && (
             // finding 4: the caller's vertical scroll folds into Table's own wrapper

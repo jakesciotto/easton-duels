@@ -78,4 +78,61 @@ describe('PasteRosterDialog', () => {
       bulk: [{ firstName: 'Mateo', lastName: 'Rivera', age: 8, weightLbs: 62, belt: 'grey', gender: 'M', teamId: null }],
     })
   })
+
+  it('renders the mapping line for a header paste, with ignored columns named', async () => {
+    fakeFetch(() => ({ json: {} }))
+    mount()
+    await screen.findByRole('dialog')
+    await userEvent.setup().type(screen.getByLabelText('Roster text'), 'Name,Age,Weight,Belt,Gender{Enter}Mateo Rivera,8,62,grey,M')
+    expect(screen.getByText('Columns: Name, Age, lb, Belt, Gender.')).toBeInTheDocument()
+  })
+
+  it('names an ignored column in the mapping line', async () => {
+    fakeFetch(() => ({ json: {} }))
+    mount()
+    await screen.findByRole('dialog')
+    await userEvent.setup().type(screen.getByLabelText('Roster text'), 'Name,Email{Enter}Mateo Rivera,mateo@example.com')
+    expect(screen.getByText('Columns: Name. Ignored: Email.')).toBeInTheDocument()
+  })
+
+  it('renders the mapping line for a positional paste', async () => {
+    fakeFetch(() => ({ json: {} }))
+    mount()
+    await screen.findByRole('dialog')
+    await userEvent.setup().type(screen.getByLabelText('Roster text'), 'Mateo Rivera, 8, 62, grey, M')
+    expect(screen.getByText('No header row. Reading First Last, age, weight, belt, gender.')).toBeInTheDocument()
+  })
+
+  it('gives the header line no preview row of its own', async () => {
+    fakeFetch(() => ({ json: {} }))
+    mount()
+    await screen.findByRole('dialog')
+    await userEvent.setup().type(screen.getByLabelText('Roster text'), 'Name,Age{Enter}Mateo Rivera,8{Enter}Ava Park,9')
+    expect(rows()).toHaveLength(2)
+    expect(within(rows()[0]).getByText('2')).toBeInTheDocument()
+    expect(within(rows()[1]).getByText('3')).toBeInTheDocument()
+  })
+
+  it('disables the team select while the paste carries a team column', async () => {
+    fakeFetch(() => ({ json: {} }))
+    mount()
+    await screen.findByRole('dialog')
+    await userEvent.setup().type(screen.getByLabelText('Roster text'), 'Name,Team{Enter}Mateo Rivera,Ridgeline')
+    const trigger = screen.getByRole('combobox', { name: 'Put them on' })
+    expect(trigger).toBeDisabled()
+    expect(trigger).toHaveAttribute('title', 'The paste has a Team column')
+  })
+
+  it('posts each row on its own team when the paste carries a team column', async () => {
+    const f = fakeFetch(() => ({ status: 201, json: [] }))
+    mount()
+    const user = userEvent.setup()
+    await screen.findByRole('dialog')
+    await user.type(screen.getByLabelText('Roster text'), 'Name,Team{Enter}Mateo Rivera,Ridgeline')
+    await user.click(screen.getByRole('button', { name: 'Add 1 competitor' }))
+    await vi.waitFor(() => expect(f.calls.some(c => c.init?.method === 'POST')).toBe(true))
+    expect(f.body(f.calls.findIndex(c => c.init?.method === 'POST'))).toEqual({
+      bulk: [{ firstName: 'Mateo', lastName: 'Rivera', age: null, weightLbs: null, belt: null, gender: null, teamId: 1 }],
+    })
+  })
 })
