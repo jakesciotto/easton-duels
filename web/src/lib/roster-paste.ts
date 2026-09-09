@@ -54,8 +54,13 @@ function bestField(cell: string): { field: Field; score: number } {
   return best
 }
 
+// A one cell line is a header only on an exact field name: a names-only paste can open
+// with a surname that resembles an alias ("Al Grade" scores 0.8 against "grade"), and a
+// header read there drops that competitor without a word. A line with two or more cells
+// keeps the similarity floor, because a real header rarely spells every field exactly.
 function detectHeader(cells: string[]): boolean {
   if (cells.some(isBareNumber)) return false
+  if (cells.length === 1) return bestField(cells[0]).score === 1
   return cells.some(c => bestField(c).score >= 0.8)
 }
 

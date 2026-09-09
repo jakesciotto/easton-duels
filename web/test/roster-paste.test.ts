@@ -39,6 +39,19 @@ describe('parseRosterPaste, positional (no header)', () => {
     expect(parseRosterPaste('Kai Wong, 17, 250').rows).toEqual([{ firstName: 'Kai', lastName: 'Wong', age: 17, weightLbs: 250, belt: null, gender: null }])
   })
 
+  it('keeps a one cell line that resembles a field name as a competitor', () => {
+    const { mapping, lines, errors } = parseRosterPaste('Al Grade\nBo Kim')
+    expect(mapping.header).toBe(false)
+    expect(lines.map(l => l.row?.lastName)).toEqual(['Grade', 'Kim'])
+    expect(errors).toEqual([])
+  })
+
+  it('reads a lone exact field name as a header', () => {
+    const { mapping, lines } = parseRosterPaste('Name\nAl Grade')
+    expect(mapping).toEqual({ header: true, delimiter: 'comma', columns: ['name'], ignored: [] })
+    expect(lines.map(l => l.row?.lastName)).toEqual(['Grade'])
+  })
+
   it('never reads a bare number line as a header', () => {
     const { mapping } = parseRosterPaste('Name,8\nMateo Rivera,9')
     expect(mapping.header).toBe(false)
