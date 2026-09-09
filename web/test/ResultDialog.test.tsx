@@ -40,6 +40,16 @@ describe('ResultDialog', () => {
     expect(within(dialog).getByText('Match 12, mat 2, ended 3:41 pm, 9 to 2, Mateo Rivera on points.')).toBeInTheDocument()
   })
 
+  it('asks for a result, not a correction, on a match that is still live', async () => {
+    // G20: the dead tablet path opens this dialog on a live match, where nothing is stored
+    // yet and the desk is entering the first result.
+    fakeFetch(() => ({ json: {} }))
+    mount(sampleMatch({ id: 9, orderIndex: 11, matId: 1, a: { ...done.a, score: 4 }, b: { ...done.b, score: 2 } }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByRole('heading', { name: 'Enter the result' })).toBeInTheDocument()
+    expect(within(dialog).getByText('Match 12, mat 2, 4 to 2, no result recorded.')).toBeInTheDocument()
+  })
+
   it('holds that sentence still while a newer snapshot of the same match arrives', async () => {
     fakeFetch(() => ({ json: {} }))
     const { rerender } = mount()

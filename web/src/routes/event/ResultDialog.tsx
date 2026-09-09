@@ -101,6 +101,9 @@ export function ResultDialog({ detail, match, open, onOpenChange }: { detail: Ev
 
   if (!match) return null
 
+  // G20: a live match reaches this dialog from the dead tablet path, where the desk is
+  // entering the first result rather than correcting a stored one, and the head says so.
+  const correcting = match.status === 'done'
   const team = (teamId: number | null): TeamRow => detail.teams.find(t => t.id === teamId) ?? detail.teams[0]
 
   const submit = (e: FormEvent) => {
@@ -122,7 +125,7 @@ export function ResultDialog({ detail, match, open, onOpenChange }: { detail: Ev
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className={dialogSurface(576)}>
         <form onSubmit={submit} className={dialogStack}>
-          <DialogHeader><DialogTitle>Edit result</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{correcting ? 'Edit result' : 'Enter the result'}</DialogTitle></DialogHeader>
           <DialogBody className={cn(dialogBody, 'gap-4 sm:grid-cols-2')}>
             <p className="t2 text-gray-10 sm:col-span-2">{stated}</p>
 
@@ -162,7 +165,7 @@ export function ResultDialog({ detail, match, open, onOpenChange }: { detail: Ev
 
             {save.error && (
               <Alert className="sm:col-span-2">
-                <AlertTitle>That correction was not saved</AlertTitle>
+                <AlertTitle>{correcting ? 'That correction was not saved' : 'That result was not saved'}</AlertTitle>
                 <AlertDescription>{writeErrorMessage(save.error)}</AlertDescription>
               </Alert>
             )}

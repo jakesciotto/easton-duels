@@ -299,7 +299,7 @@ describe('LiveTab', () => {
     const user = userEvent.setup()
     await user.click(within(one).getByRole('button', { name: 'Enter the result' }))
     const dialog = await screen.findByRole('dialog')
-    expect(within(dialog).getByRole('heading', { name: 'Edit result' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('heading', { name: 'Enter the result' })).toBeInTheDocument()
 
     await user.click(within(dialog).getByRole('button', { name: /Mateo Rivera wins/ }))
     await user.click(within(dialog).getByRole('button', { name: 'Save result' }))
