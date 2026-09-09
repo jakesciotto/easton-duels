@@ -3,6 +3,13 @@ import { deriveKidsBelt } from './belts.js'
 import { ageFromAgeGroup, weightFromWeightClass } from './parse.js'
 import { makeCompetitorId } from './slug.js'
 
+// WellnessLiving reports the promotion as a datetime, "2024-05-14 06:00:00". The profile
+// prints the day, so the pool keeps the day.
+function promotionDate(raw: string | null): string | null {
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(raw ?? '')
+  return m ? m[1] : raw || null
+}
+
 export function buildCandidates(records: WlBeltRecord[], competitors: LeaderboardCompetitor[]): RosterCandidate[] {
   const latest = new Map<string, WlBeltRecord>()
   for (const r of records) {
@@ -24,7 +31,7 @@ export function buildCandidates(records: WlBeltRecord[], competitors: Leaderboar
         age: ageFromAgeGroup(c?.ageGroup ?? null),
         weightLbs: weightFromWeightClass(c?.weightClass ?? null),
         gender: c?.gender ?? null,
-        promotedAt: r.promotedAt,
+        promotedAt: promotionDate(r.promotedAt),
       }
     })
     .sort((a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName))
