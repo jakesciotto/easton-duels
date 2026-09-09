@@ -43,8 +43,19 @@ export function inFlightCopy(titles: string[]): string {
   return `${titles[0]}, ${titles[1]} and ${titles.length - 2} more`
 }
 
-export function SyncRosterDialog({ detail, open, onOpenChange }: { detail: EventDetail; open: boolean; onOpenChange: (o: boolean) => void }) {
+export function SyncRosterDialog({ detail, open, onOpenChange, onReport }: {
+  detail: EventDetail
+  open: boolean
+  onOpenChange: (o: boolean) => void
+  /**
+   * 7.1. The report is read on the tab, not here, because the organizer acts on it row by
+   * row and the dialog covers the rows. It travels on the close rather than on the answer,
+   * so the alert never appears behind the surface that produced it.
+   */
+  onReport: (report: SyncReport) => void
+}) {
   const eventId = detail.event.id
+  const stored = detail.event.wlLocations ?? null
   const [locations, setLocations] = useState<Location[] | null>(null)
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
@@ -86,7 +97,12 @@ export function SyncRosterDialog({ detail, open, onOpenChange }: { detail: Event
       .then(locs => {
         if (ignore) return
         setLocations(locs)
-        setPicked(new Set(locs.map(l => l.kBusiness)))
+        // A stored id WellnessLiving no longer offers has no checkbox, so it cannot be
+        // unticked and must not be posted. The first sync has stored nothing, and the
+        // whole gym is the honest default there.
+        const offered = locs.map(l => l.kBusiness)
+        const prefill = stored === null ? offered : offered.filter(k => stored.includes(k))
+        setPicked(new Set(prefill.length === 0 ? offered : prefill))
       })
       .catch(e => { if (!ignore) setError(e instanceof ApiError ? e.message : 'Could not reach the server') })
     return () => { ignore = true }
@@ -136,16 +152,22 @@ export function SyncRosterDialog({ detail, open, onOpenChange }: { detail: Event
     else n.delete(uid)
     return n
   })
+  // Every way out runs through here: the Close button, Escape, the backdrop, and the add
+  // that closes on success. A report the operator never sees would be a run with no answer.
+  const close = (o: boolean) => {
+    if (!o && report !== null) onReport(report)
+    onOpenChange(o)
+  }
   const submit = () => {
     add.mutate((candidates ?? []).filter(c => selected.has(c.wlUid)), {
-      onSuccess: () => onOpenChange(false),
+      onSuccess: () => close(false),
     })
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={close}>
       <DialogContent className={dialogSurface(672)}>
-        <DialogHeader><DialogTitle>Sync roster from WellnessLiving</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>Sync from WellnessLiving</DialogTitle></DialogHeader>
         <DialogBody className={cn(dialogBody, 'gap-2')}>
           {error && (
             <Alert>
@@ -170,7 +192,7 @@ export function SyncRosterDialog({ detail, open, onOpenChange }: { detail: Event
                   {l.title}
                 </span>
               ))}
-              <Button size="sm" onClick={pull} disabled={pulling || picked.size === 0}>Pull roster</Button>
+              <Button size="sm" onClick={pull} disabled={pulling || picked.size === 0}>Sync</Button>
             </div>
           )}
 
@@ -255,7 +277,7 @@ export function SyncRosterDialog({ detail, open, onOpenChange }: { detail: Event
           )}
         </DialogBody>
         <DialogFooter className={dialogFooter}>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>Close</Button>
+          <Button variant="ghost" onClick={() => close(false)}>Close</Button>
           <Button onClick={submit} disabled={selected.size === 0 || add.isPending}>Add {selected.size} {selected.size === 1 ? 'competitor' : 'competitors'}</Button>
         </DialogFooter>
       </DialogContent>

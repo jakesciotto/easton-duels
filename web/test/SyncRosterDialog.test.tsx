@@ -1,12 +1,12 @@
 import { useState } from 'react'
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
-import { render, screen, act } from '@testing-library/react'
+import { render, screen, act, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { SyncRosterDialog, SYNC_DEADLINE_MS, inFlightCopy, pullProgress } from '@/routes/event/SyncRosterDialog'
 import { setAdminToken } from '@/lib/auth'
 import { qk } from '@/lib/queries'
-import type { EventDetail } from '@/lib/types'
+import type { EventDetail, SyncReport } from '@/lib/types'
 import { fakeFetch } from './fakes'
 
 beforeEach(() => { localStorage.clear(); setAdminToken('tok') })
@@ -19,9 +19,9 @@ const detail: EventDetail = {
 }
 const cand = { wlUid: '9', firstName: 'Zoe', lastName: 'Martin', belt: 'grey', wlLocation: 'Ridgeline', leaderboardId: 'zoe-martin', erp: 5.2, age: 8, weightLbs: 60, gender: 'F' }
 
-function mount() {
+function mount(d: EventDetail = detail, onReport: (r: SyncReport) => void = () => {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  render(<QueryClientProvider client={qc}><SyncRosterDialog detail={detail} open onOpenChange={() => {}} /></QueryClientProvider>)
+  render(<QueryClientProvider client={qc}><SyncRosterDialog detail={d} open onOpenChange={() => {}} onReport={onReport} /></QueryClientProvider>)
   return qc
 }
 
@@ -30,10 +30,13 @@ function Host() {
   return (
     <>
       <button onClick={() => setOpen(true)}>Open sync</button>
-      <SyncRosterDialog detail={detail} open={open} onOpenChange={setOpen} />
+      <SyncRosterDialog detail={detail} open={open} onOpenChange={setOpen} onReport={() => {}} />
     </>
   )
 }
+
+const footerButton = (name: string) =>
+  within(document.querySelector('[data-slot="dialog-footer"]') as HTMLElement).getByRole('button', { name })
 
 function mountHost() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -56,6 +59,79 @@ describe('sync progress', () => {
 })
 
 describe('SyncRosterDialog', () => {
+  const twoLocations = () => fakeFetch(url => {
+    if (url.endsWith('/wl-locations')) return { json: [{ kBusiness: '100001', title: 'North', city: 'Northtown' }, { kBusiness: '100002', title: 'South', city: 'Southtown' }] }
+    if (url.endsWith('/roster/sync')) return { json: { candidates: [cand], warnings: [] } }
+    return { json: {} }
+  })
+
+  it('names itself for the one press it is', async () => {
+    fakeFetch(() => ({ json: [] }))
+    mount()
+    expect(await screen.findByText('Sync from WellnessLiving')).toBeInTheDocument()
+  })
+
+  // Spec 7.2: the first sync picks the locations and the event stores them, so every
+  // later sync opens on the pick the organizer already made rather than on all of them.
+  it('prefills the locations the event stored', async () => {
+    const f = twoLocations()
+    mount({ ...detail, event: { ...detail.event, wlLocations: ['100002'] } })
+    const user = userEvent.setup()
+    expect(await screen.findByLabelText('South')).toBeChecked()
+    expect(screen.getByLabelText('North')).not.toBeChecked()
+    await user.click(screen.getByRole('button', { name: 'Sync' }))
+    await vi.waitFor(() => expect(f.calls.some(c => c.url.endsWith('/roster/sync'))).toBe(true))
+    expect(f.body(f.calls.findIndex(c => c.url.endsWith('/roster/sync')))).toEqual({ kBusinesses: ['100002'] })
+  })
+
+  it('checks every location before the event has stored a pick', async () => {
+    twoLocations()
+    mount()
+    expect(await screen.findByLabelText('North')).toBeChecked()
+    expect(screen.getByLabelText('South')).toBeChecked()
+  })
+
+  // A location the gym has dropped is no longer offered, so a stored id for it cannot be
+  // ticked and must not be posted.
+  it('drops a stored location WellnessLiving no longer offers', async () => {
+    const f = twoLocations()
+    mount({ ...detail, event: { ...detail.event, wlLocations: ['100002', '999999'] } })
+    const user = userEvent.setup()
+    expect(await screen.findByLabelText('South')).toBeChecked()
+    await user.click(screen.getByRole('button', { name: 'Sync' }))
+    await vi.waitFor(() => expect(f.calls.some(c => c.url.endsWith('/roster/sync'))).toBe(true))
+    expect(f.body(f.calls.findIndex(c => c.url.endsWith('/roster/sync')))).toEqual({ kBusinesses: ['100002'] })
+  })
+
+  it('hands the report to the tab when it closes after a sync', async () => {
+    fakeFetch(url => {
+      if (url.endsWith('/wl-locations')) return { json: [{ kBusiness: '100001', title: 'North', city: 'Northtown' }] }
+      if (url.endsWith('/roster/sync')) {
+        return { json: { candidates: [cand], warnings: [], report: { linked: ['Zoe Martin'], refreshed: 2, changed: [], suggested: [], ambiguous: [], unmatched: [], gone: [] } } }
+      }
+      return { json: {} }
+    })
+    const onReport = vi.fn()
+    mount(detail, onReport)
+    const user = userEvent.setup()
+    await screen.findByLabelText('North')
+    await user.click(screen.getByRole('button', { name: 'Sync' }))
+    await screen.findByText('Linked 1. Refreshed 2, 0 changed.')
+    expect(onReport).not.toHaveBeenCalled()
+    await user.click(footerButton('Close'))
+    expect(onReport).toHaveBeenCalledWith({ linked: ['Zoe Martin'], refreshed: 2, changed: [], suggested: [], ambiguous: [], unmatched: [], gone: [] })
+  })
+
+  it('hands nothing to the tab when it closes without a sync', async () => {
+    twoLocations()
+    const onReport = vi.fn()
+    mount(detail, onReport)
+    const user = userEvent.setup()
+    await screen.findByLabelText('North')
+    await user.click(footerButton('Close'))
+    expect(onReport).not.toHaveBeenCalled()
+  })
+
   it('shows the not-configured message from a 503', async () => {
     fakeFetch(() => ({ status: 503, json: { error: { code: 'wl_not_configured', message: 'WellnessLiving credentials are not set' } } }))
     mount()
@@ -72,7 +148,7 @@ describe('SyncRosterDialog', () => {
     mount()
     const user = userEvent.setup()
     await user.click(await screen.findByLabelText('South'))
-    await user.click(screen.getByRole('button', { name: 'Pull roster' }))
+    await user.click(screen.getByRole('button', { name: 'Sync' }))
     expect(await screen.findByText('Zoe Martin')).toBeInTheDocument()
     expect(screen.getByText(/No ERP join/)).toBeInTheDocument()
     expect(f.body(f.calls.findIndex(c => c.url.endsWith('/roster/sync')))).toEqual({ kBusinesses: ['100001'] })
@@ -97,7 +173,7 @@ describe('SyncRosterDialog', () => {
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'Open sync' }))
     await screen.findByLabelText('North')
-    await user.click(screen.getByRole('button', { name: 'Pull roster' }))
+    await user.click(screen.getByRole('button', { name: 'Sync' }))
     expect(await screen.findByText('Zoe Martin')).toBeInTheDocument()
     await user.type(screen.getByLabelText('Search'), 'zoe')
     await user.click(screen.getByLabelText('Select Zoe Martin'))
@@ -120,7 +196,7 @@ describe('SyncRosterDialog', () => {
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'Open sync' }))
     await screen.findByLabelText('North')
-    await user.click(screen.getByRole('button', { name: 'Pull roster' }))
+    await user.click(screen.getByRole('button', { name: 'Sync' }))
 
     // Close mid-pull, then reopen before the stale response lands -- the reopen resets state for
     // a new session, and the first pull's response has to be discarded rather than repopulate it.
@@ -151,7 +227,7 @@ describe('SyncRosterDialog', () => {
     const pull = async () => {
       const user = userEvent.setup()
       await screen.findByLabelText('North')
-      await user.click(screen.getByRole('button', { name: 'Pull roster' }))
+      await user.click(screen.getByRole('button', { name: 'Sync' }))
       await screen.findByText('Zoe Martin')
     }
 
@@ -203,7 +279,7 @@ describe('SyncRosterDialog', () => {
     mount()
     const user = userEvent.setup()
     await screen.findByLabelText('North')
-    await user.click(screen.getByRole('button', { name: 'Pull roster' }))
+    await user.click(screen.getByRole('button', { name: 'Sync' }))
 
     // 6.12: 280 seconds is 28 times the attention limit, so a percent-done readout and
     // a signposted interrupt are mandatory and neither may wait for the first response.

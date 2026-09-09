@@ -96,13 +96,13 @@ describe('SetupRosterStep', () => {
     const user = userEvent.setup()
     await screen.findByText('Who is competing?')
     await user.click(screen.getByRole('button', { name: /Import from WellnessLiving/ }))
-    expect(await screen.findByText('Sync roster from WellnessLiving')).toBeInTheDocument()
+    expect(await screen.findByText('Sync from WellnessLiving')).toBeInTheDocument()
     expect(screen.queryByText('Who is competing?')).not.toBeInTheDocument()
 
     // The header's X carries the same name, and the footer's is the one the operator reads.
     await user.click(screen.getAllByRole('button', { name: 'Close' }).at(-1) as HTMLElement)
     expect(await screen.findByText('Who is competing?')).toBeInTheDocument()
-    expect(screen.queryByText('Sync roster from WellnessLiving')).not.toBeInTheDocument()
+    expect(screen.queryByText('Sync from WellnessLiving')).not.toBeInTheDocument()
   })
 
   it('opens the paste dialog as a sub step and comes back', async () => {

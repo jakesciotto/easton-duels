@@ -116,7 +116,9 @@ export function SetupRosterStep({ detail, open, onClose, onContinue }: {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <SyncRosterDialog detail={detail} open={sub === 'sync'} onOpenChange={o => { if (!o) setSub(null) }} />
+      {/* The setup step has no roster rows to act on, so the report is read inside the
+          dialog and goes no further. The Roster tab is where it becomes a standing alert. */}
+      <SyncRosterDialog detail={detail} open={sub === 'sync'} onOpenChange={o => { if (!o) setSub(null) }} onReport={() => {}} />
       <PasteRosterDialog detail={detail} open={sub === 'paste'} onOpenChange={o => { if (!o) setSub(null) }} />
     </>
   )
