@@ -20,7 +20,7 @@ const at = (far: number | null): Snapshot => {
 }
 
 describe('farOf', () => {
-  it('reads the event through one loose accessor and answers null where there is none', () => {
+  it('reads the event and answers null where it carries none', () => {
     expect(farOf(at(1.2))).toBe(1.2)
     expect(farOf(at(null))).toBeNull()
     expect(farOf(null)).toBeNull()

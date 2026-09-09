@@ -21,6 +21,8 @@ export interface EventRow {
   contact?: EventContact | null
   /** When an admin signed the record off. Null on every event that is not certified. */
   certifiedAt?: string | null
+  /** G24: the board's far setting. Null until an admin sets one, and the board reads 1.0. */
+  far?: number | null
 }
 export interface TeamRow { id: number; eventId: number; name: string; color: TeamColor; position: number }
 export interface AthleteRow {

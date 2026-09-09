@@ -18,17 +18,24 @@ function clamp(value: number): number {
 }
 
 /**
- * The event's own far setting, or null where it carries none.
- *
- * Read through one loose accessor because the column lands with the server work and this
- * file has to compile and behave correctly on both sides of that merge: an event that
- * does not carry the field reads as an event that has not been given one, which is the
- * same answer and the same fallback.
+ * The event's own far setting, or null where it carries none. The snapshot and the event
+ * detail both carry the column; the list row may not, so the field is optional here.
  */
-export function farOf(snapshot: { event: unknown } | null | undefined): number | null {
-  return (snapshot?.event as { far?: number | null } | undefined)?.far ?? null
+export function farOf(snapshot: { event: { far?: number | null } } | null | undefined): number | null {
+  return snapshot?.event.far ?? null
 }
 
+/** The index of the step nearest a value, which is where the keys step from. */
+function nearestStep(value: number): number {
+  let nearest = 0
+  for (let i = 1; i < FAR_STEPS.length; i += 1) {
+    if (Math.abs(FAR_STEPS[i] - value) < Math.abs(FAR_STEPS[nearest] - value)) nearest = i
+  }
+  return nearest
+}
+
+// Clamped to the range, not snapped to a step: 9.1 computes the value from a measured
+// distance, and a computed 1.05 is the calibration, not a typo.
 function fromQuery(): number | null {
   if (typeof window === 'undefined') return null
   const raw = new URLSearchParams(window.location.search).get('far')
@@ -94,13 +101,7 @@ export function useFar(snapshot: Snapshot | null): number {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== '+' && e.key !== '=' && e.key !== '-' && e.key !== '_') return
       const step = e.key === '-' || e.key === '_' ? -1 : 1
-      setLocal(current => {
-        let nearest = 0
-        for (let i = 1; i < FAR_STEPS.length; i += 1) {
-          if (Math.abs(FAR_STEPS[i] - current) < Math.abs(FAR_STEPS[nearest] - current)) nearest = i
-        }
-        return FAR_STEPS[Math.min(FAR_STEPS.length - 1, Math.max(0, nearest + step))]
-      })
+      setLocal(current => FAR_STEPS[Math.min(FAR_STEPS.length - 1, Math.max(0, nearestStep(current) + step))])
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)

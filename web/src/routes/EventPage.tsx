@@ -5,6 +5,7 @@ import type { EventMode, EventStatus, Snapshot } from '@shared/types'
 import { PinGate } from '@/components/PinGate'
 import { AdminShell } from '@/components/AdminShell'
 import { RouteFallback } from '@/components/RouteFallback'
+import { ApiError } from '@/lib/api'
 import { adminApi, useAdminMutation, useEventDetail } from '@/lib/queries'
 import { SnapshotStreamContext, useSnapshot } from '@/lib/useSnapshot'
 import { pollIntervalForSnapshot } from '@/lib/pollInterval'
@@ -134,8 +135,6 @@ function EventMeta({ eventId, detail, mode, refusal, certified, snapshot }: {
   const [confirming, setConfirming] = useState<MidMatchMat[]>([])
   const [contactOpen, setContactOpen] = useState(false)
   const set = useAdminMutation(eventId, (m: EventMode) => adminApi(`/api/events/${eventId}`, { method: 'PATCH', body: { mode: m } }))
-  // Typed loosely on purpose: the column lands with the server work, and this control has
-  // to compile and behave on both sides of that merge.
   const setFar = useAdminMutation(eventId, (far: number) => adminApi(`/api/events/${eventId}`, { method: 'PATCH', body: { far } }))
   const storedFar = farOf(detail)
   const shownFar = setFar.isPending && setFar.variables !== undefined ? setFar.variables : storedFar
@@ -228,8 +227,10 @@ function EventBody({ eventId }: { eventId: number }) {
   const shared = useMemo(() => ({ eventId, state: stream }), [eventId, stream])
   if (q.isLoading) return <RouteFallback rung="two-line" />
   if (q.error || !q.data) {
+    // A refusal the server answered, a missing event above all, is not an outage: the
+    // stream fails on the same id, and a banner over "not found" would say the wrong thing.
     return (
-      <AdminShell title="Event" connected={stream.connected}>
+      <AdminShell title="Event" connected={q.error instanceof ApiError ? undefined : stream.connected}>
         <div className={PANEL}>
           <Alert>
             <AlertDescription>{q.error?.message ?? 'Not found'}</AlertDescription>

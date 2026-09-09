@@ -174,6 +174,13 @@ describe('EventPage: the connection banner on the shell', () => {
     resolveSnapshot({ json: { version: 1, snapshot: SLOW_SNAPSHOT } })
     await vi.waitFor(() => expect(screen.queryByText('Reconnecting to the server')).not.toBeInTheDocument())
   })
+
+  it('keeps the banner down over an event the server answered does not exist', async () => {
+    const missing: Reply = { status: 404, json: { error: { code: 'not_found', message: 'event not found' } } }
+    mount(url => (url === '/api/events/7' || /\/snapshot(\?|$)/.test(url) ? missing : undefined))
+    expect(await screen.findByText('event not found')).toBeInTheDocument()
+    expect(screen.queryByText('Reconnecting to the server')).not.toBeInTheDocument()
+  })
 })
 
 describe('EventPage, 6.4: one poll for the whole event', () => {
