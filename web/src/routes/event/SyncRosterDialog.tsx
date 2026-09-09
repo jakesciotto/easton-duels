@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { formatClock } from '@shared/clock'
 import { writeErrorMessage } from '@/lib/eventMode'
-import { adminApi, useAdminMutation } from '@/lib/queries'
+import { adminApi, qk, useAdminMutation } from '@/lib/queries'
 import { ApiError } from '@/lib/api'
-import type { EventDetail, RosterCandidate } from '@/lib/types'
+import type { EventDetail, MatchReport, RosterCandidate } from '@/lib/types'
+import { reportLines } from './link-report'
 import { cn } from '@/lib/utils'
 import { dialogBody, dialogFooter, dialogSurface } from '@/components/dialog-frame'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -48,6 +50,7 @@ export function SyncRosterDialog({ detail, open, onOpenChange }: { detail: Event
   const [error, setError] = useState<string | null>(null)
   const [candidates, setCandidates] = useState<RosterCandidate[] | null>(null)
   const [warnings, setWarnings] = useState<string[]>([])
+  const [report, setReport] = useState<MatchReport | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [search, setSearch] = useState('')
   const [startedAt, setStartedAt] = useState<number | null>(null)
@@ -61,6 +64,7 @@ export function SyncRosterDialog({ detail, open, onOpenChange }: { detail: Event
   // ever increases survives any number of closes and reopens across the same pull, and Stop
   // bumps it too, so an abandoned pull can never repopulate the list behind the operator.
   const generation = useRef(0)
+  const qc = useQueryClient()
 
   useEffect(() => {
     if (!open) return
@@ -71,6 +75,7 @@ export function SyncRosterDialog({ detail, open, onOpenChange }: { detail: Event
     setPicked(new Set())
     setCandidates(null)
     setWarnings([])
+    setReport(null)
     setSelected(new Set())
     setSearch('')
     setStartedAt(null)
@@ -101,11 +106,15 @@ export function SyncRosterDialog({ detail, open, onOpenChange }: { detail: Event
     setStopped(false)
     setError(null)
     try {
-      const r = await adminApi<{ candidates: RosterCandidate[]; warnings: string[] }>(`/api/events/${eventId}/roster/sync`, { method: 'POST', body: { kBusinesses: [...picked] } })
+      const r = await adminApi<{ candidates: RosterCandidate[]; warnings: string[]; match?: MatchReport }>(`/api/events/${eventId}/roster/sync`, { method: 'POST', body: { kBusinesses: [...picked] } })
       if (generation.current !== myGeneration) return
       setCandidates(r.candidates)
       setWarnings(r.warnings)
+      setReport(r.match ?? null)
       setSelected(new Set())
+      // The pull links what it can, so the roster behind this dialog is stale the moment
+      // it lands: the "on roster" badge and the Link button both read it.
+      await qc.invalidateQueries({ queryKey: qk.event(eventId) })
     } catch (e) {
       if (generation.current === myGeneration) setError(e instanceof ApiError ? e.message : 'Could not reach the server')
     } finally {
@@ -200,6 +209,12 @@ export function SyncRosterDialog({ detail, open, onOpenChange }: { detail: Event
               <AlertTitle variant="attend">The pull came back with gaps</AlertTitle>
               <AlertDescription>{warnings.join(' ')}</AlertDescription>
             </Alert>
+          )}
+
+          {report && (
+            <div className="grid gap-1">
+              {reportLines(report).map(line => <p key={line} className="t2 text-gray-11">{line}</p>)}
+            </div>
           )}
 
           {candidates && (

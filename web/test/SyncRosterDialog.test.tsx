@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { SyncRosterDialog, SYNC_DEADLINE_MS, inFlightCopy, pullProgress } from '@/routes/event/SyncRosterDialog'
 import { setAdminToken } from '@/lib/auth'
+import { qk } from '@/lib/queries'
 import type { EventDetail } from '@/lib/types'
 import { fakeFetch } from './fakes'
 
@@ -21,6 +22,7 @@ const cand = { wlUid: '9', firstName: 'Zoe', lastName: 'Martin', belt: 'grey', w
 function mount() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(<QueryClientProvider client={qc}><SyncRosterDialog detail={detail} open onOpenChange={() => {}} /></QueryClientProvider>)
+  return qc
 }
 
 function Host() {
@@ -132,6 +134,59 @@ describe('SyncRosterDialog', () => {
     })
 
     expect(screen.queryByText('Zoe Martin')).not.toBeInTheDocument()
+  })
+
+  /**
+   * Spec 5.3. The import links what it can on the way in, so the dialog owes the operator
+   * the outcome in words: how many matched, and by name every competitor a person still
+   * has to deal with by hand.
+   */
+  describe('the match report', () => {
+    const pullWith = (match: unknown) => fakeFetch(url => {
+      if (url.endsWith('/wl-locations')) return { json: [{ kBusiness: '100001', title: 'North', city: 'Northtown' }] }
+      if (url.endsWith('/roster/sync')) return { json: { candidates: [cand], warnings: [], match } }
+      return { json: {} }
+    })
+
+    const pull = async () => {
+      const user = userEvent.setup()
+      await screen.findByLabelText('North')
+      await user.click(screen.getByRole('button', { name: 'Pull roster' }))
+      await screen.findByText('Zoe Martin')
+    }
+
+    it('reads every list the report came back with', async () => {
+      pullWith({
+        matched: ['Zoe Martin', 'Kai Wong'], refreshed: 1,
+        unmatched: ['Ana Ruiz', 'Ben Oyelaran'], ambiguous: ['Sam Lee'], duplicates: ['Mia Park'],
+      })
+      mount()
+      await pull()
+      expect(screen.getByText('Matched 2 pasted competitors to WellnessLiving.')).toBeInTheDocument()
+      expect(screen.getByText('Not found: Ana Ruiz, Ben Oyelaran.')).toBeInTheDocument()
+      expect(screen.getByText('Two candidates, link by hand: Sam Lee.')).toBeInTheDocument()
+      expect(screen.getByText('Already on the roster: Mia Park.')).toBeInTheDocument()
+    })
+
+    it('prints one line when nothing is left to do by hand', async () => {
+      pullWith({ matched: ['Zoe Martin'], refreshed: 0, unmatched: [], ambiguous: [], duplicates: [] })
+      mount()
+      await pull()
+      expect(screen.getByText('Matched 1 pasted competitor to WellnessLiving.')).toBeInTheDocument()
+      expect(screen.queryByText(/Not found/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/link by hand/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/Already on the roster/)).not.toBeInTheDocument()
+    })
+
+    // The pull writes to the roster, so the detail behind the dialog is stale the moment
+    // it lands: the "on roster" badges and the Link buttons all read it.
+    it('refetches the event after a pull', async () => {
+      pullWith({ matched: [], refreshed: 0, unmatched: [], ambiguous: [], duplicates: [] })
+      const qc = mount()
+      const spy = vi.spyOn(qc, 'invalidateQueries')
+      await pull()
+      await vi.waitFor(() => expect(spy).toHaveBeenCalledWith({ queryKey: qk.event(7) }))
+    })
   })
 
   it('shows a determinate bar and a Stop from the first second, and Stop abandons the pull', async () => {

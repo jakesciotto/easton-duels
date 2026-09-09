@@ -1,5 +1,9 @@
 import type { EventContact, EventMode, EventStatus, MatchStatus, RulesetAction, RulesetTerminal, TeamColor, WinType } from '@shared/types'
 
+// The WellnessLiving match answers one shape, and the two screens that print it read it
+// from here rather than each reaching into the server's own module.
+export type { MatchReport } from '@shared/types'
+
 export interface EventRow {
   id: number
   name: string

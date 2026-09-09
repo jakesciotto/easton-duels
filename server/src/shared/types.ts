@@ -49,6 +49,23 @@ export type AuditAction =
   // live write records: a desk entry's absolute score, and the pre-0007 admin event kind.
   | 'set_score' | 'admin'
 
+/**
+ * What one run of the WellnessLiving match did, in the words both the import dialog and
+ * the Roster tab print. Names read "First Last".
+ */
+export interface MatchReport {
+  /** Every athlete linked on this run. */
+  matched: string[]
+  /** Linked athletes refreshed from the pool. */
+  refreshed: number
+  /** Unlinked athletes with no candidate of that slug. */
+  unmatched: string[]
+  /** Unlinked athletes with two or more candidates of that slug. */
+  ambiguous: string[]
+  /** Unlinked athletes whose only candidate is already on another row. */
+  duplicates: string[]
+}
+
 export type AuditDetail = Record<string, unknown>
 
 export interface AuditEntry {
