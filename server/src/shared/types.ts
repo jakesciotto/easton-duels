@@ -42,7 +42,7 @@ export type AuditAction =
   | 'create' | 'event_edit' | 'mode' | 'contact' | 'mat_count' | 'far' | 'start' | 'finish' | 'delete'
   | 'certify' | 'uncertify'
   | 'team_edit'
-  | 'roster_add' | 'roster_edit' | 'roster_assign' | 'roster_remove' | 'roster_sync'
+  | 'roster_add' | 'roster_edit' | 'roster_assign' | 'roster_remove' | 'roster_sync' | 'roster_link'
   | 'match_create' | 'match_edit' | 'match_delete' | 'generate' | 'reorder'
   | 'ruleset_create' | 'ruleset_edit' | 'ruleset_delete'
   // Backfilled rows carry the match event's own type, and two of those are not verbs any
@@ -57,6 +57,16 @@ export interface AuditEntry {
   actor: AuditActor
   action: AuditAction
   detail: AuditDetail
+}
+
+// One run of the WellnessLiving matcher, whether from an import or the Roster tab's own
+// button. Names are "First Last", so the web prints them without a lookup.
+export interface MatchReport {
+  matched: string[]
+  refreshed: number
+  unmatched: string[]
+  ambiguous: string[]
+  duplicates: string[]
 }
 
 export interface ClockState { elapsedMs: number; startedAt: string | null; lengthMs: number }
