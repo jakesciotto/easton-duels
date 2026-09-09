@@ -8,7 +8,7 @@ import EventPage, { FAR_GROUP_LABEL } from '@/routes/EventPage'
 import { qk } from '@/lib/queries'
 import { ENGAGEMENT_RECHECK_MS } from '@/lib/operatorEngaged'
 import { CERTIFIED_REFUSAL, DESK_NOTE, MODE_GROUP_LABEL, MODE_LABEL, MODE_ORDER } from '@/lib/eventMode'
-import { setAdminToken } from '@/lib/auth'
+import { getAdminToken, setAdminToken } from '@/lib/auth'
 import type { EventDetail, MatchRow } from '@/lib/types'
 import { fakeFetch, sampleMatch, sampleSnapshot, type Reply } from './fakes'
 
@@ -795,14 +795,15 @@ describe('EventPage: deleting the event', () => {
     expect(f.body(i)).toEqual({})
   })
 
-  // A 401 clears the admin token and hands the screen back to the PIN gate, so the
-  // refusal that has to render in place is one of the others the route can answer.
-  it('reads a refusal inside the dialog and stays on the event', async () => {
+  // The server re-checks the PIN and answers 401 bad_pin with the session token still
+  // good. The client used to clear the token on any 401, which unmounted the page behind
+  // the PIN gate with the dialog and its refusal gone.
+  it('reads a wrong PIN inside the dialog and keeps the desk signed in', async () => {
     const base = detailWith(DELETABLE)
     const live = { ...base, event: { ...base.event, status: 'live' as const } }
     const { router } = mount((url, init) => {
       if (url === '/api/events/7' && init?.method === 'DELETE') {
-        return { status: 429, json: { error: { code: 'rate_limited', message: 'too many PIN attempts' } } }
+        return { status: 401, json: { error: { code: 'bad_pin', message: 'wrong PIN' } } }
       }
       return snapshotReply(url, slowSnapshot({ status: 'live' })) ?? (url === '/api/events/7' ? { json: live } : undefined)
     })
@@ -810,8 +811,25 @@ describe('EventPage: deleting the event', () => {
     const dialog = await openDialog(user)
     await typeCode(user, dialog, '000000')
     await user.click(within(dialog).getByRole('button', { name: 'Delete event' }))
-    expect(await within(dialog).findByText('too many PIN attempts')).toBeInTheDocument()
+    expect(await within(dialog).findByText('wrong PIN')).toBeInTheDocument()
     expect(router.state.location.pathname).toBe('/events/7')
+    expect(getAdminToken()).not.toBeNull()
+  })
+
+  it('still signs the desk out on a 401 that is not a PIN re-check', async () => {
+    const base = detailWith(DELETABLE)
+    const live = { ...base, event: { ...base.event, status: 'live' as const } }
+    mount((url, init) => {
+      if (url === '/api/events/7' && init?.method === 'DELETE') {
+        return { status: 401, json: { error: { code: 'unauthorized', message: 'token expired' } } }
+      }
+      return snapshotReply(url, slowSnapshot({ status: 'live' })) ?? (url === '/api/events/7' ? { json: live } : undefined)
+    })
+    const user = userEvent.setup()
+    const dialog = await openDialog(user)
+    await typeCode(user, dialog, '000000')
+    await user.click(within(dialog).getByRole('button', { name: 'Delete event' }))
+    await vi.waitFor(() => expect(getAdminToken()).toBeNull())
   })
 
   it('is dead once the results are certified', async () => {

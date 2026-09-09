@@ -9,12 +9,14 @@ export const qk = {
   event: (id: number) => ['event', id] as const,
 }
 
-// Admin request: injects the token; a 401 clears it so PinGate asks again.
+// Admin request: injects the token; a 401 clears it so PinGate asks again. Certify,
+// unlock and delete re-check the PIN and answer 401 bad_pin with the session still good,
+// so that one code keeps the token and the dialog that asked.
 export async function adminApi<T = unknown>(path: string, opts: Omit<ApiOptions, 'token'> = {}): Promise<T> {
   try {
     return await api<T>(path, { ...opts, token: getAdminToken() })
   } catch (e) {
-    if (e instanceof ApiError && e.status === 401) clearAdminToken()
+    if (e instanceof ApiError && e.status === 401 && e.code !== 'bad_pin') clearAdminToken()
     throw e
   }
 }
