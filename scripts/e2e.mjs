@@ -186,6 +186,44 @@ async function certifyArm(admin) {
   assert(signed[1].detail.reason === 'mat 1 score was called wrong', 'the unlock carries its reason')
 }
 
+// The one destructive path on the console. A setup event goes on a plain confirm; an
+// event with results asks for the PIN, the same way certify does.
+async function deleteArm(admin) {
+  const setup = await j('POST', '/api/events', {
+    name: 'E2E Delete', date: '2026-10-06', matCount: 1,
+    teams: [{ name: 'Ridge', color: 'red' }, { name: 'Lake', color: 'blue' }],
+  }, admin)
+  assert(setup.status === 201, 'delete arm event created')
+  const setupId = setup.body.event.id
+  const [teamA, teamB] = setup.body.teams
+
+  const bulk = await j('POST', `/api/events/${setupId}/athletes`, {
+    bulk: [
+      { firstName: 'Delta', lastName: 'One', age: 9, weightLbs: 60, belt: 'grey', gender: 'M', teamId: teamA.id },
+      { firstName: 'Delta', lastName: 'Two', age: 9, weightLbs: 62, belt: 'grey', gender: 'M', teamId: teamB.id },
+    ],
+  }, admin)
+  assert(bulk.status === 201, 'delete arm bulk paste accepted')
+
+  const plainDelete = await j('DELETE', `/api/events/${setupId}`, {}, admin)
+  assert(plainDelete.status === 204, 'a setup event deletes on a plain confirm')
+  const gone = await j('GET', `/api/events/${setupId}`, undefined, admin)
+  assert(gone.status === 404, 'the deleted event is gone')
+
+  const live = await j('POST', '/api/events', {
+    name: 'E2E Delete Live', date: '2026-10-07', matCount: 1,
+    teams: [{ name: 'Ridge', color: 'red' }, { name: 'Lake', color: 'blue' }],
+  }, admin)
+  assert(live.status === 201, 'delete arm second event created')
+  const liveId = live.body.event.id
+  assert((await j('PATCH', `/api/events/${liveId}`, { status: 'live' }, admin)).status === 200, 'delete arm event live')
+
+  const noPin = await j('DELETE', `/api/events/${liveId}`, {}, admin)
+  assert(noPin.status === 422, 'a live event refuses delete without the PIN')
+  const withPin = await j('DELETE', `/api/events/${liveId}`, { pin: '123456' }, admin)
+  assert(withPin.status === 204, 'the right PIN deletes a live event')
+}
+
 try {
   await waitForHealth()
   const admin = (await j('POST', '/api/auth/admin', { pin: '123456' })).body.token
@@ -223,6 +261,7 @@ try {
 
   await entryArm(admin)
   await certifyArm(admin)
+  await deleteArm(admin)
   console.log('e2e ok')
 } finally {
   server.kill()
