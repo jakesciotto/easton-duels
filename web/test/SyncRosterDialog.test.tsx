@@ -137,14 +137,14 @@ describe('SyncRosterDialog', () => {
   })
 
   /**
-   * Spec 5.3. The import links what it can on the way in, so the dialog owes the operator
-   * the outcome in words: how many matched, and by name every competitor a person still
-   * has to deal with by hand.
+   * Spec 7.2. The sync links what it can on the way in, so the dialog owes the operator
+   * the outcome in words: what it did, and by name every competitor a person still has to
+   * deal with by hand.
    */
-  describe('the match report', () => {
-    const pullWith = (match: unknown) => fakeFetch(url => {
+  describe('the sync report', () => {
+    const pullWith = (report: unknown) => fakeFetch(url => {
       if (url.endsWith('/wl-locations')) return { json: [{ kBusiness: '100001', title: 'North', city: 'Northtown' }] }
-      if (url.endsWith('/roster/sync')) return { json: { candidates: [cand], warnings: [], match } }
+      if (url.endsWith('/roster/sync')) return { json: { candidates: [cand], warnings: [], report } }
       return { json: {} }
     })
 
@@ -157,31 +157,34 @@ describe('SyncRosterDialog', () => {
 
     it('reads every list the report came back with', async () => {
       pullWith({
-        matched: ['Zoe Martin', 'Kai Wong'], refreshed: 1,
-        unmatched: ['Ana Ruiz', 'Ben Oyelaran'], ambiguous: ['Sam Lee'], duplicates: ['Mia Park'],
+        linked: ['Zoe Martin', 'Kai Wong'], refreshed: 1, changed: ['Kai Wong'],
+        suggested: [{ athleteId: 5, name: 'Mateo Rivera', candidate: 'Mateo Rivera-Lopez', location: 'Boulder', score: 0.82 }],
+        ambiguous: ['Sam Lee'], unmatched: ['Ana Ruiz', 'Ben Oyelaran'], gone: ['Mia Park'],
       })
       mount()
       await pull()
-      expect(screen.getByText('Matched 2 pasted competitors to WellnessLiving.')).toBeInTheDocument()
-      expect(screen.getByText('Not found: Ana Ruiz, Ben Oyelaran.')).toBeInTheDocument()
+      expect(screen.getByText('Linked 2. Refreshed 1, 1 changed.')).toBeInTheDocument()
+      expect(screen.getByText('To confirm: Mateo Rivera looks like Mateo Rivera-Lopez, Boulder.')).toBeInTheDocument()
       expect(screen.getByText('Two candidates, link by hand: Sam Lee.')).toBeInTheDocument()
-      expect(screen.getByText('Already on the roster: Mia Park.')).toBeInTheDocument()
+      expect(screen.getByText('Not found: Ana Ruiz, Ben Oyelaran.')).toBeInTheDocument()
+      expect(screen.getByText('Gone from WellnessLiving: Mia Park.')).toBeInTheDocument()
     })
 
     it('prints one line when nothing is left to do by hand', async () => {
-      pullWith({ matched: ['Zoe Martin'], refreshed: 0, unmatched: [], ambiguous: [], duplicates: [] })
+      pullWith({ linked: ['Zoe Martin'], refreshed: 0, changed: [], suggested: [], ambiguous: [], unmatched: [], gone: [] })
       mount()
       await pull()
-      expect(screen.getByText('Matched 1 pasted competitor to WellnessLiving.')).toBeInTheDocument()
+      expect(screen.getByText('Linked 1. Refreshed 0, 0 changed.')).toBeInTheDocument()
+      expect(screen.queryByText(/To confirm/)).not.toBeInTheDocument()
       expect(screen.queryByText(/Not found/)).not.toBeInTheDocument()
       expect(screen.queryByText(/link by hand/)).not.toBeInTheDocument()
-      expect(screen.queryByText(/Already on the roster/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/Gone from WellnessLiving/)).not.toBeInTheDocument()
     })
 
     // The pull writes to the roster, so the detail behind the dialog is stale the moment
     // it lands: the "on roster" badges and the Link buttons all read it.
     it('refetches the event after a pull', async () => {
-      pullWith({ matched: [], refreshed: 0, unmatched: [], ambiguous: [], duplicates: [] })
+      pullWith({ linked: [], refreshed: 0, changed: [], suggested: [], ambiguous: [], unmatched: [], gone: [] })
       const qc = mount()
       const spy = vi.spyOn(qc, 'invalidateQueries')
       await pull()

@@ -4,7 +4,7 @@ import { formatClock } from '@shared/clock'
 import { writeErrorMessage } from '@/lib/eventMode'
 import { adminApi, qk, useAdminMutation } from '@/lib/queries'
 import { ApiError } from '@/lib/api'
-import type { EventDetail, MatchReport, RosterCandidate } from '@/lib/types'
+import type { EventDetail, RosterCandidate, SyncReport } from '@/lib/types'
 import { reportLines } from './link-report'
 import { cn } from '@/lib/utils'
 import { dialogBody, dialogFooter, dialogSurface } from '@/components/dialog-frame'
@@ -50,7 +50,7 @@ export function SyncRosterDialog({ detail, open, onOpenChange }: { detail: Event
   const [error, setError] = useState<string | null>(null)
   const [candidates, setCandidates] = useState<RosterCandidate[] | null>(null)
   const [warnings, setWarnings] = useState<string[]>([])
-  const [report, setReport] = useState<MatchReport | null>(null)
+  const [report, setReport] = useState<SyncReport | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [search, setSearch] = useState('')
   const [startedAt, setStartedAt] = useState<number | null>(null)
@@ -106,11 +106,11 @@ export function SyncRosterDialog({ detail, open, onOpenChange }: { detail: Event
     setStopped(false)
     setError(null)
     try {
-      const r = await adminApi<{ candidates: RosterCandidate[]; warnings: string[]; match?: MatchReport }>(`/api/events/${eventId}/roster/sync`, { method: 'POST', body: { kBusinesses: [...picked] } })
+      const r = await adminApi<{ candidates: RosterCandidate[]; warnings: string[]; report?: SyncReport }>(`/api/events/${eventId}/roster/sync`, { method: 'POST', body: { kBusinesses: [...picked] } })
       if (generation.current !== myGeneration) return
       setCandidates(r.candidates)
       setWarnings(r.warnings)
-      setReport(r.match ?? null)
+      setReport(r.report ?? null)
       setSelected(new Set())
       // The pull links what it can, so the roster behind this dialog is stale the moment
       // it lands: the "on roster" badge and the Link button both read it.

@@ -6,7 +6,8 @@ import type { AthleteRow, EventDetail, MatchRow } from '@/lib/types'
 
 const kid = (id: number, first: string, last: string, over: Partial<AthleteRow> = {}): AthleteRow => ({
   id, eventId: 7, teamId: 1, firstName: first, lastName: last, age: 8, ageSource: 'manual', weightLbs: 62, weightSource: 'manual',
-  belt: 'grey', gender: 'M', source: 'manual', wlUid: null, wlLocation: null, leaderboardId: null, erp: null, ...over,
+  belt: 'grey', gender: 'M', source: 'manual', wlUid: null, wlLocation: null, leaderboardId: null, erp: null,
+  promotedAt: null, syncedAt: null, syncChanges: null, suggestedWlUid: null, suggestedScore: null, dismissedWlUids: [], ...over,
 })
 
 const match: MatchRow = {

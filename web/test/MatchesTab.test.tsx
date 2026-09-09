@@ -16,6 +16,7 @@ afterEach(() => vi.unstubAllGlobals())
 const kid = (id: number, teamId: number, first: string, last: string): EventDetail['athletes'][number] => ({
   id, eventId: 7, teamId, firstName: first, lastName: last, age: 8, ageSource: 'manual', weightLbs: 60, weightSource: 'manual',
   belt: 'grey', gender: 'M', source: 'manual', wlUid: null, wlLocation: null, leaderboardId: null, erp: null,
+  promotedAt: null, syncedAt: null, syncChanges: null, suggestedWlUid: null, suggestedScore: null, dismissedWlUids: [],
 })
 const match = (id: number, over: Partial<MatchRow> = {}): MatchRow => ({
   id, eventId: 7, matId: 1, orderIndex: id, rulesetId: 1, lengthSec: 300, athleteAId: 100, athleteBId: 200, status: 'pending',

@@ -28,8 +28,8 @@ const detail: EventDetail = {
 const withLiveMat: EventDetail = {
   ...detail,
   athletes: [
-    { id: 100, eventId: 1, teamId: 1, firstName: 'Mateo', lastName: 'Rivera', age: 9, ageSource: 'manual', weightLbs: 62, weightSource: 'manual', belt: 'grey', gender: 'M', source: 'manual', wlUid: null, wlLocation: null, leaderboardId: null, erp: null },
-    { id: 200, eventId: 1, teamId: 2, firstName: 'Olivia', lastName: 'Kim', age: 9, ageSource: 'manual', weightLbs: 60, weightSource: 'manual', belt: 'grey-white', gender: 'F', source: 'manual', wlUid: null, wlLocation: null, leaderboardId: null, erp: null },
+    { id: 100, eventId: 1, teamId: 1, firstName: 'Mateo', lastName: 'Rivera', age: 9, ageSource: 'manual', weightLbs: 62, weightSource: 'manual', belt: 'grey', gender: 'M', source: 'manual', wlUid: null, wlLocation: null, leaderboardId: null, erp: null, promotedAt: null, syncedAt: null, syncChanges: null, suggestedWlUid: null, suggestedScore: null, dismissedWlUids: [] },
+    { id: 200, eventId: 1, teamId: 2, firstName: 'Olivia', lastName: 'Kim', age: 9, ageSource: 'manual', weightLbs: 60, weightSource: 'manual', belt: 'grey-white', gender: 'F', source: 'manual', wlUid: null, wlLocation: null, leaderboardId: null, erp: null, promotedAt: null, syncedAt: null, syncChanges: null, suggestedWlUid: null, suggestedScore: null, dismissedWlUids: [] },
   ],
   matches: [{
     id: 10, eventId: 1, matId: 1, orderIndex: 1, rulesetId: 1, lengthSec: 300, athleteAId: 100, athleteBId: 200,

@@ -90,6 +90,16 @@ export interface MatchReport {
   duplicates: string[]
 }
 
+// One near match the sync could not settle on its own. A person confirms it or says the
+// candidate is not this child, so the row carries the name it would be linked to.
+export interface SyncSuggestion { athleteId: number; name: string; candidate: string; location: string; score: number }
+
+// One run of the sync. Names are "First Last", so the web prints them without a lookup.
+export interface SyncReport {
+  linked: string[]; refreshed: number; changed: string[]
+  suggested: SyncSuggestion[]; ambiguous: string[]; unmatched: string[]; gone: string[]
+}
+
 export interface ClockState { elapsedMs: number; startedAt: string | null; lengthMs: number }
 export interface MatchResult { winnerAthleteId: number; winType: WinType }
 export interface PendingTerminal { athleteId: number; actionKey: string }

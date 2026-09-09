@@ -1,8 +1,8 @@
 import type { EventContact, EventMode, EventStatus, MatchStatus, RulesetAction, RulesetTerminal, TeamColor, WinType } from '@shared/types'
 
-// The WellnessLiving match answers one shape, and the two screens that print it read it
-// from here rather than each reaching into the server's own module.
-export type { MatchReport } from '@shared/types'
+// The sync answers one shape, and the two screens that print it read it from here rather
+// than each reaching into the server's own module.
+export type { SyncReport, SyncSuggestion } from '@shared/types'
 
 export interface EventRow {
   id: number
@@ -27,6 +27,12 @@ export interface EventRow {
   certifiedAt?: string | null
   /** G24: the board's far setting. Null until an admin sets one, and the board reads 1.0. */
   far?: number | null
+  /**
+   * The WellnessLiving locations this event syncs. Null until the first sync stores a
+   * pick, and optional for the same reason as the contact halves above: the list endpoint
+   * serves the raw columns and only the detail carries this one.
+   */
+  wlLocations?: string[] | null
 }
 export interface TeamRow { id: number; eventId: number; name: string; color: TeamColor; position: number }
 export interface AthleteRow {
@@ -46,6 +52,17 @@ export interface AthleteRow {
   wlLocation: string | null
   leaderboardId: string | null
   erp: number | null
+  /** WellnessLiving's promotion date for the belt the row carries. */
+  promotedAt: string | null
+  /** When a sync last touched this row. Null until one has. */
+  syncedAt: string | null
+  /** What the last sync changed, field by field. Empty when it changed nothing. */
+  syncChanges: Record<string, { from: unknown; to: unknown }> | null
+  /** The one near match waiting on a person, and how close it scored. */
+  suggestedWlUid: string | null
+  suggestedScore: number | null
+  /** Candidates a person has already said are not this child. */
+  dismissedWlUids: string[]
 }
 export interface RulesetRow { id: number; eventId: number; name: string; defaultLengthSec: number; actions: RulesetAction[]; terminals: RulesetTerminal[] }
 export interface MatRow { id: number; eventId: number; number: number; currentMatchId: number | null }

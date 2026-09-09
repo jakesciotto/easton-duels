@@ -15,6 +15,7 @@ afterEach(() => vi.unstubAllGlobals())
 const kid = (id: number, teamId: number, first: string, last: string): AthleteRow => ({
   id, eventId: 7, teamId, firstName: first, lastName: last, age: 9, ageSource: 'manual', weightLbs: 60, weightSource: 'manual',
   belt: 'grey', gender: 'M', source: 'manual', wlUid: null, wlLocation: null, leaderboardId: null, erp: null,
+  promotedAt: null, syncedAt: null, syncChanges: null, suggestedWlUid: null, suggestedScore: null, dismissedWlUids: [],
 })
 
 const ROSTER = [

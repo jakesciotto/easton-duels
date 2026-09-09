@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { writeErrorMessage } from '@/lib/eventMode'
 import { adminApi, useAdminMutation } from '@/lib/queries'
-import type { AthleteRow, EventDetail, MatchReport } from '@/lib/types'
+import type { AthleteRow, EventDetail, SyncReport } from '@/lib/types'
 import { athleteName } from '@/lib/format'
 import { AddKidDialog } from './AddKidDialog'
 import { LinkCandidateDialog } from './LinkCandidateDialog'
@@ -24,7 +24,7 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
   const [linking, setLinking] = useState<AthleteRow | null>(null)
   // What the last match run did. It is the answer to one press, so the next roster write
   // takes it down rather than leaving a stale account of a roster that has moved on.
-  const [report, setReport] = useState<MatchReport | null>(null)
+  const [report, setReport] = useState<SyncReport | null>(null)
   // The name a mid-loop failure stopped on. The server's message says what went wrong
   // and never who, which on a bulk remove is the only fact the organizer needs.
   const [stoppedOn, setStoppedOn] = useState<string | null>(null)
@@ -33,7 +33,7 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
   const assign = useAdminMutation(eventId, (v: { ids: number[]; teamId: number | null }) => adminApi(`/api/events/${eventId}/athletes/assign`, { method: 'POST', body: v }))
   const patch = useAdminMutation(eventId, (v: { id: number; body: Partial<AthleteRow> }) => adminApi(`/api/athletes/${v.id}`, { method: 'PATCH', body: v.body }))
   const remove = useAdminMutation(eventId, (id: number) => adminApi(`/api/athletes/${id}`, { method: 'DELETE' }))
-  const match = useAdminMutation<void, { report: MatchReport }>(eventId, () => adminApi(`/api/events/${eventId}/roster/match`, { method: 'POST' }))
+  const match = useAdminMutation<void, { report: SyncReport }>(eventId, () => adminApi(`/api/events/${eventId}/roster/match`, { method: 'POST' }))
 
   const byTeam = (teamId: number | null) => detail.athletes.filter(a => a.teamId === teamId).sort((x, y) => x.lastName.localeCompare(y.lastName) || x.firstName.localeCompare(y.firstName))
   const [teamA, teamB] = detail.teams

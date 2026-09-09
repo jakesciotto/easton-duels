@@ -23,6 +23,7 @@ afterEach(() => vi.unstubAllGlobals())
 const athlete = (id: number, wlUid: string | null, first: string, last: string): EventDetail['athletes'][number] => ({
   id, eventId: 7, teamId: null, firstName: first, lastName: last, age: 8, ageSource: 'manual', weightLbs: 60, weightSource: 'manual',
   belt: 'grey', gender: 'M', source: wlUid ? 'wl' : 'manual', wlUid, wlLocation: wlUid ? 'Ridgeline' : null, leaderboardId: null, erp: null,
+  promotedAt: null, syncedAt: null, syncChanges: null, suggestedWlUid: null, suggestedScore: null, dismissedWlUids: [],
 })
 const cand = (over: Partial<RosterCandidate>): RosterCandidate => ({
   wlUid: 'u0', firstName: 'Zoe', lastName: 'Martin', belt: 'grey', wlLocation: 'Ridgeline', leaderboardId: null, erp: null, age: 8, weightLbs: 60, gender: 'F', ...over,

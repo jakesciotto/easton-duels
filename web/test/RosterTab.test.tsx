@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AdminShell } from '@/components/AdminShell'
 import { RosterTab } from '@/routes/event/RosterTab'
 import { setAdminToken } from '@/lib/auth'
-import type { EventDetail } from '@/lib/types'
+import type { EventDetail, SyncReport } from '@/lib/types'
 import { fakeFetch } from './fakes'
 
 beforeEach(() => { localStorage.clear(); setAdminToken('tok') })
@@ -17,7 +17,8 @@ afterEach(() => {
 
 const kid = (id: number, teamId: number | null, first: string, over: Partial<EventDetail['athletes'][number]> = {}): EventDetail['athletes'][number] => ({
   id, eventId: 7, teamId, firstName: first, lastName: 'Kid', age: 8, ageSource: 'manual', weightLbs: 60, weightSource: 'manual',
-  belt: 'grey', gender: 'M', source: 'manual', wlUid: null, wlLocation: null, leaderboardId: null, erp: null, ...over,
+  belt: 'grey', gender: 'M', source: 'manual', wlUid: null, wlLocation: null, leaderboardId: null, erp: null,
+  promotedAt: null, syncedAt: null, syncChanges: null, suggestedWlUid: null, suggestedScore: null, dismissedWlUids: [], ...over,
 })
 const detail: EventDetail = {
   event: { id: 7, name: 'Fall Duels', date: '2026-10-03', matCount: 1, matCode: '0420', status: 'setup', mode: 'live', sameGender: false, createdAt: 'x' },
@@ -475,7 +476,7 @@ describe('RosterTab, the WellnessLiving link', () => {
     { wlUid: 'w2', firstName: 'Priya', lastName: 'Shah', belt: 'grey-white', wlLocation: 'Denver', leaderboardId: null, erp: null, age: 9, weightLbs: 70, gender: 'F' },
     { wlUid: 'w3', firstName: 'Olive', lastName: 'Kidd', belt: 'grey', wlLocation: 'Boulder', leaderboardId: 'olive-kidd', erp: 4.1, age: 8, weightLbs: 61, gender: 'F' },
   ]
-  const CLEAN = { matched: [] as string[], refreshed: 0, unmatched: [] as string[], ambiguous: [] as string[], duplicates: [] as string[] }
+  const CLEAN: SyncReport = { linked: [], refreshed: 0, changed: [], suggested: [], ambiguous: [], unmatched: [], gone: [] }
 
   // Mateo is linked already; the other three are not, which is what the pool exists for.
   const pooled: EventDetail = {
@@ -501,14 +502,14 @@ describe('RosterTab, the WellnessLiving link', () => {
   it('reports what the match run did, and clears the report on the next roster write', async () => {
     const f = fakeFetch((url, init) => {
       if (url === '/api/events/7/roster/match' && init?.method === 'POST') {
-        return { json: { report: { ...CLEAN, matched: ['Olivia Kid'], unmatched: ['Noah Kid'] }, athletes: [] } }
+        return { json: { report: { ...CLEAN, linked: ['Olivia Kid'], unmatched: ['Noah Kid'] }, athletes: [] } }
       }
       return { json: [] }
     })
     mount(pooled)
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'Match to WellnessLiving' }))
-    expect(await screen.findByText('Matched 1 pasted competitor to WellnessLiving.')).toBeInTheDocument()
+    expect(await screen.findByText('Linked 1. Refreshed 0, 0 changed.')).toBeInTheDocument()
     expect(screen.getByText('Not found: Noah Kid.')).toBeInTheDocument()
     expect(f.calls.some(c => c.url === '/api/events/7/roster/match')).toBe(true)
 
