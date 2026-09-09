@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve as resolvePath } from 'node:path'
-import { B1, B2, B3, HERO_GAP, PLATE, boardBudget } from '@/routes/board/budget'
+import { B1, B2, B3, HERO_GAP, PLATE, SETUP_HEAD_GAP, boardBudget } from '@/routes/board/budget'
 
 /**
  * The board's colour and size decisions live in board.css, where a type checker cannot
@@ -282,6 +282,13 @@ describe('the mat ledger row', () => {
   it('carries a team edge per competitor line that costs no track', () => {
     const vars = boardVars(1)
     expect(px('var(--b-edge-w)', vars)).toBeCloseTo(1.2 * CQH, 6)
+    // The edge sits inside the indent, which scales with the knob, so the edge scales with
+    // it: unscaled, it overran the mat numeral's track at 0.85 and fell short at 1.2.
+    for (const far of FARS) {
+      const at = boardVars(far)
+      expect(px('var(--b-edge-w)', at), `far ${far}`).toBeCloseTo(1.2 * CQH * far, 6)
+      expect(px(decl('.b-row', 'padding-left'), at), `far ${far}`).toBeCloseTo(2 * px('var(--b-edge-w)', at), 6)
+    }
     // One token for the live gutter and the team edges, so the three cannot drift apart.
     expect(decl('.b-gut', 'width')).toBe('var(--b-edge-w)')
     expect(decl('.b-edge', 'width')).toBe('var(--b-edge-w)')
@@ -295,7 +302,6 @@ describe('the mat ledger row', () => {
     expect(decl('.b-gut', 'left')).toBe('0')
     expect(decl('.b-edge-a', 'left')).toBe('var(--b-edge-w)')
     expect(decl('.b-edge-b', 'right')).toBe('0')
-    expect(px(decl('.b-row', 'padding-left'), vars)).toBeCloseTo(2 * px('var(--b-edge-w)', vars), 6)
 
     // The one cost, and it is inside a track rather than beside it, so no column moves.
     expect(decl('.b-name-b', 'padding-right')).toBe('var(--b-edge-w)')
@@ -318,6 +324,25 @@ describe('the mat ledger row', () => {
     for (const selector of ['.b-name', '.b-mat']) {
       expect(decl(selector, 'font-size'), selector).toBe('var(--b-name-step)')
     }
+  })
+})
+
+/**
+ * G27. The desk event's setup band puts one head over the whole band and the running
+ * order in columns under it. The budget gives that head a b3 line and SETUP_HEAD_GAP,
+ * the same spend as the per mat head, so the band itself must add nothing to it.
+ */
+describe('the desk running order', () => {
+  it('spends the head and its gap above the columns, and nothing else', () => {
+    const body = rule("[data-comp='setup'] .b-band-order")
+    expect(declIn(body, 'flex-direction')).toBe('column')
+    // The row gap the setup band puts between its columns is a column gap here too
+    // unless it is stated away, and the budget never counted it.
+    expect(declIn(body, 'gap')).toBe('0')
+    expect(px(decl('.b-setup-head', 'height'), boardVars(1))).toBeCloseTo(B3 * CQH, 6)
+    expect(px(decl('.b-setup-head', 'margin-bottom'), boardVars(1))).toBeCloseTo(SETUP_HEAD_GAP * CQH, 6)
+    expect(decl('.b-order', 'flex')).toBe('1 1 0')
+    expect(decl('.b-order', 'flex-direction')).toBe('row')
   })
 })
 

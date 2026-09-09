@@ -49,10 +49,11 @@
   --b-code: calc(5.6cqh * var(--far));
   --b-round: 0.6cqh;
   --b-indent: calc(2.4cqh * var(--far));
-  /* Section 8 and 7.3 give the live gutter and the team edge the same 1.2cqh, unscaled
-     by --far the way every other board width is: one token, so the two cannot drift and
-     the leading padding stays exactly two of them wide. */
-  --b-edge-w: 1.2cqh;
+  /* Section 8 and 7.3 give the live gutter and the team edge the same 1.2cqh at the
+     design stage, scaled by --far like the indent they sit inside: unscaled, the edge ran
+     into the mat numeral's track at 0.85 and stopped short of the content at 1.2. One
+     token, so the two cannot drift and the indent stays exactly two of them wide. */
+  --b-edge-w: calc(1.2cqh * var(--far));
 
   /* The row's gaps are stated against the type, not against the stage. A gap in cqw
      beside a track in cqh scales one and not the other, and at far 1.2 that put the
@@ -674,6 +675,10 @@
    head used to and no budget arithmetic moves. */
 [data-comp='setup'] .b-band-order {
   flex-direction: column;
+  /* The 2cqw the setup band puts between its columns would otherwise open between the
+     head and the columns as well, on top of the head's own margin, and the budget counts
+     neither: at a full column the last pairing clipped. */
+  gap: 0;
 }
 .b-order {
   flex: 1 1 0;
