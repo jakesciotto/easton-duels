@@ -1,5 +1,5 @@
 import { KIDS_BELTS } from '@shared/types'
-import { dice, normalize } from './similarity'
+import { dice, normalize } from '@shared/similarity'
 import type { ManualKid, TeamRow } from './types'
 
 const BELT_ALIASES: Record<string, string> = {

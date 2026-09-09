@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { normalize, dice } from '@/lib/similarity'
+import { normalize, dice } from '@shared/similarity'
 
 describe('normalize', () => {
   it('lowercases and keeps only letters and digits', () => {
