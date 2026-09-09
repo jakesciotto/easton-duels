@@ -463,3 +463,136 @@ describe('RosterTab', () => {
     expect(await within(dialog).findByRole('alert')).toHaveTextContent('age must be between 3 and 17')
   })
 })
+
+/**
+ * Spec 5.3. The gym's records overwrite the paste, so the roster is where a competitor
+ * that WellnessLiving has never heard of has to say so, and where the organizer picks the
+ * right person by hand when the pool holds two of a name or none.
+ */
+describe('RosterTab, the WellnessLiving link', () => {
+  const POOL = [
+    { wlUid: 'w1', firstName: 'Mateo', lastName: 'Kidd', belt: 'grey', wlLocation: 'Boulder', leaderboardId: 'mateo-kidd', erp: 5.2, age: 8, weightLbs: 62, gender: 'M' },
+    { wlUid: 'w2', firstName: 'Priya', lastName: 'Shah', belt: 'grey-white', wlLocation: 'Denver', leaderboardId: null, erp: null, age: 9, weightLbs: 70, gender: 'F' },
+    { wlUid: 'w3', firstName: 'Olive', lastName: 'Kidd', belt: 'grey', wlLocation: 'Boulder', leaderboardId: 'olive-kidd', erp: 4.1, age: 8, weightLbs: 61, gender: 'F' },
+  ]
+  const CLEAN = { matched: [] as string[], refreshed: 0, unmatched: [] as string[], ambiguous: [] as string[], duplicates: [] as string[] }
+
+  // Mateo is linked already; the other three are not, which is what the pool exists for.
+  const pooled: EventDetail = {
+    ...detail,
+    athletes: [
+      kid(100, 1, 'Mateo', { wlUid: 'w1', wlLocation: 'Boulder' }),
+      kid(200, 2, 'Olivia'),
+      kid(300, null, 'Noah', { age: null, ageSource: null }),
+      kid(400, null, 'Zoe', { weightSource: 'leaderboard', erp: 5.2 }),
+    ],
+    candidateCount: 2,
+  }
+
+  it('offers the match only once a pool exists', () => {
+    fakeFetch(() => ({ json: [] }))
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const { rerender } = render(<QueryClientProvider client={qc}><RosterTab detail={detail} /></QueryClientProvider>)
+    expect(screen.queryByRole('button', { name: 'Match to WellnessLiving' })).not.toBeInTheDocument()
+    rerender(<QueryClientProvider client={qc}><RosterTab detail={pooled} /></QueryClientProvider>)
+    expect(screen.getByRole('button', { name: 'Match to WellnessLiving' })).toBeInTheDocument()
+  })
+
+  it('reports what the match run did, and clears the report on the next roster write', async () => {
+    const f = fakeFetch((url, init) => {
+      if (url === '/api/events/7/roster/match' && init?.method === 'POST') {
+        return { json: { report: { ...CLEAN, matched: ['Olivia Kid'], unmatched: ['Noah Kid'] }, athletes: [] } }
+      }
+      return { json: [] }
+    })
+    mount(pooled)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Match to WellnessLiving' }))
+    expect(await screen.findByText('Matched 1 pasted competitor to WellnessLiving.')).toBeInTheDocument()
+    expect(screen.getByText('Not found: Noah Kid.')).toBeInTheDocument()
+    expect(f.calls.some(c => c.url === '/api/events/7/roster/match')).toBe(true)
+
+    const pool = screen.getByRole('region', { name: 'Unassigned' })
+    await user.click(within(pool).getByRole('checkbox', { name: 'Select Noah Kid' }))
+    await user.click(screen.getByRole('button', { name: 'Move to Ridgeline' }))
+    await vi.waitFor(() => expect(screen.queryByText('Not found: Noah Kid.')).not.toBeInTheDocument())
+  })
+
+  it('reads a refused match under the toolbar', async () => {
+    fakeFetch((url, init) => {
+      if (url === '/api/events/7/roster/match' && init?.method === 'POST') {
+        return { status: 409, json: { error: { code: 'no_pool', message: 'Import from WellnessLiving first.' } } }
+      }
+      return { json: [] }
+    })
+    mount(pooled)
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Match to WellnessLiving' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Import from WellnessLiving first.')
+  })
+
+  it('marks only the unlinked rows, and only while there is a pool to link to', () => {
+    fakeFetch(() => ({ json: [] }))
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const { rerender } = render(<QueryClientProvider client={qc}><RosterTab detail={pooled} /></QueryClientProvider>)
+    const teamA = screen.getByRole('region', { name: 'Ridgeline' })
+    const teamB = screen.getByRole('region', { name: 'Lakeside' })
+    expect(within(teamA).queryByText(/Not in WellnessLiving/)).not.toBeInTheDocument()
+    expect(within(teamA).queryByRole('button', { name: 'Link Mateo Kid' })).not.toBeInTheDocument()
+    expect(within(teamB).getByText(/Not in WellnessLiving/)).toBeInTheDocument()
+    expect(within(teamB).getByRole('button', { name: 'Link Olivia Kid' })).toBeInTheDocument()
+
+    rerender(<QueryClientProvider client={qc}><RosterTab detail={{ ...pooled, candidateCount: 0 }} /></QueryClientProvider>)
+    expect(screen.queryByText(/Not in WellnessLiving/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Link Olivia Kid' })).not.toBeInTheDocument()
+  })
+
+  it('lists the pool nearest the name first, drops whoever is already linked, and posts the pick', async () => {
+    const f = fakeFetch((url, init) => {
+      if (url === '/api/events/7/candidates') return { json: POOL }
+      if (url === '/api/athletes/200/link' && init?.method === 'POST') return { json: {} }
+      return { json: [] }
+    })
+    mount(pooled)
+    const user = userEvent.setup()
+    const teamB = screen.getByRole('region', { name: 'Lakeside' })
+    await user.click(within(teamB).getByRole('button', { name: 'Link Olivia Kid' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('Link to WellnessLiving')).toBeInTheDocument()
+    expect(within(dialog).getByText('Olivia Kid, Grey, 8, 60 lb')).toBeInTheDocument()
+    // The search field opens on the last name, which is the one word a pool of hundreds
+    // can be cut down by without typing.
+    expect(within(dialog).getByLabelText('Search')).toHaveValue('Kid')
+
+    await user.clear(within(dialog).getByLabelText('Search'))
+    // Mateo Kidd is w1, which Mateo Kid already carries, so the picker never offers him.
+    const rows = await vi.waitFor(() => {
+      const found = within(dialog).getAllByRole('button', { name: /Link .* to Olivia Kid/ })
+      expect(found).toHaveLength(2)
+      return found
+    })
+    expect(rows.map(r => r.getAttribute('aria-label'))).toEqual(['Link Olive Kidd to Olivia Kid', 'Link Priya Shah to Olivia Kid'])
+
+    await user.click(rows[0])
+    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/athletes/200/link')).toBe(true))
+    expect(f.body(f.calls.findIndex(c => c.url === '/api/athletes/200/link'))).toEqual({ wlUid: 'w3' })
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('reads a refused link inside the dialog', async () => {
+    fakeFetch((url, init) => {
+      if (url === '/api/events/7/candidates') return { json: POOL }
+      if (url === '/api/athletes/200/link' && init?.method === 'POST') {
+        return { status: 409, json: { error: { code: 'duplicate', message: 'Olive Kidd is already on the roster' } } }
+      }
+      return { json: [] }
+    })
+    mount(pooled)
+    const user = userEvent.setup()
+    const teamB = screen.getByRole('region', { name: 'Lakeside' })
+    await user.click(within(teamB).getByRole('button', { name: 'Link Olivia Kid' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(await within(dialog).findByRole('button', { name: 'Link Olive Kidd to Olivia Kid' }))
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Olive Kidd is already on the roster')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+})

@@ -1,11 +1,13 @@
 import { useMemo, useRef, useState } from 'react'
 import { writeErrorMessage } from '@/lib/eventMode'
 import { adminApi, useAdminMutation } from '@/lib/queries'
-import type { AthleteRow, EventDetail } from '@/lib/types'
+import type { AthleteRow, EventDetail, MatchReport } from '@/lib/types'
 import { athleteName } from '@/lib/format'
 import { AddKidDialog } from './AddKidDialog'
+import { LinkCandidateDialog } from './LinkCandidateDialog'
 import { PasteRosterDialog } from './PasteRosterDialog'
 import { SyncRosterDialog } from './SyncRosterDialog'
+import { reportLines } from './link-report'
 import { RosterGroup } from './roster-group'
 import { dropZoneValue, useRosterDrag } from './roster-drag'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -19,6 +21,10 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
   const [pasteOpen, setPasteOpen] = useState(false)
   const [syncOpen, setSyncOpen] = useState(false)
   const [removing, setRemoving] = useState<AthleteRow[]>([])
+  const [linking, setLinking] = useState<AthleteRow | null>(null)
+  // What the last match run did. It is the answer to one press, so the next roster write
+  // takes it down rather than leaving a stale account of a roster that has moved on.
+  const [report, setReport] = useState<MatchReport | null>(null)
   // The name a mid-loop failure stopped on. The server's message says what went wrong
   // and never who, which on a bulk remove is the only fact the organizer needs.
   const [stoppedOn, setStoppedOn] = useState<string | null>(null)
@@ -27,6 +33,7 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
   const assign = useAdminMutation(eventId, (v: { ids: number[]; teamId: number | null }) => adminApi(`/api/events/${eventId}/athletes/assign`, { method: 'POST', body: v }))
   const patch = useAdminMutation(eventId, (v: { id: number; body: Partial<AthleteRow> }) => adminApi(`/api/athletes/${v.id}`, { method: 'PATCH', body: v.body }))
   const remove = useAdminMutation(eventId, (id: number) => adminApi(`/api/athletes/${id}`, { method: 'DELETE' }))
+  const match = useAdminMutation<void, { report: MatchReport }>(eventId, () => adminApi(`/api/events/${eventId}/roster/match`, { method: 'POST' }))
 
   const byTeam = (teamId: number | null) => detail.athletes.filter(a => a.teamId === teamId).sort((x, y) => x.lastName.localeCompare(y.lastName) || x.firstName.localeCompare(y.firstName))
   const [teamA, teamB] = detail.teams
@@ -60,6 +67,7 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
 
   const clearSelection = () => setSelected(new Set())
   const moveTo = (ids: number[], teamId: number | null) => {
+    setReport(null)
     const moving = ids.filter(id => detail.athletes.find(a => a.id === id)?.teamId !== teamId)
     if (moving.length === 0) {
       clearSelection()
@@ -68,7 +76,7 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
     assign.mutate({ ids: moving, teamId }, { onSuccess: clearSelection })
   }
 
-  const onPatch = (id: number, body: Partial<AthleteRow>) => patch.mutate({ id, body }, {
+  const onPatch = (id: number, body: Partial<AthleteRow>) => { setReport(null); patch.mutate({ id, body }, {
     // A refused write is the row's own state, not a banner the organizer has to
     // match back to a name, so the state rule carries it until the row saves.
     onError: () => setFaults(f => new Set(f).add(id)),
@@ -78,7 +86,7 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
       n.delete(id)
       return n
     }),
-  })
+  }) }
 
   const drag = useRosterDrag((id, teamId) => moveTo([id], teamId))
 
@@ -91,6 +99,7 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
   }
   const runRemove = async () => {
     setStoppedOn(null)
+    setReport(null)
     const done: number[] = []
     let halted: AthleteRow | null = null
     for (const kid of removing) {
@@ -134,6 +143,7 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
   const failure = [
     assign.error ? { title: 'The move failed', message: writeErrorMessage(assign.error), at: assign.submittedAt } : null,
     patch.error ? { title: 'The edit was not saved', message: writeErrorMessage(patch.error), at: patch.submittedAt } : null,
+    match.error ? { title: 'The match did not run', message: writeErrorMessage(match.error), at: match.submittedAt } : null,
   ].filter((f): f is { title: string; message: string; at: number } => f !== null)
     .sort((x, y) => y.at - x.at)[0] ?? null
   // 7.12: one polite region per screen, phrased as a sentence, present and empty from
@@ -169,6 +179,16 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
           </span>
           <span className="ml-auto flex flex-wrap gap-2">
             {detail.candidateCount === 0 && <Button size="sm" variant="ghost" onClick={() => setSyncOpen(true)}>Sync from WellnessLiving</Button>}
+            {/* The import already links what it can, so this is the button for a roster
+                that grew after the pull: a paste, or a hand typed competitor. */}
+            {detail.candidateCount > 0 && (
+              <Button
+                size="sm" variant="secondary" disabled={match.isPending}
+                onClick={() => { setReport(null); match.mutate(undefined, { onSuccess: r => setReport(r.report) }) }}
+              >
+                Match to WellnessLiving
+              </Button>
+            )}
             <Button size="sm" variant="secondary" onClick={() => setPasteOpen(true)}>Paste roster</Button>
             <Button size="sm" onClick={() => setAddOpen(true)}>Add competitor</Button>
           </span>
@@ -182,9 +202,25 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
           <AlertDescription>{failure.message}</AlertDescription>
         </Alert>
       )}
+      {report && (
+        <Alert variant="attend">
+          <AlertTitle variant="attend">The roster was matched to WellnessLiving</AlertTitle>
+          <AlertDescription>
+            <span className="grid gap-1">
+              {reportLines(report).map(line => <span key={line}>{line}</span>)}
+            </span>
+          </AlertDescription>
+        </Alert>
+      )}
       <AddKidDialog detail={detail} open={addOpen} onOpenChange={setAddOpen} onRefresh={() => setSyncOpen(true)} />
       <PasteRosterDialog detail={detail} open={pasteOpen} onOpenChange={setPasteOpen} />
       <SyncRosterDialog detail={detail} open={syncOpen} onOpenChange={setSyncOpen} />
+      <LinkCandidateDialog
+        detail={detail}
+        kid={linking}
+        open={linking !== null}
+        onOpenChange={o => { if (!o) setLinking(null) }}
+      />
       <Dialog open={removing.length > 0} onOpenChange={o => { if (!o) closeRemove() }}>
         {removing.length > 0 && (
           <DialogContent>
@@ -221,12 +257,14 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
             selected={selected}
             faults={faults}
             inMatch={inMatch}
+            candidateCount={detail.candidateCount}
             firstGroup={i === 0}
             dragging={drag.dragging}
             over={drag.over === dropZoneValue(g.teamId)}
             onSelect={onSelect}
             onPatch={onPatch}
             onRemove={kid => setRemoving([kid])}
+            onLink={kid => { setReport(null); setLinking(kid) }}
             onDragStart={drag.start}
           />
         ))}

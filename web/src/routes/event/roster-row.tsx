@@ -15,6 +15,21 @@ import { cn } from '@/lib/utils'
 export const ROSTER_COLS =
   'grid grid-cols-[var(--col-select)_var(--col-state)_minmax(0,1fr)_var(--col-num-s)_var(--col-num-m)_var(--col-act)] gap-x-3 px-3'
 
+/**
+ * The same tracks plus one fixed 56px cell for the Link control, which an event with a
+ * WellnessLiving pool carries on every row and on the head.
+ *
+ * The width is fixed rather than `auto` on purpose. The head is a separate grid from the
+ * rows, so an intrinsic track resolves to 0 on the head and to the button's width on the
+ * rows, and the numeric columns under it would then stop lining up with their labels.
+ */
+const ROSTER_COLS_LINK =
+  'grid grid-cols-[var(--col-select)_var(--col-state)_minmax(0,1fr)_var(--col-num-s)_var(--col-num-m)_56px_var(--col-act)] gap-x-3 px-3'
+
+export function rosterCols(withLink: boolean): string {
+  return withLink ? ROSTER_COLS_LINK : ROSTER_COLS
+}
+
 const CELL = 'fig t2 h-6 w-full rounded-md px-1.5 text-right transition-colors duration-120 ease-out'
 
 type Source = AthleteRow['ageSource']
@@ -102,17 +117,24 @@ function EditableCell({ label, value, source, onSave }: {
   )
 }
 
-export function RosterRow({ kid, selected, fault, inMatch, onSelect, onPatch, onRemove, onDragStart }: {
+export const NOT_IN_WL = 'Not in WellnessLiving'
+
+export function RosterRow({ kid, selected, fault, inMatch, candidateCount, onSelect, onPatch, onRemove, onLink, onDragStart }: {
   kid: AthleteRow
   selected: boolean
   fault: boolean
   /** The server refuses a delete for anyone sitting in a match, so the row refuses first. */
   inMatch: boolean
+  /** The pool this row could be linked to. With none there is nothing to say and nothing to press. */
+  candidateCount: number
   onSelect: (v: boolean, range: boolean) => void
   onPatch: (body: Partial<AthleteRow>) => void
   onRemove: () => void
+  onLink: () => void
   onDragStart: (e: ReactPointerEvent, id: number) => void
 }) {
+  const withLink = candidateCount > 0
+  const unlinked = withLink && kid.wlUid === null
   const name = athleteName(kid)
   const range = useRef(false)
   const state = fault ? 'fault' : kid.age === null || kid.weightLbs === null ? 'attend' : 'ok'
@@ -123,6 +145,7 @@ export function RosterRow({ kid, selected, fault, inMatch, onSelect, onPatch, on
     genderLabel(kid.gender),
     kid.erp === null ? 'unrated' : `ERP ${kid.erp.toFixed(1)}`,
     inMatch ? 'In a match' : null,
+    unlinked ? NOT_IN_WL : null,
   ]
     .filter(Boolean)
     .join(' · ')
@@ -139,7 +162,7 @@ export function RosterRow({ kid, selected, fault, inMatch, onSelect, onPatch, on
         if ((e.target as HTMLElement).closest('button, input, a')) return
         onDragStart(e, kid.id)
       }}
-      className={cn(ROSTER_COLS, 'group/row h-14 touch-pan-y py-2 font-mono t2 focus-within:bg-accent')}
+      className={cn(rosterCols(withLink), 'group/row h-14 touch-pan-y py-2 font-mono t2 focus-within:bg-accent')}
     >
       <Checkbox
         aria-label={`Select ${name}`}
@@ -170,6 +193,9 @@ export function RosterRow({ kid, selected, fault, inMatch, onSelect, onPatch, on
         source={kid.weightSource}
         onSave={weightLbs => onPatch({ weightLbs })}
       />
+      {withLink && (unlinked
+        ? <Button variant="ghost" size="sm" aria-label={`Link ${name}`} onClick={onLink} className="w-full px-0 font-sans">Link</Button>
+        : <span />)}
       <Button
         variant="ghost"
         size="icon"

@@ -6,7 +6,7 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { FieldHead, FieldSet } from '@/components/ui/field-set'
 import { cn } from '@/lib/utils'
 import { DROP_ATTR, dropZoneValue } from './roster-drag'
-import { ROSTER_COLS, RosterRow } from './roster-row'
+import { RosterRow, rosterCols } from './roster-row'
 
 /**
  * The app shell's header is sticky at the same stacking level and is painted first, so
@@ -20,8 +20,8 @@ import { ROSTER_COLS, RosterRow } from './roster-row'
 const SUBHEAD_STICKY = 'sticky top-[var(--app-header-h,57px)] z-1'
 
 export function RosterGroup({
-  title, color, teamId, kids, selected, faults, inMatch, firstGroup, dragging, over,
-  onSelect, onPatch, onRemove, onDragStart, onAdd,
+  title, color, teamId, kids, selected, faults, inMatch, candidateCount, firstGroup, dragging, over,
+  onSelect, onPatch, onRemove, onLink, onDragStart, onAdd,
 }: {
   title: string
   color: string | null
@@ -30,15 +30,22 @@ export function RosterGroup({
   selected: Set<number>
   faults: Set<number>
   inMatch: Set<number>
+  /**
+   * An event level fact, so the three groups reserve the Link track together and their
+   * numeric columns stay on one line across the whole roster.
+   */
+  candidateCount: number
   firstGroup: boolean
   dragging: boolean
   over: boolean
   onSelect: (id: number, v: boolean, range: boolean) => void
   onPatch: (id: number, body: Partial<AthleteRow>) => void
   onRemove: (kid: AthleteRow) => void
+  onLink: (kid: AthleteRow) => void
   onDragStart: (e: ReactPointerEvent, id: number) => void
   onAdd?: () => void
 }) {
+  const withLink = candidateCount > 0
   return (
     <section aria-label={title} className="min-w-0" {...{ [DROP_ATTR]: dropZoneValue(teamId) }}>
       {/* Below 1280 the three columns are one field, so the group head pins itself
@@ -58,12 +65,13 @@ export function RosterGroup({
           over && 'bg-gray-3 shadow-[inset_0_0_0_2px_var(--white)]',
         )}
       >
-        <FieldHead className={cn(ROSTER_COLS, 'font-mono t2', !firstGroup && 'hidden xl:grid')}>
+        <FieldHead className={cn(rosterCols(withLink), 'font-mono t2', !firstGroup && 'hidden xl:grid')}>
           <span />
           <span />
           <span className="t1 font-sans">Competitor</span>
           <span className="tick t1 font-sans text-right">Age</span>
           <span className="tick t1 font-sans text-right">lb</span>
+          {withLink && <span />}
           <span />
         </FieldHead>
         {kids.length === 0
@@ -84,9 +92,11 @@ export function RosterGroup({
                   selected={selected.has(k.id)}
                   fault={faults.has(k.id)}
                   inMatch={inMatch.has(k.id)}
+                  candidateCount={candidateCount}
                   onSelect={(v, range) => onSelect(k.id, v, range)}
                   onPatch={body => onPatch(k.id, body)}
                   onRemove={() => onRemove(k)}
+                  onLink={() => onLink(k)}
                   onDragStart={onDragStart}
                 />
               ))}
