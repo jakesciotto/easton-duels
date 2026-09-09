@@ -78,7 +78,8 @@ const CANONICAL = new Map(NICKNAMES.flatMap(group => group.map(name => [name, gr
 
 /** The group's first entry, or the normalized first token when no group holds the name. */
 export function canonicalFirst(first: string): string {
-  const token = normalize(first.trim().split(/\s+/)[0] ?? '')
+  // A hyphen is a space here too, so "Mary-Kate" and "Mary Kate" name one child.
+  const token = normalize(first.trim().split(/[\s-]+/)[0] ?? '')
   return CANONICAL.get(token) ?? token
 }
 

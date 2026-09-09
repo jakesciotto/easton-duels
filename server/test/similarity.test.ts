@@ -80,6 +80,7 @@ describe('exactName', () => {
 
   it('reads accents and hyphens as the plain letters', () => {
     expect(exactName({ firstName: 'José', lastName: 'Núñez-Ortiz' }, { firstName: 'Jose', lastName: 'Nunez Ortiz' })).toBe(true)
+    expect(exactName({ firstName: 'Mary-Kate', lastName: 'Olsen' }, { firstName: 'Mary Kate', lastName: 'Olsen' })).toBe(true)
   })
 
   it('takes a nickname as the same first name', () => {

@@ -80,9 +80,6 @@ export interface SyncReport {
   gone: string[]
 }
 
-// One near match the sync could not settle on its own. A person confirms it or says the
-// candidate is not this child, so the row carries the name it would be linked to.
-
 export interface ClockState { elapsedMs: number; startedAt: string | null; lengthMs: number }
 export interface MatchResult { winnerAthleteId: number; winType: WinType }
 export interface PendingTerminal { athleteId: number; actionKey: string }
