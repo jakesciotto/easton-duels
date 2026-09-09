@@ -64,7 +64,11 @@ const SLOW_SNAPSHOT = slowSnapshot()
 function mount(handler: (url: string, init?: RequestInit) => Reply | undefined, path = '/events/7') {
   const f = fakeFetch((url, init) => handler(url, init) ?? { json: [] })
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  const router = createMemoryRouter([{ path: '/events/:eventId', element: <EventPage /> }], { initialEntries: [path] })
+  // A delete leaves the event, so the list has to be a real route the memory router can land on.
+  const router = createMemoryRouter(
+    [{ path: '/events/:eventId', element: <EventPage /> }, { path: '/admin', element: <div>Events</div> }],
+    { initialEntries: [path] },
+  )
   render(<QueryClientProvider client={qc}><RouterProvider router={router} /></QueryClientProvider>)
   return { f, qc, router }
 }
@@ -701,5 +705,118 @@ describe('EventPage: the three step setup', () => {
     const user = userEvent.setup()
     await user.click(await screen.findByRole('tab', { name: 'Rulesets' }))
     expect(screen.getByRole('tab', { name: 'Rulesets' })).toHaveAttribute('aria-selected', 'true')
+  })
+})
+
+// The PIN is six separate wells, so a code is typed one digit into one well at a time,
+// the same way the Live tab's own suite does it.
+async function typeCode(user: ReturnType<typeof userEvent.setup>, host: HTMLElement, digits: string) {
+  const wells = within(host).getAllByRole('textbox').slice(0, digits.length)
+  for (let i = 0; i < digits.length; i++) {
+    await user.clear(wells[i])
+    await user.type(wells[i], digits[i])
+  }
+}
+
+/**
+ * Spec 3.2. The way out of an event is one destructive item on the shell, so it is the
+ * same control on every tab, and the PIN it asks for is the one the Unlock dialog asks
+ * for. Certification outranks it: an event that was signed off is unlocked first.
+ */
+describe('EventPage: deleting the event', () => {
+  const DELETABLE: MatchRow[] = [match(1, 0, 100, 200), { ...match(2, 1, 101, 201), status: 'done' }]
+
+  const route = (over: Partial<EventDetail['event']> = {}) => {
+    const base = detailWith(DELETABLE)
+    const body = { ...base, event: { ...base.event, ...over } }
+    return (url: string, init?: RequestInit): Reply | undefined => {
+      if (url === '/api/events/7' && init?.method === 'DELETE') return { status: 204 }
+      return snapshotReply(url, slowSnapshot({ status: over.status ?? 'setup' }))
+        ?? (url === '/api/events/7' ? { json: body } : undefined)
+    }
+  }
+
+  const item = async (user: ReturnType<typeof userEvent.setup>) => {
+    const header = await screen.findByRole('banner')
+    await user.click(within(header).getByRole('button', { name: 'Event actions' }))
+    return screen.findByRole('menuitem', { name: 'Delete event' })
+  }
+
+  const openDialog = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(await item(user))
+    return screen.findByRole('dialog')
+  }
+
+  it('opens the dialog from the overflow and counts what the delete takes', async () => {
+    mount(route())
+    const user = userEvent.setup()
+    const dialog = await openDialog(user)
+    expect(within(dialog).getByText('Delete this event?')).toBeInTheDocument()
+    expect(within(dialog).getByText('Fall Duels, 2026-10-03: 6 competitors, 2 matches, 1 result. This cannot be undone.')).toBeInTheDocument()
+  })
+
+  it('asks for no PIN on a setup event', async () => {
+    mount(route())
+    const user = userEvent.setup()
+    const dialog = await openDialog(user)
+    expect(within(dialog).queryByText('Enter the PIN to delete an event with results')).not.toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Delete event' })).toBeEnabled()
+  })
+
+  it('asks for the PIN once the event has results, and holds the button until it is full', async () => {
+    mount(route({ status: 'live' }))
+    const user = userEvent.setup()
+    const dialog = await openDialog(user)
+    expect(within(dialog).getByText('Enter the PIN to delete an event with results')).toBeInTheDocument()
+    const confirm = within(dialog).getByRole('button', { name: 'Delete event' })
+    expect(confirm).toBeDisabled()
+    await typeCode(user, dialog, '123456')
+    await vi.waitFor(() => expect(confirm).toBeEnabled())
+  })
+
+  it('sends the PIN and leaves for the event list on success', async () => {
+    const { f, router } = mount(route({ status: 'live' }))
+    const user = userEvent.setup()
+    const dialog = await openDialog(user)
+    await typeCode(user, dialog, '123456')
+    await user.click(within(dialog).getByRole('button', { name: 'Delete event' }))
+    await vi.waitFor(() => expect(router.state.location.pathname).toBe('/admin'))
+    const i = f.calls.findIndex(c => c.url === '/api/events/7' && c.init?.method === 'DELETE')
+    expect(f.body(i)).toEqual({ pin: '123456' })
+  })
+
+  it('sends an empty body from a setup event', async () => {
+    const { f, router } = mount(route())
+    const user = userEvent.setup()
+    const dialog = await openDialog(user)
+    await user.click(within(dialog).getByRole('button', { name: 'Delete event' }))
+    await vi.waitFor(() => expect(router.state.location.pathname).toBe('/admin'))
+    const i = f.calls.findIndex(c => c.url === '/api/events/7' && c.init?.method === 'DELETE')
+    expect(f.body(i)).toEqual({})
+  })
+
+  // A 401 clears the admin token and hands the screen back to the PIN gate, so the
+  // refusal that has to render in place is one of the others the route can answer.
+  it('reads a refusal inside the dialog and stays on the event', async () => {
+    const base = detailWith(DELETABLE)
+    const live = { ...base, event: { ...base.event, status: 'live' as const } }
+    const { router } = mount((url, init) => {
+      if (url === '/api/events/7' && init?.method === 'DELETE') {
+        return { status: 429, json: { error: { code: 'rate_limited', message: 'too many PIN attempts' } } }
+      }
+      return snapshotReply(url, slowSnapshot({ status: 'live' })) ?? (url === '/api/events/7' ? { json: live } : undefined)
+    })
+    const user = userEvent.setup()
+    const dialog = await openDialog(user)
+    await typeCode(user, dialog, '000000')
+    await user.click(within(dialog).getByRole('button', { name: 'Delete event' }))
+    expect(await within(dialog).findByText('too many PIN attempts')).toBeInTheDocument()
+    expect(router.state.location.pathname).toBe('/events/7')
+  })
+
+  it('is dead once the results are certified', async () => {
+    mount(route({ status: 'certified' }))
+    const user = userEvent.setup()
+    expect(await item(user)).toHaveAttribute('data-disabled')
   })
 })

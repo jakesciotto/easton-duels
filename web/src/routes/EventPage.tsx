@@ -25,7 +25,9 @@ import { List, ListRow } from '@/components/ui/list'
 import { Segment } from '@/components/ui/segment'
 import { dialogBody, dialogFooter, dialogSurface } from '@/components/dialog-frame'
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { OverflowMenu } from '@/components/OverflowMenu'
 import { ContactDialog, contactFooter } from './event/ContactDialog'
+import { DELETE_EVENT_ACTION, DeleteEventDialog } from './event/DeleteEventDialog'
 import { RosterTab } from './event/RosterTab'
 import { EntryTab } from './event/EntryTab'
 import { RulesetsTab } from './event/RulesetsTab'
@@ -220,6 +222,7 @@ function EventBody({ eventId }: { eventId: number }) {
   const [params, setParams] = useSearchParams()
   const step = setupStepOf(params.get(SETUP_PARAM))
   const [picked, setPicked] = useState<string | null>(null)
+  const [deleteOpen, setDeleteOpen] = useState(false)
   // 6.4 / 7.15: the one poll for this event. The header's freshness readout and every tab
   // under the provider read this same stream, so the shell can never report fresh data for
   // a screen that is deliberately frozen, and one browser tab makes one request per tick.
@@ -273,7 +276,17 @@ function EventBody({ eventId }: { eventId: number }) {
     <AdminShell
       title={detail.event.name}
       status={<Badge variant={STATUS[detail.event.status].variant}>{STATUS[detail.event.status].label}</Badge>}
-      actions={<Link to={`/board/${eventId}`} target="_blank" className={buttonVariants({ variant: 'secondary', size: 'sm' })}>Open board</Link>}
+      actions={(
+        <>
+          <Link to={`/board/${eventId}`} target="_blank" className={buttonVariants({ variant: 'secondary', size: 'sm' })}>Open board</Link>
+          {/* 6.9: the one rare action on the whole event, and the only destructive one the
+              shell carries. A certified event is unlocked on the Live tab first. */}
+          <OverflowMenu
+            label="Event actions"
+            items={[{ key: 'delete', label: DELETE_EVENT_ACTION, disabled: certified, tone: 'destructive', onSelect: () => setDeleteOpen(true) }]}
+          />
+        </>
+      )}
       freshness={{
         lastSuccessAt: stream.lastSuccessAt,
         pollIntervalMs: pollIntervalForSnapshot(stream.snapshot),
@@ -314,6 +327,7 @@ function EventBody({ eventId }: { eventId: number }) {
         />
         <SetupMatchesStep detail={detail} open={step === 'matches'} onClose={() => leave(null)} />
       </SnapshotStreamContext>
+      <DeleteEventDialog detail={detail} open={deleteOpen} onOpenChange={setDeleteOpen} />
     </AdminShell>
   )
 }
