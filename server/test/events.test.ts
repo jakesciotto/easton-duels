@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { createTestApp, call } from './helpers.js'
+import { createTestApp, call, TEST_PIN } from './helpers.js'
 import { seedEvent } from './fixtures.js'
 import { enterResult } from '../src/match/entry.js'
-import { mats, matches, rosterCandidates } from '../src/db/schema.js'
+import { auditLog, athletes, events, mats, matches, rosterCandidates } from '../src/db/schema.js'
 
 const body = { name: 'Fall Duels', date: '2026-10-03', matCount: 2, teams: [{ name: 'Ridgeline', color: 'red' }, { name: 'Lakeside', color: 'blue' }] }
 
@@ -173,7 +173,7 @@ describe('events', () => {
     expect(down.body.mats).toHaveLength(1)
   })
 
-  it('renames a team, serves connect info, and deletes a setup event', async () => {
+  it('renames a team and serves connect info', async () => {
     const { app, db, adminToken } = await createTestApp()
     const s = await seedEvent(db)
     const t = await call(app, 'PATCH', `/api/events/${s.eventId}/teams/${s.teamA}`, { name: 'Ridgeline Bears', color: 'teal' }, adminToken)
@@ -181,9 +181,64 @@ describe('events', () => {
     const c = await call(app, 'GET', `/api/events/${s.eventId}/connect`, undefined, adminToken)
     expect(c.body.matCode).toBe('0420')
     expect(c.body.url).toMatch(/^http:\/\/[\d.]+:\d+$/)
-    expect((await call(app, 'DELETE', `/api/events/${s.eventId}`, undefined, adminToken)).status).toBe(204)
-    expect((await call(app, 'GET', `/api/events/${s.eventId}`, undefined, adminToken)).status).toBe(404)
-    const live = await seedEvent(db, { live: true })
-    expect((await call(app, 'DELETE', `/api/events/${live.eventId}`, undefined, adminToken)).status).toBe(409)
+  })
+
+  describe('delete event', () => {
+    it('deletes a setup event on a plain {}, taking its athletes, matches and candidates with it while the audit row survives', async () => {
+      const { app, db, adminToken } = await createTestApp()
+      const s = await seedEvent(db)
+      await db.insert(rosterCandidates).values({ eventId: s.eventId, wlUid: 'w1', firstName: 'Ana', lastName: 'Reyes' }).run()
+      const r = await call(app, 'DELETE', `/api/events/${s.eventId}`, {}, adminToken)
+      expect(r.status).toBe(204)
+      expect((await call(app, 'GET', `/api/events/${s.eventId}`, undefined, adminToken)).status).toBe(404)
+      expect(await db.select().from(athletes).where(eq(athletes.eventId, s.eventId)).all()).toEqual([])
+      expect(await db.select().from(matches).where(eq(matches.eventId, s.eventId)).all()).toEqual([])
+      expect(await db.select().from(rosterCandidates).where(eq(rosterCandidates.eventId, s.eventId)).all()).toEqual([])
+      const rows = await db.select().from(auditLog).where(eq(auditLog.eventId, s.eventId)).all()
+      const row = rows.find(r2 => r2.action === 'delete')
+      expect(row?.detail).toMatchObject({ name: 'Fall Duels', date: '2026-10-03', status: 'setup', athletes: 4, matches: 2, results: 0 })
+    })
+
+    it('422s pin_required on a live event with {}, then 401s a wrong PIN, then 204s the right one', async () => {
+      const { app, db, adminToken } = await createTestApp()
+      const s = await seedEvent(db, { live: true })
+      await db.update(matches).set({ status: 'done' }).where(eq(matches.id, s.matchIds[0])).run()
+      const noPin = await call(app, 'DELETE', `/api/events/${s.eventId}`, {}, adminToken)
+      expect(noPin.status).toBe(422)
+      expect(noPin.body.error.code).toBe('pin_required')
+
+      const wrong = await call(app, 'DELETE', `/api/events/${s.eventId}`, { pin: '000000' }, adminToken)
+      expect(wrong.status).toBe(401)
+      expect(wrong.body.error.code).toBe('bad_pin')
+
+      const right = await call(app, 'DELETE', `/api/events/${s.eventId}`, { pin: TEST_PIN }, adminToken)
+      expect(right.status).toBe(204)
+      const rows = await db.select().from(auditLog).where(eq(auditLog.eventId, s.eventId)).all()
+      expect(rows.find(r => r.action === 'delete')?.detail).toMatchObject({ status: 'live', results: 1 })
+    })
+
+    it('409s a certified event with or without the PIN', async () => {
+      const { app, db, adminToken } = await createTestApp()
+      const s = await seedEvent(db, { matCount: 1, live: true, matches: 1 })
+      await call(app, 'POST', `/api/matches/${s.matchIds[0]}/end`, { id: 'del-end-1', lastSeq: 0, winnerAthleteId: s.a1 }, adminToken)
+      await call(app, 'PATCH', `/api/events/${s.eventId}`, { status: 'done' }, adminToken)
+      await call(app, 'POST', `/api/events/${s.eventId}/certify`, { pin: TEST_PIN }, adminToken)
+
+      const noPin = await call(app, 'DELETE', `/api/events/${s.eventId}`, {}, adminToken)
+      expect(noPin.status).toBe(409)
+      expect(noPin.body.error.code).toBe('match_state')
+      expect(noPin.body.error.message).toBe('unlock the results first')
+
+      const withPin = await call(app, 'DELETE', `/api/events/${s.eventId}`, { pin: TEST_PIN }, adminToken)
+      expect(withPin.status).toBe(409)
+      expect(withPin.body.error.message).toBe('unlock the results first')
+
+      expect((await db.select().from(events).where(eq(events.id, s.eventId)).all())).toHaveLength(1)
+    })
+
+    it('404s an unknown event', async () => {
+      const { app, adminToken } = await createTestApp()
+      expect((await call(app, 'DELETE', '/api/events/999999', {}, adminToken)).status).toBe(404)
+    })
   })
 })

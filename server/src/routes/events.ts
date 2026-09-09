@@ -174,17 +174,37 @@ eventRoutes.patch('/events/:eventId', requireAdmin, validate('json', patchEventS
   return c.json(await eventDetail(db, eventId))
 })
 
-eventRoutes.delete('/events/:eventId', requireAdmin, async c => {
+const deleteEventSchema = z.object({ pin: z.string().optional() })
+
+eventRoutes.delete('/events/:eventId', requireAdmin, validate('json', deleteEventSchema), async c => {
   const { db } = c.get('ctx')
   const eventId = Number(c.req.param('eventId'))
   const ev = await db.select().from(events).where(eq(events.id, eventId)).get()
   if (!ev) return errorJson(c, 404, 'not_found', 'event not found')
-  await assertNotCertified(db, eventId)
-  if (ev.status !== 'setup') return errorJson(c, 409, 'match_state', 'only an event in setup can be deleted')
+  // Certified is a signature; it stays out of reach until an admin unlocks it, the same
+  // as every other write, but the message says what to do rather than only naming the
+  // state, because the organizer's next move here is not obvious the way it is elsewhere.
+  if (ev.status === 'certified') return errorJson(c, 409, 'match_state', 'unlock the results first')
+  const { pin } = c.req.valid('json')
+  // Setup is the one status nothing has happened in yet: a plain confirm is enough. Past
+  // that, the PIN is asked again so a console left open on a desk cannot erase an
+  // afternoon's results with a stray tap.
+  if (ev.status !== 'setup') {
+    if (pin === undefined) return errorJson(c, 422, 'pin_required', 'This event has results. Enter the PIN to delete it.')
+    const refused = await withPin(c, pin)
+    if (refused) return refused
+  }
+  const athleteCount = await db.select({ n: count() }).from(athletes).where(eq(athletes.eventId, eventId)).get()
+  const matchRows = await db.select({ status: matches.status }).from(matches).where(eq(matches.eventId, eventId)).all()
+  const results = matchRows.filter(m => m.status === 'done').length
   // The audit row outlives the event, which is the point of a table with no foreign keys.
+  // The counts are read before the delete because nothing is left to count after it.
   await db.transaction(async tx => {
     await tx.delete(events).where(eq(events.id, eventId)).run()
-    await recordAudit(tx, { eventId, actor: 'admin', action: 'delete', detail: { name: ev.name, date: ev.date } })
+    await recordAudit(tx, {
+      eventId, actor: 'admin', action: 'delete',
+      detail: { name: ev.name, date: ev.date, status: ev.status, athletes: athleteCount?.n ?? 0, matches: matchRows.length, results },
+    })
   })
   return c.body(null, 204)
 })

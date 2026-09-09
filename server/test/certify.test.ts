@@ -21,7 +21,10 @@ async function certified(): Promise<{ app: App; db: Db; adminToken: string; s: S
   return { app, db, adminToken, s }
 }
 
-interface Write { name: string; method: string; path: (s: Seeded) => string; body?: (s: Seeded) => unknown; mat?: boolean }
+// message overrides the certification refusal text this write expects. Delete says
+// "unlock the results first" instead of the standard CERTIFIED_MESSAGE, because deleting
+// a certified event has an obvious next step the generic lock message does not name.
+interface Write { name: string; method: string; path: (s: Seeded) => string; body?: (s: Seeded) => unknown; mat?: boolean; message?: string }
 
 // The write routes certification deliberately leaves alone. Heartbeat and unbind stay open
 // so a bound tablet can keep saying it is there and can always hand its mat back; the two
@@ -51,7 +54,7 @@ const WRITES: Write[] = [
   { name: 'bind', method: 'POST', path: s => `/api/events/${s.eventId}/mats/${s.matIds[0]}/bind`, body: () => ({ code: '0420' }) },
   { name: 'advance', method: 'POST', path: s => `/api/mats/${s.matIds[0]}/advance` },
   { name: 'event patch', method: 'PATCH', path: s => `/api/events/${s.eventId}`, body: () => ({ name: 'Renamed' }) },
-  { name: 'event delete', method: 'DELETE', path: s => `/api/events/${s.eventId}` },
+  { name: 'event delete', method: 'DELETE', path: s => `/api/events/${s.eventId}`, body: () => ({}), message: 'unlock the results first' },
   { name: 'team patch', method: 'PATCH', path: s => `/api/events/${s.eventId}/teams/${s.teamA}`, body: () => ({ name: 'Renamed' }) },
   { name: 'ruleset create', method: 'POST', path: s => `/api/events/${s.eventId}/rulesets`, body: () => ({ name: 'Short', defaultLengthSec: 120, actions: [{ key: 'takedown', label: 'Takedown', points: 2 }], terminals: [] }) },
   { name: 'ruleset patch', method: 'PATCH', path: s => `/api/rulesets/${s.rulesetId}`, body: () => ({ name: 'Renamed' }) },
@@ -109,7 +112,7 @@ describe('certification locks the event', () => {
     const r = await call(app, w.method, w.path(s), w.body?.(s), token)
     expect(r.status).toBe(409)
     expect(r.body.error.code).toBe('match_state')
-    expect(r.body.error.message).toBe(CERTIFIED_MESSAGE)
+    expect(r.body.error.message).toBe(w.message ?? CERTIFIED_MESSAGE)
   })
 
   it.each(WRITES.map(w => [w.name, w] as const))('lets %s through again after an unlock', async (_name, w) => {
