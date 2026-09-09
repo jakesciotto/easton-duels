@@ -1,5 +1,5 @@
 import { sqliteTable, text, integer, real, index, uniqueIndex, primaryKey } from 'drizzle-orm/sqlite-core'
-import type { RulesetAction, RulesetTerminal, MatchEventPayload, AuditAction, AuditActor, AuditDetail } from '../shared/types.js'
+import type { RulesetAction, RulesetTerminal, MatchEventPayload, AuditAction, AuditActor, AuditDetail, SyncChanges } from '../shared/types.js'
 
 export const settings = sqliteTable('settings', {
   key: text('key').primaryKey(),
@@ -29,6 +29,9 @@ export const events = sqliteTable('events', {
   // Null until an admin sets it, and the board falls back to 1.0. Written into the event
   // so a second browser or a cleared cache sees the same number rather than reverting.
   far: real('far'),
+  // The WellnessLiving locations this event syncs, as kBusiness ids. Null until the first
+  // sync stores the pick, so every later sync runs on one press.
+  wlLocations: text('wl_locations', { mode: 'json' }).$type<string[]>(),
   createdAt: text('created_at').notNull(),
   version: integer('version').notNull().default(0),
 })
@@ -58,6 +61,16 @@ export const athletes = sqliteTable('athletes', {
   wlLocation: text('wl_location'),
   leaderboardId: text('leaderboard_id'),
   erp: real('erp'),
+  // The profile the last sync left. promotedAt dates the belt above; syncedAt is when a
+  // sync last wrote this row; syncChanges is what that sync moved, {} when nothing did.
+  promotedAt: text('promoted_at'),
+  syncedAt: text('synced_at'),
+  syncChanges: text('sync_changes', { mode: 'json' }).$type<SyncChanges>(),
+  // A near match never links itself. One candidate waits here for a person to confirm it,
+  // and every candidate a person has refused stays refused across later syncs.
+  suggestedWlUid: text('suggested_wl_uid'),
+  suggestedScore: real('suggested_score'),
+  dismissedWlUids: text('dismissed_wl_uids', { mode: 'json' }).$type<string[]>().notNull().default([]),
 }, t => [
   index('athletes_event_idx').on(t.eventId),
   uniqueIndex('athletes_event_wl_uid_idx').on(t.eventId, t.wlUid),
@@ -76,6 +89,7 @@ export const rosterCandidates = sqliteTable('roster_candidates', {
   age: integer('age'),
   weightLbs: integer('weight_lbs'),
   gender: text('gender'),
+  promotedAt: text('promoted_at'),
 }, t => [
   index('roster_candidates_event_idx').on(t.eventId),
   uniqueIndex('roster_candidates_event_wl_uid_idx').on(t.eventId, t.wlUid),

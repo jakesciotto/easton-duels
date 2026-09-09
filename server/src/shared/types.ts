@@ -59,6 +59,11 @@ export interface AuditEntry {
   detail: AuditDetail
 }
 
+// What one sync moved on one athlete, field by field, as the profile sheet prints it.
+// An empty object is a row the sync read and found already right.
+export interface ProfileChange { from: unknown; to: unknown }
+export type SyncChanges = Record<string, ProfileChange>
+
 // One run of the WellnessLiving matcher, whether from an import or the Roster tab's own
 // button. Names are "First Last", so the web prints them without a lookup.
 export interface MatchReport {

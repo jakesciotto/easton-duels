@@ -6,7 +6,7 @@ import { freshDb, seedEvent } from './fixtures.js'
 
 const cand = (o: Partial<RosterCandidateRow>): RosterCandidateRow => ({
   id: 0, eventId: 0, wlUid: 'w0', firstName: 'Jonas', lastName: 'Blake', belt: 'yellow',
-  wlLocation: 'North', leaderboardId: 'jonas-blake', erp: 4.4, age: 10, weightLbs: 70, gender: 'M', ...o,
+  wlLocation: 'North', leaderboardId: 'jonas-blake', erp: 4.4, age: 10, weightLbs: 70, gender: 'M', promotedAt: '2026-03-14', ...o,
 })
 
 describe('fullName', () => {
