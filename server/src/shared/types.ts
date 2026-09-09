@@ -80,25 +80,8 @@ export interface SyncReport {
   gone: string[]
 }
 
-// v0.9.0's report, kept only until the web reads SyncReport. Nothing on the server
-// answers it.
-export interface MatchReport {
-  matched: string[]
-  refreshed: number
-  unmatched: string[]
-  ambiguous: string[]
-  duplicates: string[]
-}
-
 // One near match the sync could not settle on its own. A person confirms it or says the
 // candidate is not this child, so the row carries the name it would be linked to.
-export interface SyncSuggestion { athleteId: number; name: string; candidate: string; location: string; score: number }
-
-// One run of the sync. Names are "First Last", so the web prints them without a lookup.
-export interface SyncReport {
-  linked: string[]; refreshed: number; changed: string[]
-  suggested: SyncSuggestion[]; ambiguous: string[]; unmatched: string[]; gone: string[]
-}
 
 export interface ClockState { elapsedMs: number; startedAt: string | null; lengthMs: number }
 export interface MatchResult { winnerAthleteId: number; winType: WinType }
