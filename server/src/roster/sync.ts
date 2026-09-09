@@ -44,6 +44,14 @@ export interface SyncMeta { locations: number; warnings: number }
  * suggestion for a person to confirm, and a candidate a person has refused is never
  * offered again. Runs inside the transaction the caller opened.
  */
+export const POOL_INSERT_ROWS = 500
+
+function chunks<T>(rows: T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < rows.length; i += size) out.push(rows.slice(i, i + size))
+  return out
+}
+
 export async function syncRoster(
   db: DbLike,
   eventId: number,
@@ -54,7 +62,12 @@ export async function syncRoster(
   if (records !== null) {
     const built = buildCandidates(records, competitors)
     await db.delete(rosterCandidates).where(eq(rosterCandidates.eventId, eventId)).run()
-    if (built.length > 0) await db.insert(rosterCandidates).values(built.map(cand => ({ eventId, ...cand }))).run()
+    // SQLite binds at most 32766 variables in one statement, and eight locations give
+    // more than four thousand candidates at thirteen columns each. Rows go in slices
+    // that stay well under the limit.
+    for (const slice of chunks(built.map(cand => ({ eventId, ...cand })), POOL_INSERT_ROWS)) {
+      await db.insert(rosterCandidates).values(slice).run()
+    }
   }
   const pool = await db.select().from(rosterCandidates).where(eq(rosterCandidates.eventId, eventId)).all()
   const roster = await db.select().from(athletes).where(eq(athletes.eventId, eventId))

@@ -278,3 +278,17 @@ describe('syncRoster', () => {
     })
   })
 })
+
+describe('syncRoster, a pool the size of the gym', () => {
+  it('writes four thousand candidates in one sync, under SQLite\'s bind limit', async () => {
+    // Eight locations gave 4671 kids at thirteen columns, 60723 variables in the one
+    // insert the route used to issue, and SQLite refused it with "too many SQL variables".
+    const db = await freshDb()
+    const s = await seedEvent(db, { matches: 0 })
+    const records = Array.from({ length: 4000 }, (_, i) => rec({ uid: `w${i}`, firstName: `First${i}`, lastName: `Last${i}` }))
+    const report = await syncRoster(db, s.eventId, records, [], { locations: 8, warnings: 0 })
+    const pool = await db.select().from(rosterCandidates).where(eq(rosterCandidates.eventId, s.eventId)).all()
+    expect(pool).toHaveLength(4000)
+    expect(report.linked).toEqual([])
+  })
+})
