@@ -132,6 +132,7 @@ const PLAIN: Record<string, string> = {
   roster_assign: 'Competitors assigned to a team',
   roster_remove: 'Competitor removed',
   roster_sync: 'Roster imported',
+  roster_link: 'Linked to WellnessLiving',
   match_create: 'Match added',
   match_edit: 'Match changed',
   match_delete: 'Match deleted',

@@ -157,6 +157,11 @@ describe('historyRows', () => {
     expect(line.what).toBe('Roster imported')
   })
 
+  it('names a link to WellnessLiving', () => {
+    const [line] = historyRows([row('roster_link', { kind: 'match', matched: 4 }, { actor: 'admin' })], ctx)
+    expect(line.what).toBe('Linked to WellnessLiving')
+  })
+
   describe('undo', () => {
     it('keeps the undone action in the list and prints the undo beneath it', () => {
       const rows = historyRows([
