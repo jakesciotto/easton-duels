@@ -64,8 +64,24 @@ export interface AuditEntry {
 export interface ProfileChange { from: unknown; to: unknown }
 export type SyncChanges = Record<string, ProfileChange>
 
-// One run of the WellnessLiving matcher, whether from an import or the Roster tab's own
-// button. Names are "First Last", so the web prints them without a lookup.
+// One near match waiting on a person. `candidate` and `location` name the WellnessLiving
+// record, so the row and the dialog print the pair without a second lookup.
+export interface SyncSuggestion { athleteId: number; name: string; candidate: string; location: string; score: number }
+
+// One run of the sync. Names are "First Last", so the web prints them without a lookup.
+// `changed` is the refreshed rows whose profile actually moved.
+export interface SyncReport {
+  linked: string[]
+  refreshed: number
+  changed: string[]
+  suggested: SyncSuggestion[]
+  ambiguous: string[]
+  unmatched: string[]
+  gone: string[]
+}
+
+// v0.9.0's report, kept only until the web reads SyncReport. Nothing on the server
+// answers it.
 export interface MatchReport {
   matched: string[]
   refreshed: number

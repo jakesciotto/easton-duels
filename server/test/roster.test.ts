@@ -64,7 +64,7 @@ describe('buildCandidates', () => {
 
   it('joins by slug and fills age, weight, gender, and erp', () => {
     const [c] = buildCandidates([rec({})], [comp])
-    expect(c).toEqual({ wlUid: '1', firstName: 'Zoe', lastName: 'Martin', belt: 'grey', wlLocation: 'North', leaderboardId: 'zoe-martin', erp: 5.2, age: 8, weightLbs: 60, gender: 'Female' })
+    expect(c).toEqual({ wlUid: '1', firstName: 'Zoe', lastName: 'Martin', belt: 'grey', wlLocation: 'North', leaderboardId: 'zoe-martin', erp: 5.2, age: 8, weightLbs: 60, gender: 'Female', promotedAt: '2026-01-01' })
   })
   it('keeps one row per uid using the latest promotion', () => {
     const rows = buildCandidates([rec({ rankTitle: 'Grey/White Belt', promotedAt: '2025-01-01' }), rec({ location: 'South', promotedAt: '2026-05-01' })], [])
@@ -199,20 +199,20 @@ describe('roster routes', () => {
     await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['100001'] }, adminToken)
     const r = await call(app, 'GET', `/api/events/${s.eventId}/candidates`, undefined, adminToken)
     expect(r.status).toBe(200)
-    expect(r.body).toEqual([{ wlUid: '9', firstName: 'Zoe', lastName: 'Martin', belt: 'grey', wlLocation: 'North', leaderboardId: null, erp: null, age: null, weightLbs: null, gender: null }])
+    expect(r.body).toEqual([{ wlUid: '9', firstName: 'Zoe', lastName: 'Martin', belt: 'grey', wlLocation: 'North', leaderboardId: null, erp: null, age: null, weightLbs: null, gender: null, promotedAt: null }])
     expect((await call(app, 'GET', '/api/events/999999/candidates', undefined, adminToken)).status).toBe(404)
     await db.delete(events).where(eq(events.id, s.eventId)).run()
     expect(await db.select().from(rosterCandidates).where(eq(rosterCandidates.eventId, s.eventId)).all()).toEqual([])
   })
 
-  it('carries the match report on the sync response', async () => {
+  it('carries the sync report on the sync response', async () => {
     const { app, db, adminToken } = await createTestApp({ roster: { wl: fakeWl, leaderboard: null, syncBudgetMs: null } })
     const s = await seedEvent(db, { matches: 0 })
     await db.insert(athletes).values({ eventId: s.eventId, firstName: 'Zoe', lastName: 'Martin', source: 'manual' }).run()
     const r = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['100001'] }, adminToken)
     expect(r.status).toBe(200)
-    expect(r.body.match.matched).toEqual(['Zoe Martin'])
-    expect(r.body.match.refreshed).toBe(0)
+    expect(r.body.report.linked).toEqual(['Zoe Martin'])
+    expect(r.body.report.refreshed).toBe(0)
   })
 })
 
@@ -237,7 +237,7 @@ describe('roster match route', () => {
     await db.insert(rosterCandidates).values({ eventId: s.eventId, wlUid: 'w0', firstName: 'Jonas', lastName: 'Blake', belt: 'yellow', wlLocation: 'North' }).run()
     const r = await call(app, 'POST', `/api/events/${s.eventId}/roster/match`, undefined, adminToken)
     expect(r.status).toBe(200)
-    expect(r.body.report.matched).toEqual(['Jonas Blake'])
+    expect(r.body.report.linked).toEqual(['Jonas Blake'])
     expect(r.body.athletes.find((a: any) => a.lastName === 'Blake')).toMatchObject({ wlUid: 'w0', belt: 'yellow' })
   })
 })

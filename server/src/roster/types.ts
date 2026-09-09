@@ -40,6 +40,7 @@ export interface RosterCandidate {
   age: number | null
   weightLbs: number | null
   gender: string | null
+  promotedAt: string | null
 }
 
 // Mirrors roster_candidates: the same fields as RosterCandidate, plus the row's own id

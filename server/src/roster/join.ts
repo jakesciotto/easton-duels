@@ -24,6 +24,7 @@ export function buildCandidates(records: WlBeltRecord[], competitors: Leaderboar
         age: ageFromAgeGroup(c?.ageGroup ?? null),
         weightLbs: weightFromWeightClass(c?.weightClass ?? null),
         gender: c?.gender ?? null,
+        promotedAt: r.promotedAt,
       }
     })
     .sort((a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName))

@@ -31,6 +31,8 @@ const candidateSchema = z.object({
   wlUid: z.string().min(1), firstName: name, lastName: name, belt: z.string().nullable(), wlLocation: z.string(),
   leaderboardId: z.string().nullable(), erp: z.number().nullable(), age: z.number().int().nullable(),
   weightLbs: z.number().int().nullable(), gender: z.string().nullable(),
+  // Added in 0010. A body written by an older client carries no date, which reads as none.
+  promotedAt: z.string().nullable().default(null),
 })
 
 const addSchema = z.union([
@@ -52,7 +54,8 @@ export async function upsertCandidates(db: DbLike, eventId: number, candidates: 
     for (const cand of candidates) {
       const existing = await tx.select().from(athletes).where(and(eq(athletes.eventId, eventId), eq(athletes.wlUid, cand.wlUid))).get()
       const fromLeaderboard = {
-        belt: cand.belt, gender: cand.gender, wlLocation: cand.wlLocation, leaderboardId: cand.leaderboardId, erp: cand.erp,
+        belt: cand.belt, promotedAt: cand.promotedAt, gender: cand.gender,
+        wlLocation: cand.wlLocation, leaderboardId: cand.leaderboardId, erp: cand.erp,
       }
       if (!existing) {
         await tx.insert(athletes).values({
