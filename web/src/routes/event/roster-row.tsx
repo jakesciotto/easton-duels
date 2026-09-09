@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { XIcon } from 'lucide-react'
-import type { AthleteRow } from '@/lib/types'
+import { IdCardIcon, XIcon } from 'lucide-react'
+import type { AthleteRow, RosterCandidate } from '@/lib/types'
 import { athleteName, beltLabel, genderLabel } from '@/lib/format'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils'
  * against the element's own font and the sans zero is a different width.
  */
 export const ROSTER_COLS =
-  'grid grid-cols-[var(--col-select)_var(--col-state)_minmax(0,1fr)_var(--col-num-s)_var(--col-num-m)_var(--col-act)] gap-x-3 px-3'
+  'grid grid-cols-[var(--col-select)_var(--col-state)_minmax(0,1fr)_var(--col-num-s)_var(--col-num-m)_var(--col-act)_var(--col-act)] gap-x-3 px-3'
 
 /**
  * The same tracks plus one fixed 56px cell for the Link control, which an event with a
@@ -24,7 +24,7 @@ export const ROSTER_COLS =
  * rows, and the numeric columns under it would then stop lining up with their labels.
  */
 const ROSTER_COLS_LINK =
-  'grid grid-cols-[var(--col-select)_var(--col-state)_minmax(0,1fr)_var(--col-num-s)_var(--col-num-m)_56px_var(--col-act)] gap-x-3 px-3'
+  'grid grid-cols-[var(--col-select)_var(--col-state)_minmax(0,1fr)_var(--col-num-s)_var(--col-num-m)_56px_var(--col-act)_var(--col-act)] gap-x-3 px-3'
 
 export function rosterCols(withLink: boolean): string {
   return withLink ? ROSTER_COLS_LINK : ROSTER_COLS
@@ -119,7 +119,12 @@ function EditableCell({ label, value, source, onSave }: {
 
 export const NOT_IN_WL = 'Not in WellnessLiving'
 
-export function RosterRow({ kid, selected, fault, inMatch, candidateCount, onSelect, onPatch, onRemove, onLink, onDragStart }: {
+/** 7.3. The near match the sync could not settle, as the row says it. */
+export function looksLikeLine(candidate: { firstName: string; lastName: string; wlLocation: string }): string {
+  return `Looks like ${athleteName(candidate)}, ${candidate.wlLocation}`
+}
+
+export function RosterRow({ kid, selected, fault, inMatch, candidateCount, suggestion, onSelect, onPatch, onRemove, onLink, onConfirm, onDismiss, onProfile, onDragStart }: {
   kid: AthleteRow
   selected: boolean
   fault: boolean
@@ -127,14 +132,24 @@ export function RosterRow({ kid, selected, fault, inMatch, candidateCount, onSel
   inMatch: boolean
   /** The pool this row could be linked to. With none there is nothing to say and nothing to press. */
   candidateCount: number
+  /**
+   * The candidate `suggestedWlUid` names, once the pool has been read. The row can act on
+   * the stored uid without it, so the controls stand from the first render and only the
+   * words arrive late.
+   */
+  suggestion: RosterCandidate | undefined
   onSelect: (v: boolean, range: boolean) => void
   onPatch: (body: Partial<AthleteRow>) => void
   onRemove: () => void
   onLink: () => void
+  onConfirm: (wlUid: string) => void
+  onDismiss: (wlUid: string) => void
+  onProfile: () => void
   onDragStart: (e: ReactPointerEvent, id: number) => void
 }) {
   const withLink = candidateCount > 0
-  const unlinked = withLink && kid.wlUid === null
+  const suggested = kid.suggestedWlUid
+  const unlinked = withLink && kid.wlUid === null && suggested === null
   const name = athleteName(kid)
   const range = useRef(false)
   const state = fault ? 'fault' : kid.age === null || kid.weightLbs === null ? 'attend' : 'ok'
@@ -162,7 +177,14 @@ export function RosterRow({ kid, selected, fault, inMatch, candidateCount, onSel
         if ((e.target as HTMLElement).closest('button, input, a')) return
         onDragStart(e, kid.id)
       }}
-      className={cn(rosterCols(withLink), 'group/row h-14 touch-pan-y py-2 font-mono t2 focus-within:bg-accent')}
+      className={cn(
+        rosterCols(withLink),
+        'group/row touch-pan-y py-2 font-mono t2 focus-within:bg-accent',
+        // A row waiting on a person carries a control line of its own. Two sm buttons need
+        // about 168px, and the three-up column at 1280 has 394px against 246px of fixed
+        // tracks, so they cannot sit beside the numbers without emptying the name.
+        suggested === null ? 'h-14' : 'min-h-14 gap-y-2',
+      )}
     >
       <Checkbox
         aria-label={`Select ${name}`}
@@ -179,7 +201,12 @@ export function RosterRow({ kid, selected, fault, inMatch, candidateCount, onSel
       />
       <span className="min-w-0 font-sans">
         <span className="block truncate t3 font-medium! text-white" title={name}>{name}</span>
-        <span className="block truncate t2 font-normal! leading-4! text-gray-10">{meta}</span>
+        <span className="block truncate t2 font-normal! leading-4! text-gray-10">
+          {meta}
+          {suggested !== null && suggestion !== undefined && (
+            <span className="text-gray-11">{meta === '' ? '' : ' · '}{looksLikeLine(suggestion)}</span>
+          )}
+        </span>
       </span>
       <EditableCell
         label={`Age for ${name}`}
@@ -199,6 +226,15 @@ export function RosterRow({ kid, selected, fault, inMatch, candidateCount, onSel
       <Button
         variant="ghost"
         size="icon"
+        aria-label={`Profile for ${name}`}
+        onClick={onProfile}
+        className="text-gray-9 group-hover/row:text-gray-11 group-focus-within/row:text-gray-11"
+      >
+        <IdCardIcon />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
         aria-label={inMatch ? `Remove ${name}, already in a match` : `Remove ${name}`}
         disabled={inMatch}
         onClick={onRemove}
@@ -206,6 +242,12 @@ export function RosterRow({ kid, selected, fault, inMatch, candidateCount, onSel
       >
         <XIcon />
       </Button>
+      {suggested !== null && (
+        <span className="col-span-full flex items-center gap-2 font-sans">
+          <Button variant="ghost" size="sm" aria-label={`Confirm ${name}`} onClick={() => onConfirm(suggested)}>Confirm</Button>
+          <Button variant="ghost" size="sm" aria-label={`Not them, ${name}`} onClick={() => onDismiss(suggested)}>Not them</Button>
+        </span>
+      )}
     </FieldRow>
   )
 }

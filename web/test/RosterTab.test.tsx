@@ -78,7 +78,8 @@ describe('RosterTab', () => {
     mount()
     const pool = screen.getByRole('region', { name: 'Unassigned' })
     const row = rowOf(pool, 'Zoe Kid')
-    expect(row.className).toContain('grid-cols-[var(--col-select)_var(--col-state)_minmax(0,1fr)_var(--col-num-s)_var(--col-num-m)_var(--col-act)]')
+    // Two action tracks: the profile every row carries, then the remove.
+    expect(row.className).toContain('grid-cols-[var(--col-select)_var(--col-state)_minmax(0,1fr)_var(--col-num-s)_var(--col-num-m)_var(--col-act)_var(--col-act)]')
     expect(row.className).toContain('h-14')
     expect(within(row).getByText('Zoe Kid')).toHaveAttribute('title', 'Zoe Kid')
     expect(within(row).getByText('Grey · M · ERP 5.2')).toBeInTheDocument()
@@ -97,13 +98,27 @@ describe('RosterTab', () => {
     expect(heads[2].className).toContain('hidden xl:grid')
   })
 
-  it('shows the sync button only before a pool has ever been imported', () => {
+  // 7.1: one press, offered whether or not a pool has ever been pulled. An event with no
+  // WellnessLiving behind it is told so by the dialog, not by a button that is not there.
+  it('always offers the sync', () => {
     fakeFetch(() => ({ json: [] }))
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const { rerender } = render(<QueryClientProvider client={qc}><RosterTab detail={detail} /></QueryClientProvider>)
     expect(screen.getByRole('button', { name: 'Sync from WellnessLiving' })).toBeInTheDocument()
     rerender(<QueryClientProvider client={qc}><RosterTab detail={{ ...detail, candidateCount: 12 }} /></QueryClientProvider>)
-    expect(screen.queryByRole('button', { name: 'Sync from WellnessLiving' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sync from WellnessLiving' })).toBeInTheDocument()
+  })
+
+  it('opens the profile sheet from every row', async () => {
+    fakeFetch(() => ({ json: [] }))
+    mount()
+    const pool = screen.getByRole('region', { name: 'Unassigned' })
+    expect(within(pool).getByRole('button', { name: 'Profile for Noah Kid' })).toBeInTheDocument()
+    expect(within(pool).getByRole('button', { name: 'Profile for Zoe Kid' })).toBeInTheDocument()
+    await userEvent.setup().click(within(pool).getByRole('button', { name: 'Profile for Zoe Kid' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('Zoe Kid')).toBeInTheDocument()
+    expect(within(dialog).getByText('Last synced')).toBeInTheDocument()
   })
 
   it('replaces the toolbar with one selection bar and assigns from it', async () => {
@@ -490,28 +505,34 @@ describe('RosterTab, the WellnessLiving link', () => {
     candidateCount: 2,
   }
 
-  it('offers the match only once a pool exists', () => {
+  // 7.1: the sync is one press with no pool button beside it. The pool-only rematch route
+  // stays for the API, but nothing on this screen calls it.
+  it('offers no separate match button once a pool exists', () => {
     fakeFetch(() => ({ json: [] }))
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    const { rerender } = render(<QueryClientProvider client={qc}><RosterTab detail={detail} /></QueryClientProvider>)
+    mount(pooled)
     expect(screen.queryByRole('button', { name: 'Match to WellnessLiving' })).not.toBeInTheDocument()
-    rerender(<QueryClientProvider client={qc}><RosterTab detail={pooled} /></QueryClientProvider>)
-    expect(screen.getByRole('button', { name: 'Match to WellnessLiving' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sync from WellnessLiving' })).toBeInTheDocument()
   })
 
-  it('reports what the match run did, and clears the report on the next roster write', async () => {
-    const f = fakeFetch((url, init) => {
-      if (url === '/api/events/7/roster/match' && init?.method === 'POST') {
-        return { json: { report: { ...CLEAN, linked: ['Olivia Kid'], unmatched: ['Noah Kid'] }, athletes: [] } }
+  it('reports what the sync did once the dialog closes, and clears it on the next roster write', async () => {
+    fakeFetch((url, init) => {
+      if (url.endsWith('/wl-locations')) return { json: [{ kBusiness: '100001', title: 'North', city: 'Northtown' }] }
+      if (url.endsWith('/roster/sync') && init?.method === 'POST') {
+        return { json: { candidates: [], warnings: [], report: { ...CLEAN, linked: ['Olivia Kid'], unmatched: ['Noah Kid'] } } }
       }
       return { json: [] }
     })
     mount(pooled)
     const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: 'Match to WellnessLiving' }))
-    expect(await screen.findByText('Linked 1. Refreshed 0, 0 changed.')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Sync from WellnessLiving' }))
+    await screen.findByLabelText('North')
+    await user.click(screen.getByRole('button', { name: 'Sync' }))
+    await screen.findByText('Linked 1. Refreshed 0, 0 changed.')
+
+    // The dialog covers the rows the report names, so the tab is where it stands.
+    await user.keyboard('{Escape}')
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(screen.getByText('Not found: Noah Kid.')).toBeInTheDocument()
-    expect(f.calls.some(c => c.url === '/api/events/7/roster/match')).toBe(true)
 
     const pool = screen.getByRole('region', { name: 'Unassigned' })
     await user.click(within(pool).getByRole('checkbox', { name: 'Select Noah Kid' }))
@@ -519,16 +540,95 @@ describe('RosterTab, the WellnessLiving link', () => {
     await vi.waitFor(() => expect(screen.queryByText('Not found: Noah Kid.')).not.toBeInTheDocument())
   })
 
-  it('reads a refused match under the toolbar', async () => {
-    fakeFetch((url, init) => {
-      if (url === '/api/events/7/roster/match' && init?.method === 'POST') {
-        return { status: 409, json: { error: { code: 'no_pool', message: 'Import from WellnessLiving first.' } } }
-      }
+  /**
+   * Spec 2 and 7.3. A near match never links itself. The row names the candidate it points
+   * at and hands the decision to a person, twice over: Confirm links it, Not them says the
+   * candidate is somebody else and the row falls back to the pool picker.
+   */
+  describe('a suggestion waiting on a person', () => {
+    const suggested: EventDetail = {
+      ...pooled,
+      athletes: [
+        kid(100, 1, 'Mateo', { wlUid: 'w1', wlLocation: 'Boulder' }),
+        kid(200, 2, 'Olivia', { suggestedWlUid: 'w3', suggestedScore: 0.82 }),
+        kid(300, null, 'Noah', { age: null, ageSource: null }),
+        kid(400, null, 'Zoe', { weightSource: 'leaderboard', erp: 5.2 }),
+      ],
+    }
+    const withPool = () => fakeFetch((url, init) => {
+      if (url === '/api/events/7/candidates') return { json: POOL }
+      if (init?.method === 'POST') return { json: {} }
       return { json: [] }
     })
-    mount(pooled)
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Match to WellnessLiving' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('Import from WellnessLiving first.')
+
+    it('names the candidate on the meta line and offers both answers', async () => {
+      withPool()
+      mount(suggested)
+      const teamB = screen.getByRole('region', { name: 'Lakeside' })
+      expect(await within(teamB).findByText(/Looks like Olive Kidd, Boulder/)).toBeInTheDocument()
+      expect(within(teamB).getByRole('button', { name: 'Confirm Olivia Kid' })).toBeInTheDocument()
+      expect(within(teamB).getByRole('button', { name: 'Not them, Olivia Kid' })).toBeInTheDocument()
+      // The row is waiting on a person, so it does not also claim to be missing.
+      expect(within(teamB).queryByText(/Not in WellnessLiving/)).not.toBeInTheDocument()
+      expect(within(teamB).queryByRole('button', { name: 'Link Olivia Kid' })).not.toBeInTheDocument()
+    })
+
+    it('links the candidate on Confirm', async () => {
+      const f = withPool()
+      mount(suggested)
+      const teamB = screen.getByRole('region', { name: 'Lakeside' })
+      await userEvent.setup().click(within(teamB).getByRole('button', { name: 'Confirm Olivia Kid' }))
+      await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/athletes/200/link')).toBe(true))
+      expect(f.body(f.calls.findIndex(c => c.url === '/api/athletes/200/link'))).toEqual({ wlUid: 'w3' })
+    })
+
+    it('dismisses the candidate on Not them', async () => {
+      const f = withPool()
+      mount(suggested)
+      const teamB = screen.getByRole('region', { name: 'Lakeside' })
+      await userEvent.setup().click(within(teamB).getByRole('button', { name: 'Not them, Olivia Kid' }))
+      await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/athletes/200/dismiss')).toBe(true))
+      expect(f.body(f.calls.findIndex(c => c.url === '/api/athletes/200/dismiss'))).toEqual({ wlUid: 'w3' })
+    })
+
+    it('reads a refused confirm under the toolbar', async () => {
+      fakeFetch((url, init) => {
+        if (url === '/api/events/7/candidates') return { json: POOL }
+        if (url === '/api/athletes/200/link' && init?.method === 'POST') {
+          return { status: 409, json: { error: { code: 'duplicate', message: 'Olive Kidd is already on the roster' } } }
+        }
+        return { json: [] }
+      })
+      mount(suggested)
+      const teamB = screen.getByRole('region', { name: 'Lakeside' })
+      await userEvent.setup().click(within(teamB).getByRole('button', { name: 'Confirm Olivia Kid' }))
+      const alert = await screen.findByRole('alert')
+      expect(alert.querySelector('[data-slot="alert-title"]')).toHaveTextContent('That competitor was not linked')
+      expect(alert.querySelector('[data-slot="alert-description"]')).toHaveTextContent('Olive Kidd is already on the roster')
+    })
+
+    it('says so when the pool the candidate lives in cannot be read', async () => {
+      fakeFetch(url => {
+        if (url === '/api/events/7/candidates') {
+          return { status: 503, json: { error: { code: 'wl_error', message: 'WellnessLiving did not answer' } } }
+        }
+        return { json: [] }
+      })
+      mount(suggested)
+      const alert = await screen.findByRole('alert')
+      expect(alert.querySelector('[data-slot="alert-title"]')).toHaveTextContent('The WellnessLiving pool did not load')
+      // The uid is stored, so the two answers still stand without the name.
+      const teamB = screen.getByRole('region', { name: 'Lakeside' })
+      expect(within(teamB).getByRole('button', { name: 'Confirm Olivia Kid' })).toBeInTheDocument()
+      expect(within(teamB).queryByText(/Looks like/)).not.toBeInTheDocument()
+    })
+
+    // A roster with no suggestion on it has nothing to look up.
+    it('does not read the pool when no row is waiting', () => {
+      const f = fakeFetch(() => ({ json: [] }))
+      mount(pooled)
+      expect(f.calls.some(c => c.url === '/api/events/7/candidates')).toBe(false)
+    })
   })
 
   it('marks only the unlinked rows, and only while there is a pool to link to', () => {

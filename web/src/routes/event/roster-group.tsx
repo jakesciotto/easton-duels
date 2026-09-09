@@ -1,5 +1,5 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
-import type { AthleteRow } from '@/lib/types'
+import type { AthleteRow, RosterCandidate } from '@/lib/types'
 import { TeamPlate } from '@/components/TeamPlate'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -20,8 +20,8 @@ import { RosterRow, rosterCols } from './roster-row'
 const SUBHEAD_STICKY = 'sticky top-[var(--app-header-h,57px)] z-1'
 
 export function RosterGroup({
-  title, color, teamId, kids, selected, faults, inMatch, candidateCount, firstGroup, dragging, over,
-  onSelect, onPatch, onRemove, onLink, onDragStart, onAdd,
+  title, color, teamId, kids, selected, faults, inMatch, candidateCount, suggestions, firstGroup, dragging, over,
+  onSelect, onPatch, onRemove, onLink, onConfirm, onDismiss, onProfile, onDragStart, onAdd,
 }: {
   title: string
   color: string | null
@@ -35,6 +35,8 @@ export function RosterGroup({
    * numeric columns stay on one line across the whole roster.
    */
   candidateCount: number
+  /** The pool read by uid, so a row can name the candidate its suggestion points at. */
+  suggestions: Map<string, RosterCandidate>
   firstGroup: boolean
   dragging: boolean
   over: boolean
@@ -42,6 +44,9 @@ export function RosterGroup({
   onPatch: (id: number, body: Partial<AthleteRow>) => void
   onRemove: (kid: AthleteRow) => void
   onLink: (kid: AthleteRow) => void
+  onConfirm: (kid: AthleteRow, wlUid: string) => void
+  onDismiss: (kid: AthleteRow, wlUid: string) => void
+  onProfile: (kid: AthleteRow) => void
   onDragStart: (e: ReactPointerEvent, id: number) => void
   onAdd?: () => void
 }) {
@@ -73,6 +78,7 @@ export function RosterGroup({
           <span className="tick t1 font-sans text-right">lb</span>
           {withLink && <span />}
           <span />
+          <span />
         </FieldHead>
         {kids.length === 0
           ? (
@@ -93,10 +99,14 @@ export function RosterGroup({
                   fault={faults.has(k.id)}
                   inMatch={inMatch.has(k.id)}
                   candidateCount={candidateCount}
+                  suggestion={k.suggestedWlUid === null ? undefined : suggestions.get(k.suggestedWlUid)}
                   onSelect={(v, range) => onSelect(k.id, v, range)}
                   onPatch={body => onPatch(k.id, body)}
                   onRemove={() => onRemove(k)}
                   onLink={() => onLink(k)}
+                  onConfirm={wlUid => onConfirm(k, wlUid)}
+                  onDismiss={wlUid => onDismiss(k, wlUid)}
+                  onProfile={() => onProfile(k)}
                   onDragStart={onDragStart}
                 />
               ))}
