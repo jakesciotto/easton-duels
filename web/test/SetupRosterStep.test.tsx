@@ -36,7 +36,9 @@ function detailWith(athletes: AthleteRow[], candidateCount = 0): EventDetail {
 }
 
 function mount(detail: EventDetail, over: { onClose?: () => void; onContinue?: () => void } = {}) {
-  fakeFetch(url => (url.endsWith('/wl-locations') ? { json: [] } : { json: {} }))
+  fakeFetch(url => (url.endsWith('/roster/sync')
+    ? { json: { candidates: [], warnings: [], report: { linked: [], refreshed: 0, changed: [], suggested: [], ambiguous: [], unmatched: [], gone: [] } } }
+    : { json: [] }))
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={qc}>
@@ -91,6 +93,15 @@ describe('SetupRosterStep', () => {
   // The two ways in are the dialogs the Roster tab already owns. The step hands over to one
   // of them and takes the screen back when it closes, so the count is read where it was
   // asked for rather than on a tab.
+  // The sync is a subset pull over the roster's own names, so a step that opens on an
+  // empty roster has nothing to pull and the card must promise the search instead.
+  it('offers the search rather than a whole location pull', async () => {
+    mount(detailWith([]))
+    await screen.findByText('Who is competing?')
+    expect(screen.getByText('Search WellnessLiving by name and add who is in.')).toBeInTheDocument()
+    expect(screen.queryByText(/at the location/)).not.toBeInTheDocument()
+  })
+
   it('opens the WellnessLiving import as a sub step and comes back', async () => {
     mount(detailWith([]))
     const user = userEvent.setup()
@@ -117,9 +128,8 @@ describe('SetupRosterStep', () => {
     expect(await screen.findByText('Who is competing?')).toBeInTheDocument()
   })
 
-  // The Roster tab hides its own sync button once a pool is cached, because Add competitor
-  // sits beside it and reaches the pool. The step has no such neighbour, so taking the card
-  // away would leave a pull that added nobody with no way back to what it pulled.
+  // The card is the step's only WellnessLiving path, and 7.10 does not allow a screen with
+  // no way out, so what the last sync left behind never takes it away.
   it('keeps the WellnessLiving card once the event holds a candidate pool', async () => {
     mount(detailWith(ROSTER, 630))
     await screen.findByText('Who is competing?')

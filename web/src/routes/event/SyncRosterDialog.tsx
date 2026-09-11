@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { formatClock } from '@shared/clock'
 import { writeErrorMessage } from '@/lib/eventMode'
@@ -6,12 +6,12 @@ import { adminApi, qk, useAdminMutation } from '@/lib/queries'
 import { ApiError } from '@/lib/api'
 import type { EventDetail, RosterCandidate, SyncReport } from '@/lib/types'
 import { reportLines } from './link-report'
+import { SEARCH_TOO_SHORT, useWlSearch } from './useWlSearch'
 import { cn } from '@/lib/utils'
 import { dialogBody, dialogFooter, dialogSurface } from '@/components/dialog-frame'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
 import { EmptyState } from '@/components/ui/empty-state'
 import { FieldSet } from '@/components/ui/field-set'
 import { Input } from '@/components/ui/input'
@@ -19,28 +19,21 @@ import { Label } from '@/components/ui/label'
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { CandidateHead, CandidateRow } from './CandidateRow'
 
-interface Location { kBusiness: string; title: string; city: string }
+/** The route's answer. The pool it replaces is read by name instead, so only these two are used. */
+interface SyncAnswer { candidates: RosterCandidate[]; warnings: string[]; report?: SyncReport }
 
-// The server's own budget for a multi-location report. 28 times Nielsen's 10 second
+// The server's own budget for a sync over every location. 28 times Nielsen's 10 second
 // attention limit, which is why this dialog owes the operator a percent-done readout
 // and an interrupt rather than a spinner.
 export const SYNC_DEADLINE_MS = 280_000
 
 /**
- * The sync endpoint is one all-or-nothing POST that replaces the cached pool wholesale,
- * so there is no per-location progress to read and splitting the pull into one request
- * per location would leave the cache holding only the last one. The honest determinate
- * measure is the budget the pull has spent, which is monotone, bounded, and the same
- * number the server gives up on.
+ * The sync is one all-or-nothing POST that replaces the cached pool wholesale, so there
+ * is no per-location progress to read. The honest determinate measure is the budget the
+ * sync has spent, which is monotone, bounded, and the same number the server gives up on.
  */
 export function pullProgress(elapsedMs: number): number {
   return Math.min(100, Math.round((elapsedMs / SYNC_DEADLINE_MS) * 100))
-}
-
-export function inFlightCopy(titles: string[]): string {
-  if (titles.length === 0) return 'no locations'
-  if (titles.length <= 2) return titles.join(' and ')
-  return `${titles[0]}, ${titles[1]} and ${titles.length - 2} more`
 }
 
 export function SyncRosterDialog({ detail, open, onOpenChange, onReport }: {
@@ -55,57 +48,62 @@ export function SyncRosterDialog({ detail, open, onOpenChange, onReport }: {
   onReport: (report: SyncReport) => void
 }) {
   const eventId = detail.event.id
-  const stored = detail.event.wlLocations ?? null
-  const [locations, setLocations] = useState<Location[] | null>(null)
-  const [picked, setPicked] = useState<Set<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
-  const [candidates, setCandidates] = useState<RosterCandidate[] | null>(null)
   const [warnings, setWarnings] = useState<string[]>([])
   const [report, setReport] = useState<SyncReport | null>(null)
-  const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [search, setSearch] = useState('')
+  const [answered, setAnswered] = useState(false)
+  const [picked, setPicked] = useState<Map<string, RosterCandidate>>(new Map())
   const [startedAt, setStartedAt] = useState<number | null>(null)
   const [elapsed, setElapsed] = useState(0)
   const [stopped, setStopped] = useState(false)
+  const search = useWlSearch(eventId)
   const already = useMemo(() => new Set(detail.athletes.map(a => a.wlUid).filter((uid): uid is string => uid !== null)), [detail.athletes])
   const add = useAdminMutation(eventId, (cands: RosterCandidate[]) => adminApi(`/api/events/${eventId}/athletes`, { method: 'POST', body: { candidates: cands } }))
-  // pull() runs from a button click, not the effect below, so a plain boolean ignore flag isn't
-  // enough: closing then reopening before a pull resolves would reset the flag along with
-  // everything else, and the stale response would land anyway. A generation counter that only
-  // ever increases survives any number of closes and reopens across the same pull, and Stop
-  // bumps it too, so an abandoned pull can never repopulate the list behind the operator.
+  // A plain boolean ignore flag is not enough here: closing then reopening before a sync
+  // resolves would reset the flag along with everything else, and the stale response would
+  // land anyway. A generation counter that only ever increases survives any number of
+  // closes and reopens across the same sync, and Stop bumps it too, so an abandoned sync
+  // can never report behind the operator.
   const generation = useRef(0)
   const qc = useQueryClient()
 
-  useEffect(() => {
-    if (!open) return
-    let ignore = false
-    generation.current += 1
-    setError(null)
-    setLocations(null)
-    setPicked(new Set())
-    setCandidates(null)
-    setWarnings([])
-    setReport(null)
-    setSelected(new Set())
-    setSearch('')
-    setStartedAt(null)
+  const sync = useCallback(async () => {
+    const mine = generation.current
+    setStartedAt(Date.now())
     setElapsed(0)
     setStopped(false)
+    setError(null)
+    try {
+      const r = await adminApi<SyncAnswer>(`/api/events/${eventId}/roster/sync`, { method: 'POST' })
+      if (generation.current !== mine) return
+      setWarnings(r.warnings)
+      setReport(r.report ?? null)
+      setAnswered(true)
+      // The sync links what it can, so the roster behind this dialog is stale the moment
+      // it lands: the "on roster" badge reads it.
+      await qc.invalidateQueries({ queryKey: qk.event(eventId) })
+    } catch (e) {
+      if (generation.current === mine) setError(e instanceof ApiError ? e.message : 'Could not reach the server')
+    } finally {
+      if (generation.current === mine) setStartedAt(null)
+    }
+  }, [eventId, qc])
+
+  // Spec 4: opening the dialog is the press. The filter is the roster itself, so there is
+  // nothing to pick first.
+  useEffect(() => {
+    if (!open) return
+    generation.current += 1
+    setError(null)
+    setWarnings([])
+    setReport(null)
+    setAnswered(false)
+    setPicked(new Map())
+    setElapsed(0)
+    setStopped(false)
+    search.setQ('')
     add.reset()
-    adminApi<Location[]>(`/api/events/${eventId}/wl-locations`)
-      .then(locs => {
-        if (ignore) return
-        setLocations(locs)
-        // A stored id WellnessLiving no longer offers has no checkbox, so it cannot be
-        // unticked and must not be posted. The first sync has stored nothing, and the
-        // whole gym is the honest default there.
-        const offered = locs.map(l => l.kBusiness)
-        const prefill = stored === null ? offered : offered.filter(k => stored.includes(k))
-        setPicked(new Set(prefill.length === 0 ? offered : prefill))
-      })
-      .catch(e => { if (!ignore) setError(e instanceof ApiError ? e.message : 'Could not reach the server') })
-    return () => { ignore = true }
+    void sync()
   }, [open, eventId])
 
   useEffect(() => {
@@ -114,42 +112,17 @@ export function SyncRosterDialog({ detail, open, onOpenChange, onReport }: {
     return () => window.clearInterval(t)
   }, [startedAt])
 
-  const pulling = startedAt !== null
-  const pull = async () => {
-    const myGeneration = generation.current
-    setStartedAt(Date.now())
-    setElapsed(0)
-    setStopped(false)
-    setError(null)
-    try {
-      const r = await adminApi<{ candidates: RosterCandidate[]; warnings: string[]; report?: SyncReport }>(`/api/events/${eventId}/roster/sync`, { method: 'POST', body: { kBusinesses: [...picked] } })
-      if (generation.current !== myGeneration) return
-      setCandidates(r.candidates)
-      setWarnings(r.warnings)
-      setReport(r.report ?? null)
-      setSelected(new Set())
-      // The pull links what it can, so the roster behind this dialog is stale the moment
-      // it lands: the "on roster" badge and the Link button both read it.
-      await qc.invalidateQueries({ queryKey: qk.event(eventId) })
-    } catch (e) {
-      if (generation.current === myGeneration) setError(e instanceof ApiError ? e.message : 'Could not reach the server')
-    } finally {
-      if (generation.current === myGeneration) setStartedAt(null)
-    }
-  }
-
+  const running = startedAt !== null
   const stop = () => {
     generation.current += 1
     setStartedAt(null)
     setStopped(true)
   }
 
-  const pickedTitles = (locations ?? []).filter(l => picked.has(l.kBusiness)).map(l => l.title)
-  const visible = (candidates ?? []).filter(c => `${c.firstName} ${c.lastName}`.toLowerCase().includes(search.toLowerCase()))
-  const toggle = (uid: string, v: boolean) => setSelected(s => {
-    const n = new Set(s)
-    if (v) n.add(uid)
-    else n.delete(uid)
+  const toggle = (candidate: RosterCandidate, v: boolean) => setPicked(p => {
+    const n = new Map(p)
+    if (v) n.set(candidate.wlUid, candidate)
+    else n.delete(candidate.wlUid)
     return n
   })
   // Every way out runs through here: the Close button, Escape, the backdrop, and the add
@@ -159,9 +132,7 @@ export function SyncRosterDialog({ detail, open, onOpenChange, onReport }: {
     onOpenChange(o)
   }
   const submit = () => {
-    add.mutate((candidates ?? []).filter(c => selected.has(c.wlUid)), {
-      onSuccess: () => close(false),
-    })
+    add.mutate([...picked.values()], { onSuccess: () => close(false) })
   }
 
   return (
@@ -175,28 +146,8 @@ export function SyncRosterDialog({ detail, open, onOpenChange, onReport }: {
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
-          {locations && (
-            <div className="flex flex-wrap items-center gap-3">
-              {locations.map(l => (
-                <span key={l.kBusiness} className="flex items-center gap-2 t2 text-gray-11">
-                  <Checkbox
-                    aria-label={l.title}
-                    checked={picked.has(l.kBusiness)}
-                    onCheckedChange={checked => setPicked(s => {
-                      const n = new Set(s)
-                      if (checked) n.add(l.kBusiness)
-                      else n.delete(l.kBusiness)
-                      return n
-                    })}
-                  />
-                  {l.title}
-                </span>
-              ))}
-              <Button size="sm" onClick={pull} disabled={pulling || picked.size === 0}>Sync</Button>
-            </div>
-          )}
 
-          {pulling && (
+          {running && (
             <div className="grid gap-2 bg-gray-1 px-4 py-3">
               <div
                 role="progressbar"
@@ -210,7 +161,7 @@ export function SyncRosterDialog({ detail, open, onOpenChange, onReport }: {
               </div>
               <div className="flex items-center gap-3">
                 <p className="t2 text-gray-11">
-                  Pulling {inFlightCopy(pickedTitles)}.{' '}
+                  Searching WellnessLiving.{' '}
                   <span className="fig text-gray-10">{formatClock(elapsed)}</span>
                   <span className="text-gray-9"> of </span>
                   <span className="fig text-gray-10">{formatClock(SYNC_DEADLINE_MS)}</span>
@@ -222,13 +173,13 @@ export function SyncRosterDialog({ detail, open, onOpenChange, onReport }: {
           {stopped && (
             <Alert variant="attend">
               <AlertTitle variant="attend">Stopped waiting</AlertTitle>
-              <AlertDescription>WellnessLiving may still be working. Pull again, or reopen this dialog later to see the pool.</AlertDescription>
+              <AlertDescription>WellnessLiving may still be working. Sync again to ask once more.</AlertDescription>
             </Alert>
           )}
 
           {warnings.length > 0 && (
             <Alert variant="attend">
-              <AlertTitle variant="attend">The pull came back with gaps</AlertTitle>
+              <AlertTitle variant="attend">The sync came back with gaps</AlertTitle>
               <AlertDescription>{warnings.join(' ')}</AlertDescription>
             </Alert>
           )}
@@ -239,33 +190,46 @@ export function SyncRosterDialog({ detail, open, onOpenChange, onReport }: {
             </div>
           )}
 
-          {candidates && (
+          {!running && (
+            <div className="flex flex-wrap items-center gap-3">
+              <Button size="sm" variant="secondary" onClick={sync}>Sync again</Button>
+            </div>
+          )}
+
+          {answered && (
             <>
-              <div className="flex flex-wrap items-center gap-3">
-                <Label htmlFor="cand-search">Search</Label>
-                <Input id="cand-search" value={search} onChange={e => setSearch(e.target.value)} className="max-w-xs" />
-                <span className="t2 text-gray-10"><span className="fig text-gray-11">{candidates.length}</span> competitors found</span>
-                <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setSelected(new Set(visible.map(c => c.wlUid)))}>Select shown</Button>
+              <div className="grid gap-1.5">
+                <Label htmlFor="wl-add">Add from WellnessLiving</Label>
+                <Input id="wl-add" autoComplete="off" value={search.q} onChange={e => search.setQ(e.target.value)} className="max-w-xs" />
               </div>
-              <FieldSet className="max-h-80 overflow-y-auto">
-                <CandidateHead valueLabel="ERP" />
-                {visible.length === 0
-                  ? <EmptyState message="No competitors match. Clear the search." action={<Button size="sm" variant="ghost" onClick={() => setSearch('')}>Clear search</Button>} />
-                  : visible.map(c => (
-                    <CandidateRow
-                      key={c.wlUid}
-                      candidate={c}
-                      checked={selected.has(c.wlUid)}
-                      onCheckedChange={v => toggle(c.wlUid, v)}
-                      meta={
-                        <>
-                          <span className="truncate t2 text-gray-10">{c.wlLocation}</span>
-                          {already.has(c.wlUid) && <Badge variant="done">on roster</Badge>}
-                        </>
-                      }
-                    />
-                  ))}
-              </FieldSet>
+              {search.error === SEARCH_TOO_SHORT && <p className="t2 text-gray-10">{search.error}</p>}
+              {search.error !== null && search.error !== SEARCH_TOO_SHORT && (
+                <Alert>
+                  <AlertTitle>WellnessLiving did not answer</AlertTitle>
+                  <AlertDescription>{search.error}</AlertDescription>
+                </Alert>
+              )}
+              {search.error === null && (
+                <FieldSet className="max-h-80 overflow-y-auto">
+                  <CandidateHead valueLabel="ERP" />
+                  {search.results.length === 0
+                    ? <EmptyState message={search.pending ? 'Searching WellnessLiving.' : 'No competitors match that name.'} />
+                    : search.results.map(c => (
+                      <CandidateRow
+                        key={c.wlUid}
+                        candidate={c}
+                        checked={picked.has(c.wlUid)}
+                        onCheckedChange={v => toggle(c, v)}
+                        meta={
+                          <>
+                            <span className="truncate t2 text-gray-10">{c.wlLocation}</span>
+                            {already.has(c.wlUid) && <Badge variant="done">on roster</Badge>}
+                          </>
+                        }
+                      />
+                    ))}
+                </FieldSet>
+              )}
             </>
           )}
 
@@ -278,7 +242,7 @@ export function SyncRosterDialog({ detail, open, onOpenChange, onReport }: {
         </DialogBody>
         <DialogFooter className={dialogFooter}>
           <Button variant="ghost" onClick={() => close(false)}>Close</Button>
-          <Button onClick={submit} disabled={selected.size === 0 || add.isPending}>Add {selected.size} {selected.size === 1 ? 'competitor' : 'competitors'}</Button>
+          <Button onClick={submit} disabled={picked.size === 0 || add.isPending}>Add {picked.size} {picked.size === 1 ? 'competitor' : 'competitors'}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

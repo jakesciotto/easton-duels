@@ -3,11 +3,11 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 import { render, screen, act, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { SyncRosterDialog, SYNC_DEADLINE_MS, inFlightCopy, pullProgress } from '@/routes/event/SyncRosterDialog'
+import { SyncRosterDialog, SYNC_DEADLINE_MS, pullProgress } from '@/routes/event/SyncRosterDialog'
 import { setAdminToken } from '@/lib/auth'
 import { qk } from '@/lib/queries'
-import type { EventDetail, SyncReport } from '@/lib/types'
-import { fakeFetch } from './fakes'
+import type { EventDetail, RosterCandidate, SyncReport } from '@/lib/types'
+import { fakeFetch, type Reply } from './fakes'
 
 beforeEach(() => { localStorage.clear(); setAdminToken('tok') })
 afterEach(() => vi.unstubAllGlobals())
@@ -17,7 +17,9 @@ const detail: EventDetail = {
   teams: [{ id: 1, eventId: 7, name: 'Ridgeline', color: 'red', position: 0 }, { id: 2, eventId: 7, name: 'Lakeside', color: 'blue', position: 1 }],
   athletes: [], rulesets: [], mats: [], matches: [], candidateCount: 0,
 }
-const cand = { wlUid: '9', firstName: 'Zoe', lastName: 'Martin', belt: 'grey', wlLocation: 'Ridgeline', leaderboardId: 'zoe-martin', erp: 5.2, age: 8, weightLbs: 60, gender: 'F' }
+const cand: RosterCandidate = { wlUid: '9', firstName: 'Zoe', lastName: 'Martin', belt: 'grey', wlLocation: 'Ridgeline', leaderboardId: 'zoe-martin', erp: 5.2, age: 8, weightLbs: 60, gender: 'F' }
+const kai: RosterCandidate = { ...cand, wlUid: '10', firstName: 'Kai', lastName: 'Wong', erp: null }
+const CLEAN: SyncReport = { linked: [], refreshed: 0, changed: [], suggested: [], ambiguous: [], unmatched: [], gone: [] }
 
 function mount(d: EventDetail = detail, onReport: (r: SyncReport) => void = () => {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -43,6 +45,23 @@ function mountHost() {
   render(<QueryClientProvider client={qc}><Host /></QueryClientProvider>)
 }
 
+/** The sync answers, the search answers, everything else is an empty write. */
+function wl({ report = CLEAN, warnings = [] as string[], results = [] as RosterCandidate[], search }: {
+  report?: SyncReport
+  warnings?: string[]
+  results?: RosterCandidate[]
+  search?: (url: string) => Reply
+} = {}) {
+  return fakeFetch((url, init) => {
+    if (url.endsWith('/roster/sync')) return { json: { candidates: results, warnings, report } }
+    if (url.includes('/wl-search')) return search === undefined ? { json: results } : search(url)
+    if (url.endsWith('/athletes') && init?.method === 'POST') return { status: 201, json: [] }
+    return { json: {} }
+  })
+}
+
+const syncCalls = (calls: { url: string }[]) => calls.filter(c => c.url.endsWith('/roster/sync'))
+
 describe('sync progress', () => {
   it('reports the share of the 280 second budget spent, bounded at both ends', () => {
     expect(SYNC_DEADLINE_MS).toBe(280_000)
@@ -50,84 +69,85 @@ describe('sync progress', () => {
     expect(pullProgress(SYNC_DEADLINE_MS / 2)).toBe(50)
     expect(pullProgress(SYNC_DEADLINE_MS * 3)).toBe(100)
   })
-
-  it('names what is in flight without listing every location', () => {
-    expect(inFlightCopy(['North'])).toBe('North')
-    expect(inFlightCopy(['North', 'South'])).toBe('North and South')
-    expect(inFlightCopy(['North', 'South', 'East', 'West'])).toBe('North, South and 2 more')
-  })
 })
 
 describe('SyncRosterDialog', () => {
-  const twoLocations = () => fakeFetch(url => {
-    if (url.endsWith('/wl-locations')) return { json: [{ kBusiness: '100001', title: 'North', city: 'Northtown' }, { kBusiness: '100002', title: 'South', city: 'Southtown' }] }
-    if (url.endsWith('/roster/sync')) return { json: { candidates: [cand], warnings: [] } }
-    return { json: {} }
-  })
-
   it('names itself for the one press it is', async () => {
-    fakeFetch(() => ({ json: [] }))
+    wl()
     mount()
     expect(await screen.findByText('Sync from WellnessLiving')).toBeInTheDocument()
   })
 
-  // Spec 7.2: the first sync picks the locations and the event stores them, so every
-  // later sync opens on the pick the organizer already made rather than on all of them.
-  it('prefills the locations the event stored', async () => {
-    const f = twoLocations()
-    mount({ ...detail, event: { ...detail.event, wlLocations: ['100002'] } })
-    const user = userEvent.setup()
-    expect(await screen.findByLabelText('South')).toBeChecked()
-    expect(screen.getByLabelText('North')).not.toBeChecked()
-    await user.click(screen.getByRole('button', { name: 'Sync' }))
-    await vi.waitFor(() => expect(f.calls.some(c => c.url.endsWith('/roster/sync'))).toBe(true))
-    expect(f.body(f.calls.findIndex(c => c.url.endsWith('/roster/sync')))).toEqual({ kBusinesses: ['100002'] })
-  })
-
-  it('checks every location before the event has stored a pick', async () => {
-    twoLocations()
+  // Spec 4. The sync asks WellnessLiving for the roster's own names, so there is nothing
+  // to pick and nothing to press: opening the dialog is the press.
+  it('syncs as soon as it opens, with no body and no locations to pick', async () => {
+    const f = wl()
     mount()
-    expect(await screen.findByLabelText('North')).toBeChecked()
-    expect(screen.getByLabelText('South')).toBeChecked()
+    await vi.waitFor(() => expect(syncCalls(f.calls)).toHaveLength(1))
+    expect(syncCalls(f.calls)[0].url).toBe('/api/events/7/roster/sync')
+    expect(f.calls.find(c => c.url.endsWith('/roster/sync'))?.init?.body).toBeUndefined()
+    expect(f.calls.some(c => c.url.includes('/wl-locations'))).toBe(false)
+    expect(screen.queryByRole('button', { name: 'Sync' })).not.toBeInTheDocument()
   })
 
-  // A location the gym has dropped is no longer offered, so a stored id for it cannot be
-  // ticked and must not be posted.
-  it('drops a stored location WellnessLiving no longer offers', async () => {
-    const f = twoLocations()
-    mount({ ...detail, event: { ...detail.event, wlLocations: ['100002', '999999'] } })
+  it('prints every line the report came back with', async () => {
+    wl({
+      report: {
+        linked: ['Zoe Martin', 'Kai Wong'], refreshed: 1, changed: ['Kai Wong'],
+        suggested: [{ athleteId: 5, name: 'Mateo Rivera', candidate: 'Mateo Rivera-Lopez', location: 'Boulder', score: 0.82 }],
+        ambiguous: ['Sam Lee'], unmatched: ['Ana Ruiz', 'Ben Oyelaran'], gone: ['Mia Park'],
+      },
+    })
+    mount()
+    expect(await screen.findByText('Linked 2. Refreshed 1, 1 changed.')).toBeInTheDocument()
+    expect(screen.getByText('To confirm: Mateo Rivera looks like Mateo Rivera-Lopez, Boulder.')).toBeInTheDocument()
+    expect(screen.getByText('Two candidates, link by hand: Sam Lee.')).toBeInTheDocument()
+    expect(screen.getByText('Not found: Ana Ruiz, Ben Oyelaran.')).toBeInTheDocument()
+    expect(screen.getByText('Gone from WellnessLiving: Mia Park.')).toBeInTheDocument()
+  })
+
+  it('prints one line when nothing is left to do by hand', async () => {
+    wl({ report: { ...CLEAN, linked: ['Zoe Martin'] } })
+    mount()
+    expect(await screen.findByText('Linked 1. Refreshed 0, 0 changed.')).toBeInTheDocument()
+    expect(screen.queryByText(/To confirm/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Not found/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/link by hand/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Gone from WellnessLiving/)).not.toBeInTheDocument()
+  })
+
+  it('reads the warnings the sync came back with', async () => {
+    wl({ warnings: ['Leaderboard not configured. No ERP join.'] })
+    mount()
+    expect(await screen.findByText(/No ERP join/)).toBeInTheDocument()
+  })
+
+  it('runs the sync again on Sync again', async () => {
+    const f = wl()
+    mount()
     const user = userEvent.setup()
-    expect(await screen.findByLabelText('South')).toBeChecked()
-    await user.click(screen.getByRole('button', { name: 'Sync' }))
-    await vi.waitFor(() => expect(f.calls.some(c => c.url.endsWith('/roster/sync'))).toBe(true))
-    expect(f.body(f.calls.findIndex(c => c.url.endsWith('/roster/sync')))).toEqual({ kBusinesses: ['100002'] })
+    await user.click(await screen.findByRole('button', { name: 'Sync again' }))
+    await vi.waitFor(() => expect(syncCalls(f.calls)).toHaveLength(2))
   })
 
   it('hands the report to the tab when it closes after a sync', async () => {
-    fakeFetch(url => {
-      if (url.endsWith('/wl-locations')) return { json: [{ kBusiness: '100001', title: 'North', city: 'Northtown' }] }
-      if (url.endsWith('/roster/sync')) {
-        return { json: { candidates: [cand], warnings: [], report: { linked: ['Zoe Martin'], refreshed: 2, changed: [], suggested: [], ambiguous: [], unmatched: [], gone: [] } } }
-      }
-      return { json: {} }
-    })
+    const report: SyncReport = { ...CLEAN, linked: ['Zoe Martin'], refreshed: 2 }
+    wl({ report })
     const onReport = vi.fn()
     mount(detail, onReport)
     const user = userEvent.setup()
-    await screen.findByLabelText('North')
-    await user.click(screen.getByRole('button', { name: 'Sync' }))
     await screen.findByText('Linked 1. Refreshed 2, 0 changed.')
     expect(onReport).not.toHaveBeenCalled()
     await user.click(footerButton('Close'))
-    expect(onReport).toHaveBeenCalledWith({ linked: ['Zoe Martin'], refreshed: 2, changed: [], suggested: [], ambiguous: [], unmatched: [], gone: [] })
+    expect(onReport).toHaveBeenCalledWith(report)
   })
 
-  it('hands nothing to the tab when it closes without a sync', async () => {
-    twoLocations()
+  it('hands nothing to the tab when the sync never answered', async () => {
+    fakeFetch(url => (url.endsWith('/roster/sync') ? new Promise<Reply>(() => {}) : { json: {} }))
     const onReport = vi.fn()
     mount(detail, onReport)
     const user = userEvent.setup()
-    await screen.findByLabelText('North')
+    await user.click(await screen.findByRole('button', { name: 'Stop' }))
     await user.click(footerButton('Close'))
     expect(onReport).not.toHaveBeenCalled()
   })
@@ -138,165 +158,160 @@ describe('SyncRosterDialog', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('credentials are not set')
   })
 
-  it('lists locations, pulls candidates, filters, and adds the ticked ones', async () => {
-    const f = fakeFetch((url, init) => {
-      if (url.endsWith('/wl-locations')) return { json: [{ kBusiness: '100001', title: 'North', city: 'Northtown' }, { kBusiness: '100002', title: 'South', city: 'Southtown' }] }
-      if (url.endsWith('/roster/sync')) return { json: { candidates: [cand, { ...cand, wlUid: '10', firstName: 'Kai', lastName: 'Wong', erp: null }], warnings: ['Leaderboard not configured. No ERP join.'] } }
-      if (url.endsWith('/athletes') && init?.method === 'POST') return { status: 201, json: [] }
-      return { json: {} }
-    })
+  // The sync links what it can on the way in, so the roster behind this dialog is stale
+  // the moment it lands: the "on roster" badge reads it.
+  it('refetches the event after a sync', async () => {
+    wl()
+    const qc = mount()
+    const spy = vi.spyOn(qc, 'invalidateQueries')
+    await vi.waitFor(() => expect(spy).toHaveBeenCalledWith({ queryKey: qk.event(7) }))
+  })
+
+  it('shows a determinate bar and a Stop from the first second, and Stop abandons the sync', async () => {
+    let resolveSync: (v: Reply) => void = () => {}
+    const held = new Promise<Reply>(resolve => { resolveSync = resolve })
+    fakeFetch(url => (url.endsWith('/roster/sync') ? held : { json: {} }))
     mount()
     const user = userEvent.setup()
-    await user.click(await screen.findByLabelText('South'))
-    await user.click(screen.getByRole('button', { name: 'Sync' }))
-    expect(await screen.findByText('Zoe Martin')).toBeInTheDocument()
-    expect(screen.getByText(/No ERP join/)).toBeInTheDocument()
-    expect(f.body(f.calls.findIndex(c => c.url.endsWith('/roster/sync')))).toEqual({ kBusinesses: ['100001'] })
-    await user.type(screen.getByLabelText('Search'), 'zoe')
-    expect(screen.queryByText('Kai Wong')).not.toBeInTheDocument()
-    // 7.14: the rating stops being a Badge and becomes a value in its own right
-    // aligned track, so the ordering is visibly the ordering.
-    expect(screen.getByText('5.2')).toBeInTheDocument()
-    await user.click(screen.getByLabelText('Select Zoe Martin'))
-    await user.click(screen.getByRole('button', { name: 'Add 1 competitor' }))
-    await vi.waitFor(() => expect(f.calls.some(c => c.url.endsWith('/athletes') && c.init?.method === 'POST')).toBe(true))
-    expect(f.body(f.calls.findIndex(c => c.url.endsWith('/athletes') && c.init?.method === 'POST'))).toEqual({ candidates: [cand] })
-  })
 
-  it('resets pulled candidates, ticks, and search when reopened', async () => {
-    fakeFetch(url => {
-      if (url.endsWith('/wl-locations')) return { json: [{ kBusiness: '100001', title: 'North', city: 'Northtown' }] }
-      if (url.endsWith('/roster/sync')) return { json: { candidates: [cand], warnings: [] } }
-      return { json: {} }
-    })
-    mountHost()
-    const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: 'Open sync' }))
-    await screen.findByLabelText('North')
-    await user.click(screen.getByRole('button', { name: 'Sync' }))
-    expect(await screen.findByText('Zoe Martin')).toBeInTheDocument()
-    await user.type(screen.getByLabelText('Search'), 'zoe')
-    await user.click(screen.getByLabelText('Select Zoe Martin'))
-    await user.keyboard('{Escape}')
-    await user.click(screen.getByRole('button', { name: 'Open sync' }))
-    expect(await screen.findByLabelText('North')).toBeInTheDocument()
-    expect(screen.queryByText('Zoe Martin')).not.toBeInTheDocument()
-    expect(screen.queryByLabelText('Search')).not.toBeInTheDocument()
-  })
-
-  it('ignores a pull that resolves after a close mid-pull and a reopen', async () => {
-    let resolveSync: (v: { candidates: typeof cand[]; warnings: string[] }) => void = () => {}
-    const syncPromise = new Promise<{ candidates: typeof cand[]; warnings: string[] }>(resolve => { resolveSync = resolve })
-    fakeFetch(url => {
-      if (url.endsWith('/wl-locations')) return { json: [{ kBusiness: '100001', title: 'North', city: 'Northtown' }] }
-      if (url.endsWith('/roster/sync')) return syncPromise.then(v => ({ json: v }))
-      return { json: {} }
-    })
-    mountHost()
-    const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: 'Open sync' }))
-    await screen.findByLabelText('North')
-    await user.click(screen.getByRole('button', { name: 'Sync' }))
-
-    // Close mid-pull, then reopen before the stale response lands -- the reopen resets state for
-    // a new session, and the first pull's response has to be discarded rather than repopulate it.
-    await user.keyboard('{Escape}')
-    await user.click(screen.getByRole('button', { name: 'Open sync' }))
-    await screen.findByLabelText('North')
-
-    await act(async () => {
-      resolveSync({ candidates: [cand], warnings: [] })
-      await new Promise(resolve => setTimeout(resolve, 0))
-    })
-
-    expect(screen.queryByText('Zoe Martin')).not.toBeInTheDocument()
-  })
-
-  /**
-   * Spec 7.2. The sync links what it can on the way in, so the dialog owes the operator
-   * the outcome in words: what it did, and by name every competitor a person still has to
-   * deal with by hand.
-   */
-  describe('the sync report', () => {
-    const pullWith = (report: unknown) => fakeFetch(url => {
-      if (url.endsWith('/wl-locations')) return { json: [{ kBusiness: '100001', title: 'North', city: 'Northtown' }] }
-      if (url.endsWith('/roster/sync')) return { json: { candidates: [cand], warnings: [], report } }
-      return { json: {} }
-    })
-
-    const pull = async () => {
-      const user = userEvent.setup()
-      await screen.findByLabelText('North')
-      await user.click(screen.getByRole('button', { name: 'Sync' }))
-      await screen.findByText('Zoe Martin')
-    }
-
-    it('reads every list the report came back with', async () => {
-      pullWith({
-        linked: ['Zoe Martin', 'Kai Wong'], refreshed: 1, changed: ['Kai Wong'],
-        suggested: [{ athleteId: 5, name: 'Mateo Rivera', candidate: 'Mateo Rivera-Lopez', location: 'Boulder', score: 0.82 }],
-        ambiguous: ['Sam Lee'], unmatched: ['Ana Ruiz', 'Ben Oyelaran'], gone: ['Mia Park'],
-      })
-      mount()
-      await pull()
-      expect(screen.getByText('Linked 2. Refreshed 1, 1 changed.')).toBeInTheDocument()
-      expect(screen.getByText('To confirm: Mateo Rivera looks like Mateo Rivera-Lopez, Boulder.')).toBeInTheDocument()
-      expect(screen.getByText('Two candidates, link by hand: Sam Lee.')).toBeInTheDocument()
-      expect(screen.getByText('Not found: Ana Ruiz, Ben Oyelaran.')).toBeInTheDocument()
-      expect(screen.getByText('Gone from WellnessLiving: Mia Park.')).toBeInTheDocument()
-    })
-
-    it('prints one line when nothing is left to do by hand', async () => {
-      pullWith({ linked: ['Zoe Martin'], refreshed: 0, changed: [], suggested: [], ambiguous: [], unmatched: [], gone: [] })
-      mount()
-      await pull()
-      expect(screen.getByText('Linked 1. Refreshed 0, 0 changed.')).toBeInTheDocument()
-      expect(screen.queryByText(/To confirm/)).not.toBeInTheDocument()
-      expect(screen.queryByText(/Not found/)).not.toBeInTheDocument()
-      expect(screen.queryByText(/link by hand/)).not.toBeInTheDocument()
-      expect(screen.queryByText(/Gone from WellnessLiving/)).not.toBeInTheDocument()
-    })
-
-    // The pull writes to the roster, so the detail behind the dialog is stale the moment
-    // it lands: the "on roster" badges and the Link buttons all read it.
-    it('refetches the event after a pull', async () => {
-      pullWith({ linked: [], refreshed: 0, changed: [], suggested: [], ambiguous: [], unmatched: [], gone: [] })
-      const qc = mount()
-      const spy = vi.spyOn(qc, 'invalidateQueries')
-      await pull()
-      await vi.waitFor(() => expect(spy).toHaveBeenCalledWith({ queryKey: qk.event(7) }))
-    })
-  })
-
-  it('shows a determinate bar and a Stop from the first second, and Stop abandons the pull', async () => {
-    let resolveSync: (v: { candidates: typeof cand[]; warnings: string[] }) => void = () => {}
-    const syncPromise = new Promise<{ candidates: typeof cand[]; warnings: string[] }>(resolve => { resolveSync = resolve })
-    fakeFetch(url => {
-      if (url.endsWith('/wl-locations')) return { json: [{ kBusiness: '100001', title: 'North', city: 'Northtown' }] }
-      if (url.endsWith('/roster/sync')) return syncPromise.then(v => ({ json: v }))
-      return { json: {} }
-    })
-    mount()
-    const user = userEvent.setup()
-    await screen.findByLabelText('North')
-    await user.click(screen.getByRole('button', { name: 'Sync' }))
-
-    // 6.12: 280 seconds is 28 times the attention limit, so a percent-done readout and
-    // a signposted interrupt are mandatory and neither may wait for the first response.
+    // 6.12: the server's budget is 280 seconds, so a percent-done readout and a
+    // signposted interrupt are mandatory and neither may wait for the first response.
     const bar = screen.getByRole('progressbar', { name: 'Roster sync' })
     expect(bar).toHaveAttribute('aria-valuenow', '0')
-    expect(screen.getByText(/Pulling North/)).toBeInTheDocument()
-    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.getByText(/Searching WellnessLiving/)).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Stop' }))
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
     expect(screen.getByRole('alert')).toHaveTextContent('Stopped waiting')
 
-    // A pull that lands after Stop must never repopulate the list behind the operator.
+    // A sync that lands after Stop must never report behind the operator.
     await act(async () => {
-      resolveSync({ candidates: [cand], warnings: [] })
+      resolveSync({ json: { candidates: [], warnings: [], report: { ...CLEAN, linked: ['Zoe Martin'] } } })
       await new Promise(resolve => setTimeout(resolve, 0))
     })
-    expect(screen.queryByText('Zoe Martin')).not.toBeInTheDocument()
+    expect(screen.queryByText('Linked 1. Refreshed 0, 0 changed.')).not.toBeInTheDocument()
+  })
+
+  it('syncs again and drops the last report when reopened', async () => {
+    const f = wl({ report: { ...CLEAN, linked: ['Zoe Martin'] } })
+    mountHost()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Open sync' }))
+    await screen.findByText('Linked 1. Refreshed 0, 0 changed.')
+    await user.keyboard('{Escape}')
+    await user.click(screen.getByRole('button', { name: 'Open sync' }))
+    await vi.waitFor(() => expect(syncCalls(f.calls)).toHaveLength(2))
+  })
+
+  it('ignores a sync that resolves after a close mid-sync and a reopen', async () => {
+    let resolveSync: (v: Reply) => void = () => {}
+    const held = new Promise<Reply>(resolve => { resolveSync = resolve })
+    let first = true
+    fakeFetch(url => {
+      if (!url.endsWith('/roster/sync')) return { json: {} }
+      if (first) { first = false; return held }
+      return { json: { candidates: [], warnings: [], report: { ...CLEAN, refreshed: 4 } } }
+    })
+    mountHost()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Open sync' }))
+    await user.keyboard('{Escape}')
+    await user.click(screen.getByRole('button', { name: 'Open sync' }))
+    await screen.findByText('Linked 0. Refreshed 4, 0 changed.')
+
+    await act(async () => {
+      resolveSync({ json: { candidates: [], warnings: [], report: { ...CLEAN, refreshed: 99 } } })
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+    expect(screen.queryByText('Linked 0. Refreshed 99, 0 changed.')).not.toBeInTheDocument()
+  })
+
+  /**
+   * Spec 4. The pool the sync stores is the subset it found, so anybody else is reached
+   * by name through the search route rather than by scrolling the gym.
+   */
+  describe('adding from WellnessLiving', () => {
+    it('asks for two letters before it searches', async () => {
+      const f = wl({ results: [cand] })
+      mount()
+      const user = userEvent.setup()
+      const field = await screen.findByLabelText('Add from WellnessLiving')
+      expect(screen.getByText('Type at least two letters.')).toBeInTheDocument()
+      await user.type(field, 'm')
+      await new Promise(resolve => setTimeout(resolve, 400))
+      expect(f.calls.some(c => c.url.includes('/wl-search'))).toBe(false)
+      expect(screen.getByText('Type at least two letters.')).toBeInTheDocument()
+    })
+
+    it('searches by name and adds the ticked rows', async () => {
+      const f = wl({ results: [cand, kai] })
+      mount()
+      const user = userEvent.setup()
+      await user.type(await screen.findByLabelText('Add from WellnessLiving'), 'martin')
+      expect(await screen.findByText('Zoe Martin')).toBeInTheDocument()
+      expect(f.calls.filter(c => c.url.includes('/wl-search')).at(-1)?.url).toBe('/api/events/7/wl-search?q=martin')
+      // 7.14: the rating is a value in its own aligned track, so the ordering is visible.
+      expect(screen.getByText('5.2')).toBeInTheDocument()
+
+      await user.click(screen.getByLabelText('Select Zoe Martin'))
+      await user.click(footerButton('Add 1 competitor'))
+      await vi.waitFor(() => expect(f.calls.some(c => c.url.endsWith('/athletes') && c.init?.method === 'POST')).toBe(true))
+      expect(f.body(f.calls.findIndex(c => c.url.endsWith('/athletes') && c.init?.method === 'POST'))).toEqual({ candidates: [cand] })
+    })
+
+    // A pick is a decision about a person, not about the query that found them.
+    it('keeps a pick made under an earlier query', async () => {
+      const f = wl({ search: url => (url.endsWith('q=martin') ? { json: [cand] } : { json: [kai] }) })
+      mount()
+      const user = userEvent.setup()
+      const field = await screen.findByLabelText('Add from WellnessLiving')
+      await user.type(field, 'martin')
+      await user.click(await screen.findByLabelText('Select Zoe Martin'))
+      await user.clear(field)
+      await user.type(field, 'wong')
+      await user.click(await screen.findByLabelText('Select Kai Wong'))
+      await user.click(footerButton('Add 2 competitors'))
+      await vi.waitFor(() => expect(f.calls.some(c => c.url.endsWith('/athletes') && c.init?.method === 'POST')).toBe(true))
+      expect(f.body(f.calls.findIndex(c => c.url.endsWith('/athletes') && c.init?.method === 'POST'))).toEqual({ candidates: [cand, kai] })
+    })
+
+    it('says so when the search finds nobody', async () => {
+      wl({ results: [] })
+      mount()
+      const user = userEvent.setup()
+      await user.type(await screen.findByLabelText('Add from WellnessLiving'), 'martin')
+      expect(await screen.findByText('No competitors match that name.')).toBeInTheDocument()
+    })
+
+    it('reports a 503 from the search the way the sync reports one', async () => {
+      wl({ search: () => ({ status: 503, json: { error: { code: 'wl_not_configured', message: 'WellnessLiving credentials are not set' } } }) })
+      mount()
+      const user = userEvent.setup()
+      await user.type(await screen.findByLabelText('Add from WellnessLiving'), 'martin')
+      const alert = await screen.findByRole('alert')
+      expect(alert.querySelector('[data-slot="alert-title"]')).toHaveTextContent('WellnessLiving did not answer')
+      expect(alert.querySelector('[data-slot="alert-description"]')).toHaveTextContent('credentials are not set')
+    })
+
+    it('marks a candidate already on the roster', async () => {
+      wl({ results: [cand] })
+      mount({
+        ...detail,
+        athletes: [{
+          id: 1, eventId: 7, teamId: null, firstName: 'Zoe', lastName: 'Martin', age: 8, ageSource: 'wl', weightLbs: 60, weightSource: 'manual',
+          belt: 'grey', gender: 'F', source: 'wl', wlUid: '9', wlLocation: 'Ridgeline', leaderboardId: null, erp: null,
+          promotedAt: null, syncedAt: null, syncChanges: null, suggestedWlUid: null, suggestedScore: null, dismissedWlUids: [],
+        }],
+      })
+      const user = userEvent.setup()
+      await user.type(await screen.findByLabelText('Add from WellnessLiving'), 'martin')
+      expect(await screen.findByText('on roster')).toBeInTheDocument()
+    })
+
+    it('offers no search until the sync has answered', async () => {
+      fakeFetch(url => (url.endsWith('/roster/sync') ? new Promise<Reply>(() => {}) : { json: {} }))
+      mount()
+      expect(screen.queryByLabelText('Add from WellnessLiving')).not.toBeInTheDocument()
+    })
   })
 })

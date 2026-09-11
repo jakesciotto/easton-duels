@@ -41,12 +41,9 @@ function Choice({ title, line, onClick }: { title: string; line: string; onClick
  * two, opens the existing dialog for whichever is picked, and comes back with the count so
  * the roster is a thing that visibly happened rather than a screen to go and check.
  *
- * The WellnessLiving card is kept whatever the event's candidate pool holds, which is where
- * this parts company with the Roster tab's own sync button (hidden once a pool exists). The
- * tab has Add competitor beside it, which reaches the cached pool and offers the re-import
- * inside itself; the step does not, so mirroring the condition would take the only
- * WellnessLiving path off the step the moment a pull returned a pool nobody added from, and
- * 7.10 does not allow a screen with no way out. The dialog itself never pulls on open.
+ * The sync the dialog runs on open searches WellnessLiving for the names already on the
+ * roster, and a roster with nobody on it gives that sync nothing to look for. So the way in
+ * from this step is the dialog's own name search, which is what the card promises.
  */
 export function SetupRosterStep({ detail, open, onClose, onContinue }: {
   detail: EventDetail
@@ -78,7 +75,7 @@ export function SetupRosterStep({ detail, open, onClose, onContinue }: {
             <div className="grid gap-4 sm:grid-cols-2">
               <Choice
                 title="Import from WellnessLiving"
-                line="Pulls every kid with a rank at the location, then you pick who is in."
+                line="Search WellnessLiving by name and add who is in."
                 onClick={() => setSub('sync')}
               />
               <Choice

@@ -516,7 +516,6 @@ describe('RosterTab, the WellnessLiving link', () => {
 
   it('reports what the sync did once the dialog closes, and clears it on the next roster write', async () => {
     fakeFetch((url, init) => {
-      if (url.endsWith('/wl-locations')) return { json: [{ kBusiness: '100001', title: 'North', city: 'Northtown' }] }
       if (url.endsWith('/roster/sync') && init?.method === 'POST') {
         return { json: { candidates: [], warnings: [], report: { ...CLEAN, linked: ['Olivia Kid'], unmatched: ['Noah Kid'] } } }
       }
@@ -524,9 +523,8 @@ describe('RosterTab, the WellnessLiving link', () => {
     })
     mount(pooled)
     const user = userEvent.setup()
+    // The dialog syncs as soon as it opens, so the press on the tab is the whole gesture.
     await user.click(screen.getByRole('button', { name: 'Sync from WellnessLiving' }))
-    await screen.findByLabelText('North')
-    await user.click(screen.getByRole('button', { name: 'Sync' }))
     await screen.findByText('Linked 1. Refreshed 0, 0 changed.')
 
     // The dialog covers the rows the report names, so the tab is where it stands.
