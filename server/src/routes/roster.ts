@@ -5,7 +5,7 @@ import { events, athletes, rosterCandidates } from '../db/schema.js'
 import { errorJson, requireAdmin } from '../auth/middleware.js'
 import { fetchCompetitors } from '../roster/leaderboard.js'
 import { buildCandidates } from '../roster/join.js'
-import { syncRoster } from '../roster/sync.js'
+import { rosterFilter, syncRoster } from '../roster/sync.js'
 import { WlRequestError } from '../roster/wl.js'
 import { nameScore, nameTokens } from '../shared/similarity.js'
 import { assertNotCertified } from '../audit/certify.js'
@@ -41,21 +41,6 @@ async function sweepLocations(wl: WlLike, filter: WlNameFilter, budgetMs: number
     return { ok: false, message: e instanceof Error ? e.message : 'WellnessLiving request failed' }
   }
   return { ok: true, records, locations }
-}
-
-/**
- * Who the sync looks for: the uid of every row already linked, and the last name of every
- * row, linked ones too, so a child whose uid has gone can surface as a near match again.
- * A first name would only widen what the last name already asks for.
- */
-function rosterFilter(rows: { wlUid: string | null; lastName: string }[]): WlNameFilter {
-  const uids = new Set<string>()
-  const lastTokens = new Set<string>()
-  for (const row of rows) {
-    if (row.wlUid !== null) uids.add(row.wlUid)
-    for (const token of nameTokens(row.lastName)) lastTokens.add(token)
-  }
-  return { uids: [...uids], lastTokens: [...lastTokens], firstTokens: [] }
 }
 
 rosterRoutes.post('/events/:eventId/roster/sync', requireAdmin, async c => {

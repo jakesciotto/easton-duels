@@ -300,13 +300,14 @@ describe('the WellnessLiving search', () => {
     expect(await db.select().from(rosterCandidates).where(eq(rosterCandidates.eventId, s.eventId)).all()).toEqual([])
   })
 
-  it('answers nothing for a query with no run of three letters, which narrows nothing', async () => {
+  it('searches a two letter query as itself, since no part of it is longer', async () => {
     const wl = wlFake([NORTH, SOUTH])
     const { app, db, adminToken } = await createTestApp(wlConfig(wl))
     const s = await seedEvent(db, { matches: 0 })
     const r = await call(app, 'GET', `/api/events/${s.eventId}/wl-search?q=zo`, undefined, adminToken)
     expect(r.status).toBe(200)
-    expect(r.body).toEqual([])
+    expect(wl.searches[0].filter).toEqual({ uids: [], lastTokens: ['zo'], firstTokens: ['zo'] })
+    expect(r.body.map((c: RosterCandidate) => c.wlUid)).toEqual(['9'])
   })
 
   it('503s when WellnessLiving is not configured, and 404s an unknown event', async () => {

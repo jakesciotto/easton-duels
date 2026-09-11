@@ -7,8 +7,8 @@ export function normalize(s: string): string {
   return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '')
 }
 
-// A part of a name shorter than this narrows nothing: a `like` on two letters answers
-// half the gym.
+// A part of a name shorter than this narrows nothing next to a longer part: a `like` on
+// two letters answers half the gym.
 const MIN_TOKEN = 3
 
 /**
@@ -16,13 +16,25 @@ const MIN_TOKEN = 3
  * each one both as typed and folded to ASCII when the two differ, so "Nuñez-Ortiz" is
  * looked for as nuñez, nunez and ortiz. Hyphens, spaces and punctuation all separate,
  * which is what catches the half of a hyphenated surname a roster leaves out.
+ *
+ * A name with no part of three letters would otherwise be a name nobody could search for,
+ * so every part of it counts at whatever length it has: "Ng" is ng, and "Ng-Li" is ng and
+ * li, never ngli, which would match no stored name. A name with no letters yields nothing.
  */
 export function nameTokens(name: string): string[] {
   const out: string[] = []
-  for (const part of name.split(/[^\p{L}]+/u)) {
-    for (const token of [part.toLowerCase(), normalize(part)]) {
-      if (token.length >= MIN_TOKEN && !out.includes(token)) out.push(token)
-    }
+  const add = (token: string, min: number) => {
+    if (token.length >= min && !out.includes(token)) out.push(token)
+  }
+  const parts = name.split(/[^\p{L}]+/u)
+  for (const part of parts) {
+    add(part.toLowerCase(), MIN_TOKEN)
+    add(normalize(part), MIN_TOKEN)
+  }
+  if (out.length > 0) return out
+  for (const part of parts) {
+    add(part.toLowerCase(), 1)
+    add(normalize(part), 1)
   }
   return out
 }

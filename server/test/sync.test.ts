@@ -257,6 +257,22 @@ describe('syncRoster', () => {
     expect(await versionOf(db, s.eventId)).toBeGreaterThan(before)
   })
 
+  it('stamps a two letter name it asked about, and leaves a nameless row alone', async () => {
+    const db = await freshDb()
+    const s = await seedEvent(db, { matches: 0 })
+    const amy = await db.insert(athletes).values({
+      eventId: s.eventId, firstName: 'Amy', lastName: 'Ng', source: 'manual',
+    }).returning().get()
+    const kai = await db.insert(athletes).values({
+      eventId: s.eventId, firstName: 'Kai', lastName: '', source: 'manual',
+    }).returning().get()
+
+    await syncRoster(db, s.eventId, [rec({})], [], { locations: 1, warnings: 0 })
+
+    expect(typeof (await row(db, amy.id))!.syncedAt).toBe('string')
+    expect((await row(db, kai.id))!.syncedAt).toBeNull()
+  })
+
   it('leaves syncedAt alone on a rematch, which asked WellnessLiving nothing', async () => {
     const db = await freshDb()
     const s = await seedEvent(db, { matches: 0 })

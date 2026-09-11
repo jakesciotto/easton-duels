@@ -3,10 +3,10 @@ import type { DbLike } from '../db/client.js'
 import { athletes, rosterCandidates, type AthleteRow } from '../db/schema.js'
 import { buildCandidates } from './join.js'
 import { fullName, linkUpdate } from './link.js'
-import { exactName, nameScore, SUGGEST_FLOOR, SUGGEST_MARGIN } from '../shared/similarity.js'
+import { exactName, nameScore, nameTokens, SUGGEST_FLOOR, SUGGEST_MARGIN } from '../shared/similarity.js'
 import { recordAudit } from '../audit/log.js'
 import { bumpVersion } from '../match/events.js'
-import type { LeaderboardCompetitor, WlBeltRecord } from './types.js'
+import type { LeaderboardCompetitor, WlBeltRecord, WlNameFilter } from './types.js'
 import type { SyncChanges, SyncReport, SyncSuggestion } from '../shared/types.js'
 
 type AthleteUpdate = Partial<typeof athletes.$inferInsert>
@@ -34,6 +34,22 @@ export function profileChanges(before: ProfileFields, after: ProfileFields): Syn
 
 // What the route knows and the engine does not, carried into the one audit row.
 export interface SyncMeta { locations: number; warnings: number }
+
+/**
+ * Who a sync asks WellnessLiving about: the uid of every row already linked, and the
+ * tokens of every row's last name, linked ones too, so a child whose uid has gone can
+ * surface as a near match again. A first name would only widen what the last name already
+ * asks for. A row whose last name yields no token is a row the sync cannot ask about.
+ */
+export function rosterFilter(rows: { wlUid: string | null; lastName: string }[]): WlNameFilter {
+  const uids = new Set<string>()
+  const lastTokens = new Set<string>()
+  for (const row of rows) {
+    if (row.wlUid !== null) uids.add(row.wlUid)
+    for (const token of nameTokens(row.lastName)) lastTokens.add(token)
+  }
+  return { uids: [...uids], lastTokens: [...lastTokens], firstTokens: [] }
+}
 
 /**
  * One sync of an event's roster against WellnessLiving. `records` null means run against
@@ -142,7 +158,10 @@ export async function syncRoster(
 
     if (clear) {
       unmatched.push(name)
-      const update: AthleteUpdate = looked ? { syncChanges: {} } : {}
+      // An unlinked row is asked about by the tokens of its last name alone, so a name
+      // that yields none is a name the pull never carried to WellnessLiving.
+      const asked = looked && nameTokens(athlete.lastName).length > 0
+      const update: AthleteUpdate = asked ? { syncChanges: {} } : {}
       if (athlete.suggestedWlUid !== null) {
         update.suggestedWlUid = null
         update.suggestedScore = null

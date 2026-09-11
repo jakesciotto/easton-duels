@@ -139,9 +139,16 @@ describe('nameTokens', () => {
     expect(nameTokens('Nuñez-Ortiz')).toEqual(['nuñez', 'nunez', 'ortiz'])
   })
 
-  it('drops a token under three letters, which narrows nothing', () => {
-    expect(nameTokens('Li')).toEqual([])
+  it('drops a part under three letters when a longer part narrows the name', () => {
     expect(nameTokens('Ana Li Vo')).toEqual(['ana'])
+  })
+
+  it('takes every part at whatever length it has when no part is three letters long', () => {
+    expect(nameTokens('Ng')).toEqual(['ng'])
+    expect(nameTokens('Vo')).toEqual(['vo'])
+    // Never 'ngli': a like on the parts run together would match no stored name.
+    expect(nameTokens('Ng-Li')).toEqual(['ng', 'li'])
+    expect(nameTokens('Ñu')).toEqual(['ñu', 'nu'])
   })
 
   it('answers each token once', () => {
@@ -151,5 +158,6 @@ describe('nameTokens', () => {
   it('answers nothing for a name with no letters', () => {
     expect(nameTokens('  ')).toEqual([])
     expect(nameTokens('--')).toEqual([])
+    expect(nameTokens('123')).toEqual([])
   })
 })
