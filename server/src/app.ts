@@ -11,6 +11,7 @@ import { athleteRoutes } from './routes/athletes.js'
 import { scoringRoutes } from './routes/scoring.js'
 import { entryRoutes } from './routes/entries.js'
 import { matchRoutes } from './routes/matches.js'
+import { proposalRoutes } from './routes/proposals.js'
 import { rosterRoutes } from './routes/roster.js'
 
 // Kept beside the package version by health.test.ts, so a release that bumps one and
@@ -39,6 +40,7 @@ export function createApp(ctx: AppContext) {
   app.route('/api', scoringRoutes)
   app.route('/api', entryRoutes)
   app.route('/api', matchRoutes)
+  app.route('/api', proposalRoutes)
   app.route('/api', rosterRoutes)
   app.onError((err, c) => {
     if (err instanceof SeqConflict) return errorJson(c, 409, 'sequence', 'stale sequence', { currentSeq: err.currentSeq })

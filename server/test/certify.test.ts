@@ -3,28 +3,36 @@ import { asc, eq } from 'drizzle-orm'
 import { createTestApp, call, matToken, TEST_PIN } from './helpers.js'
 import { seedEvent, type Seeded } from './fixtures.js'
 import type { Db } from '../src/db/client.js'
-import { auditLog, events } from '../src/db/schema.js'
+import { auditLog, events, proposals } from '../src/db/schema.js'
 import { CERTIFIED_MESSAGE } from '../src/audit/certify.js'
 
 type App = Awaited<ReturnType<typeof createTestApp>>['app']
 
-// One certified event with a settled match, which is the state the pilot ends the
-// afternoon in.
-async function certified(): Promise<{ app: App; db: Db; adminToken: string; s: Seeded }> {
+// The proposal routes are addressed by a draft rather than by the event, so the locked
+// event has to hold one for the refusal to be the thing under test.
+type Certified = Seeded & { proposalId: number }
+
+// One certified event with a settled match and one draft, which is the state the pilot
+// ends the afternoon in.
+async function certified(): Promise<{ app: App; db: Db; adminToken: string; s: Certified }> {
   const { app, db, adminToken } = await createTestApp()
-  const s = await seedEvent(db, { matCount: 1, live: true })
-  await call(app, 'POST', `/api/matches/${s.matchIds[0]}/end`, { id: 'end-0001', lastSeq: 0, winnerAthleteId: s.a1 }, adminToken)
-  await call(app, 'PATCH', `/api/events/${s.eventId}`, { status: 'done' }, adminToken)
-  const r = await call(app, 'POST', `/api/events/${s.eventId}/certify`, { pin: TEST_PIN }, adminToken)
+  const seeded = await seedEvent(db, { matCount: 1, live: true })
+  await call(app, 'POST', `/api/matches/${seeded.matchIds[0]}/end`, { id: 'end-0001', lastSeq: 0, winnerAthleteId: seeded.a1 }, adminToken)
+  const draft = await db.insert(proposals).values({
+    eventId: seeded.eventId, athleteAId: seeded.a1, athleteBId: seeded.b1,
+    cost: 0, why: 'same class, same age', createdAt: '2026-10-03T15:30:00.000Z',
+  }).returning().get()
+  await call(app, 'PATCH', `/api/events/${seeded.eventId}`, { status: 'done' }, adminToken)
+  const r = await call(app, 'POST', `/api/events/${seeded.eventId}/certify`, { pin: TEST_PIN }, adminToken)
   expect(r.status).toBe(200)
   expect(r.body.event.status).toBe('certified')
-  return { app, db, adminToken, s }
+  return { app, db, adminToken, s: { ...seeded, proposalId: draft.id } }
 }
 
 // message overrides the certification refusal text this write expects. Delete says
 // "unlock the results first" instead of the standard CERTIFIED_MESSAGE, because deleting
 // a certified event has an obvious next step the generic lock message does not name.
-interface Write { name: string; method: string; path: (s: Seeded) => string; body?: (s: Seeded) => unknown; mat?: boolean; message?: string }
+interface Write { name: string; method: string; path: (s: Certified) => string; body?: (s: Certified) => unknown; mat?: boolean; message?: string }
 
 // The write routes certification deliberately leaves alone. Heartbeat and unbind stay open
 // so a bound tablet can keep saying it is there and can always hand its mat back; the two
@@ -68,6 +76,11 @@ const WRITES: Write[] = [
   { name: 'athlete link', method: 'POST', path: s => `/api/athletes/${s.a1}/link`, body: () => ({ wlUid: 'w0' }) },
   { name: 'athlete dismiss', method: 'POST', path: s => `/api/athletes/${s.a1}/dismiss`, body: () => ({ wlUid: 'w0' }) },
   { name: 'match generate', method: 'POST', path: s => `/api/events/${s.eventId}/matches/generate` },
+  { name: 'propose', method: 'POST', path: s => `/api/events/${s.eventId}/proposals` },
+  { name: 'confirm all proposals', method: 'POST', path: s => `/api/events/${s.eventId}/proposals/confirm-all` },
+  { name: 'proposal confirm', method: 'POST', path: s => `/api/proposals/${s.proposalId}/confirm` },
+  { name: 'proposal swap', method: 'PATCH', path: s => `/api/proposals/${s.proposalId}`, body: s => ({ athleteAId: s.a1 }) },
+  { name: 'proposal delete', method: 'DELETE', path: s => `/api/proposals/${s.proposalId}` },
   { name: 'match create', method: 'POST', path: s => `/api/events/${s.eventId}/matches`, body: s => ({ athleteAId: s.a1, athleteBId: s.b2 }) },
   { name: 'match patch', method: 'PATCH', path: s => `/api/matches/${s.matchIds[1]}`, body: () => ({ lengthSec: 240 }) },
   { name: 'match delete', method: 'DELETE', path: s => `/api/matches/${s.matchIds[1]}` },
@@ -76,7 +89,7 @@ const WRITES: Write[] = [
 
 // Ids that cannot collide with a path segment of their own, so a concrete url matches one
 // route pattern and no other.
-const SHAPE = { eventId: 1, teamA: 2, teamB: 3, rulesetId: 4, matIds: [5, 6], a1: 7, a2: 8, b1: 9, b2: 10, matchIds: [11, 12] } as Seeded
+const SHAPE = { eventId: 1, teamA: 2, teamB: 3, rulesetId: 4, matIds: [5, 6], a1: 7, a2: 8, b1: 9, b2: 10, matchIds: [11, 12], proposalId: 13 } as Certified
 
 function nonGetRoutes(app: App): string[] {
   const seen = new Set<string>()

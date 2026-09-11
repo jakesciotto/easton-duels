@@ -6,9 +6,10 @@ import { auditLog, events, rulesets, mats, matches } from '../db/schema.js'
 import { validate } from '../lib/validate.js'
 import { errorJson, requireAdmin } from '../auth/middleware.js'
 import { generateMatches } from '../matchmaker/generate.js'
-import { resolvePair, leastLoadedMat } from '../match/pairs.js'
 import { eventDetail } from './events.js'
 import { bumpVersion } from '../match/events.js'
+import { createMatch } from '../match/create.js'
+import { resolvePair } from '../match/pairs.js'
 import { recordAudit, HISTORY_LIMIT } from '../audit/log.js'
 import { assertNotCertified } from '../audit/certify.js'
 import type { AuditEntry } from '../shared/types.js'
@@ -55,36 +56,9 @@ matchRoutes.post('/events/:eventId/matches', requireAdmin, validate('json', crea
   if (!await db.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get()) return errorJson(c, 404, 'not_found', 'event not found')
   await assertNotCertified(db, eventId)
   const body = c.req.valid('json')
-  const pair = await resolvePair(db, eventId, body.athleteAId, body.athleteBId)
-  if (typeof pair === 'string') return errorJson(c, 422, 'validation', pair)
-  const ruleset = body.rulesetId !== undefined
-    ? await db.select().from(rulesets).where(and(eq(rulesets.id, body.rulesetId), eq(rulesets.eventId, eventId))).get()
-    : await db.select().from(rulesets).where(eq(rulesets.eventId, eventId)).orderBy(asc(rulesets.id)).get()
-  if (!ruleset) return errorJson(c, 422, 'validation', 'ruleset is not on this event')
-  if (body.matId !== undefined && body.matId !== null && !await db.select({ id: mats.id }).from(mats).where(and(eq(mats.id, body.matId), eq(mats.eventId, eventId))).get()) {
-    return errorJson(c, 422, 'validation', 'mat is not on this event')
-  }
-  const max = await db.select({ m: sql<number>`coalesce(max(${matches.orderIndex}), -1)` }).from(matches).where(eq(matches.eventId, eventId)).get()
-  const matId = body.matId === undefined ? await leastLoadedMat(db, eventId) : body.matId
-  const row = await db.transaction(async tx => {
-    const inserted = await tx.insert(matches).values({
-      eventId, athleteAId: pair.a, athleteBId: pair.b, rulesetId: ruleset.id,
-      lengthSec: body.lengthSec ?? ruleset.defaultLengthSec,
-      matId,
-      orderIndex: (max?.m ?? -1) + 1,
-    }).returning().get()
-    // An idle mat has nothing to advance it, so on a live event scored on the mats the new
-    // match starts there. advanceMat is a no-op in setup, in desk mode, and on a mat that
-    // already has a live match.
-    if (matId !== null) await advanceMat(tx, matId, 'admin')
-    await recordAudit(tx, {
-      eventId, matchId: inserted.id, actor: 'admin', action: 'match_create',
-      detail: { athleteAId: inserted.athleteAId, athleteBId: inserted.athleteBId, matId: inserted.matId, orderIndex: inserted.orderIndex },
-    })
-    await bumpVersion(tx, eventId)
-    return inserted
-  })
-  return c.json(row, 201)
+  const created = await createMatch(db, { eventId, ...body, source: 'designed' })
+  if (!created.ok) return errorJson(c, 422, 'validation', created.message)
+  return c.json(created.match, 201)
 })
 
 matchRoutes.patch('/matches/:matchId', requireAdmin, validate('json', patchSchema), async c => {
