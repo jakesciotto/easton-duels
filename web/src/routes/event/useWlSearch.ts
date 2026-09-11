@@ -5,7 +5,7 @@ import type { RosterCandidate } from '@/lib/types'
 
 /** One request per typed pause, not one per keystroke. */
 export const SEARCH_PAUSE_MS = 300
-export const SEARCH_MIN_CHARS = 2
+const SEARCH_MIN_CHARS = 2
 export const SEARCH_TOO_SHORT = 'Type at least two letters.'
 
 export interface WlSearch {

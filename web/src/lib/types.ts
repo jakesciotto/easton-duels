@@ -28,9 +28,10 @@ export interface EventRow {
   /** G24: the board's far setting. Null until an admin sets one, and the board reads 1.0. */
   far?: number | null
   /**
-   * The WellnessLiving locations this event syncs. Null until the first sync stores a
-   * pick, and optional for the same reason as the contact halves above: the list endpoint
-   * serves the raw columns and only the detail carries this one.
+   * The locations an older sync stored. The sync searches every location now, so nothing
+   * reads this; it is declared because the detail endpoint still carries the column until
+   * the cleanup that drops it. Optional for the same reason as the contact halves above:
+   * the list endpoint serves the raw columns and only the detail carries this one.
    */
   wlLocations?: string[] | null
 }
