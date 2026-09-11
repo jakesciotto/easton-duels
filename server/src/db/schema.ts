@@ -1,5 +1,5 @@
 import { sqliteTable, text, integer, real, index, uniqueIndex, primaryKey } from 'drizzle-orm/sqlite-core'
-import type { RulesetAction, RulesetTerminal, MatchEventPayload, AuditAction, AuditActor, AuditDetail, SyncChanges } from '../shared/types.js'
+import type { RulesetAction, RulesetTerminal, MatchEventPayload, AuditAction, AuditActor, AuditDetail, MatchSource, SyncChanges } from '../shared/types.js'
 
 export const settings = sqliteTable('settings', {
   key: text('key').primaryKey(),
@@ -140,10 +140,26 @@ export const matches = sqliteTable('matches', {
   pendingTerminalKey: text('pending_terminal_key'),
   lastSeq: integer('last_seq').notNull().default(0),
   why: text('why'),
+  // Where the pairing came from: the proposer, or a person in the Add match dialog.
+  // Rows written before 0011 were all designed by hand or by the retired generator.
+  source: text('source', { enum: ['designed', 'proposed'] }).$type<MatchSource>().notNull().default('designed'),
 }, t => [
   index('matches_event_order_idx').on(t.eventId, t.orderIndex),
   index('matches_mat_idx').on(t.matId),
 ])
+
+// A draft pairing the organizer has not confirmed. Nothing here reaches the board: a
+// proposal becomes a match only through the confirm route, which deletes it in the same
+// transaction. Proposing again replaces the whole set for the event.
+export const proposals = sqliteTable('proposals', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  eventId: integer('event_id').notNull().references(() => events.id, { onDelete: 'cascade' }),
+  athleteAId: integer('athlete_a_id').notNull().references(() => athletes.id, { onDelete: 'cascade' }),
+  athleteBId: integer('athlete_b_id').notNull().references(() => athletes.id, { onDelete: 'cascade' }),
+  cost: real('cost').notNull(),
+  why: text('why').notNull(),
+  createdAt: text('created_at').notNull(),
+}, t => [index('proposals_event_idx').on(t.eventId)])
 
 export const rateLimits = sqliteTable('rate_limits', {
   scope: text('scope').notNull(),
@@ -186,5 +202,6 @@ export type RosterCandidateRow = typeof rosterCandidates.$inferSelect
 export type RulesetRow = typeof rulesets.$inferSelect
 export type MatRow = typeof mats.$inferSelect
 export type MatchRow = typeof matches.$inferSelect
+export type ProposalRow = typeof proposals.$inferSelect
 export type MatchEventRow = typeof matchEvents.$inferSelect
 export type RateLimitRow = typeof rateLimits.$inferSelect

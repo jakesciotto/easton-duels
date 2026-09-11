@@ -12,6 +12,12 @@ export type EventStatus = 'setup' | 'live' | 'done' | 'certified'
  * from whether a mat happens to be bound at this instant.
  */
 export type EventMode = 'live' | 'entry'
+/**
+ * Where a match came from. 'proposed' is a proposal the organizer confirmed; 'designed'
+ * is a pair a person picked in the Add match dialog. Every row written before the
+ * proposer existed reads 'designed'.
+ */
+export type MatchSource = 'designed' | 'proposed'
 export type MatchEventType = 'score' | 'set_score' | 'clock_start' | 'clock_pause' | 'clock_extend' | 'terminal' | 'end' | 'admin'
 
 export interface RulesetAction { key: string; label: string; points: number }
