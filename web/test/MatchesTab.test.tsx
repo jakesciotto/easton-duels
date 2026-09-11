@@ -28,8 +28,16 @@ const match = (id: number, over: Partial<MatchRow> = {}): MatchRow => ({
 // two-field split without juggling several fixtures.
 const detail: EventDetail = {
   event: { id: 7, name: 'Fall Duels', date: '2026-10-03', matCount: 2, matCode: '0420', mode: 'live', status: 'setup', sameGender: false, createdAt: 'x' },
-  teams: [{ id: 1, eventId: 7, name: 'Ridgeline', color: 'red', position: 0 }, { id: 2, eventId: 7, name: 'Lakeside', color: 'blue', position: 1 }],
-  athletes: [kid(100, 1, 'Mateo', 'Rivera'), kid(101, 1, 'Ava', 'Park'), kid(200, 2, 'Olivia', 'Kim'), kid(201, 2, 'Noah', 'Tran'), kid(202, 2, 'Kai', 'Wong')],
+  teams: [
+    { id: 1, eventId: 7, name: 'Ridgeline', color: 'red', position: 0 },
+    { id: 2, eventId: 7, name: 'Lakeside', color: 'blue', position: 1 },
+    { id: 3, eventId: 7, name: 'Fernwood', color: 'teal', position: 2 },
+  ],
+  athletes: [
+    kid(100, 1, 'Mateo', 'Rivera'), kid(101, 1, 'Ava', 'Park'),
+    kid(200, 2, 'Olivia', 'Kim'), kid(201, 2, 'Noah', 'Tran'), kid(202, 2, 'Kai', 'Wong'),
+    kid(300, 3, 'Iris', 'Nolan'),
+  ],
   rulesets: [{ id: 1, eventId: 7, name: 'Default', defaultLengthSec: 300, actions: [], terminals: [] }],
   mats: [{ id: 1, eventId: 7, number: 1, currentMatchId: null }, { id: 2, eventId: 7, number: 2, currentMatchId: null }],
   matches: [
@@ -92,8 +100,8 @@ describe('MatchesTab', () => {
     expect(rows).toHaveLength(2)
     expect(within(rows[0]).getByText('ERP 6.1 vs 5.8')).toBeInTheDocument()
     // Two competitors, two lines, one unit.
-    expect(within(rows[0]).getByRole('button', { name: 'Mateo Rivera, Ridgeline' })).toBeInTheDocument()
-    expect(within(rows[0]).getByRole('button', { name: 'Olivia Kim, Lakeside' })).toBeInTheDocument()
+    expect(within(rows[0]).getByRole('button', { name: 'Swap Mateo Rivera, Ridgeline' })).toBeInTheDocument()
+    expect(within(rows[0]).getByRole('button', { name: 'Swap Olivia Kim, Lakeside' })).toBeInTheDocument()
     // The done match is history: it never appears in the working field.
     expect(within(pendingField()).queryByText('beat')).not.toBeInTheDocument()
 
@@ -103,13 +111,17 @@ describe('MatchesTab', () => {
     expect(within(settled[0]).getByText('Mateo Rivera')).toBeInTheDocument()
     expect(within(settled[0]).getByText('on points')).toBeInTheDocument()
 
-    expect(screen.getByRole('region', { name: 'Unpaired' })).toHaveTextContent('Kai Wong')
+    const free = screen.getByRole('region', { name: 'Without a match' })
+    expect(free).toHaveTextContent('Kai Wong')
+    // Every team has a column, the third one included, and each name carries its own press.
+    expect(within(free).getByRole('button', { name: 'Add match for Iris Nolan' })).toBeInTheDocument()
+    expect(within(free).getByText('Everybody here has a match.')).toBeInTheDocument()
   })
 
   it('swaps a competitor through the picker and moves a pending row down, past the other pending row', async () => {
     const f = mount()
     const user = userEvent.setup()
-    await user.click(within(pendingRows()[0]).getByRole('button', { name: 'Olivia Kim, Lakeside' }))
+    await user.click(within(pendingRows()[0]).getByRole('button', { name: 'Swap Olivia Kim, Lakeside' }))
     await user.click(await screen.findByRole('button', { name: 'Kai Wong' }))
     await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/matches/1')).toBe(true))
     expect(f.body(f.calls.findIndex(c => c.url === '/api/matches/1'))).toEqual({ athleteBId: 202 })
@@ -152,7 +164,7 @@ describe('MatchesTab', () => {
     mount(doubleBooked)
     const rows = pendingRows()
     // Mateo is in match 1 and match 4, and not in match 2.
-    await userEvent.setup().hover(within(rows[0]).getByRole('button', { name: 'Mateo Rivera, Ridgeline' }))
+    await userEvent.setup().hover(within(rows[0]).getByRole('button', { name: 'Swap Mateo Rivera, Ridgeline' }))
     expect(rows[0]).toHaveAttribute('data-selected')
     expect(rows[2]).toHaveAttribute('data-selected')
     expect(rows[1]).not.toHaveAttribute('data-selected')
@@ -167,6 +179,8 @@ describe('MatchesTab', () => {
     const strip = await screen.findByRole('region', { name: 'Live now' })
     expect(within(strip).getByText('Mateo Rivera')).toBeInTheDocument()
     expect(within(strip).getByText('Live on mat 1')).toBeInTheDocument()
+    // 2.1: --gray-9 is decoration only and never carries a word a person reads.
+    expect(within(strip).getByText('vs').className).toContain('text-gray-10')
     expect(within(strip).getByRole('button', { name: `Delete ${M1}` })).toBeDisabled()
 
     // The live row has left the working queue, and the queue says which match is next.
@@ -219,7 +233,7 @@ describe('MatchesTab', () => {
   it('marks a double-booked competitor in the kid picker list', async () => {
     mount(doubleBooked)
     const user = userEvent.setup()
-    await user.click(within(pendingRows()[1]).getByRole('button', { name: 'Ava Park, Ridgeline' }))
+    await user.click(within(pendingRows()[1]).getByRole('button', { name: 'Swap Ava Park, Ridgeline' }))
     const dialog = await screen.findByRole('dialog')
     const mateoRow = within(dialog).getByRole('button', { name: 'Mateo Rivera' })
     expect(within(mateoRow).getByText('double-booked')).toBeInTheDocument()
@@ -235,9 +249,9 @@ describe('MatchesTab', () => {
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'Add match' }))
     const dialog = await screen.findByRole('dialog')
-    await user.click(within(dialog).getByLabelText('Ridgeline competitor'))
-    expect(await screen.findByRole('option', { name: 'Liam Cruz' })).toBeInTheDocument()
-    await user.click(screen.getByRole('option', { name: 'Mateo Rivera (double-booked)' }))
+    await user.click(within(dialog).getByLabelText('First competitor'))
+    expect(await screen.findByRole('option', { name: /Liam Cruz/ })).toBeInTheDocument()
+    await user.click(screen.getByRole('option', { name: /Mateo Rivera/ }))
     expect(within(dialog).getByText('Mateo Rivera is already in a pending match')).toBeInTheDocument()
   })
 
@@ -308,14 +322,59 @@ describe('MatchesTab', () => {
 
   // 2.1: --gray-9 is decoration only and never carries a word a person reads. jsdom
   // applies no stylesheet, so the token is read off the element that carries the word.
-  it('spends --gray-10, not the decoration grey, on the words between two competitors', async () => {
+  // A pairing crosses two of up to eight teams, so a side's plate comes off the roster
+  // row rather than off the column the side happens to sit in.
+  it('paints each side in the team that competitor is actually on', async () => {
+    const crossed: EventDetail = {
+      ...detail,
+      // Match 1's B side moves to Fernwood, which is neither teams[0] nor teams[1].
+      matches: [match(1, { athleteBId: 300 }), ...detail.matches.slice(1)],
+    }
+    mount(crossed)
+    const row = within(pendingRows()[0])
+    expect(row.getByRole('button', { name: 'Swap Iris Nolan, Fernwood' })).toBeInTheDocument()
+    expect(row.queryByRole('button', { name: 'Swap Iris Nolan, Lakeside' })).not.toBeInTheDocument()
+  })
+
+  // The picker offers everybody the pairing can legally take, which is every team but
+  // the one the competitor staying in the match is on.
+  it('offers a third team when swapping a side', async () => {
+    mount()
+    const user = userEvent.setup()
+    await user.click(within(pendingRows()[0]).getByRole('button', { name: 'Swap Olivia Kim, Lakeside' }))
+    const picker = await screen.findByRole('dialog')
+    expect(within(picker).getByRole('button', { name: 'Iris Nolan' })).toBeInTheDocument()
+    expect(within(picker).queryByRole('button', { name: 'Ava Park' })).not.toBeInTheDocument()
+  })
+
+  // A swap is never refused for the pair it makes, so what the server noticed lands on
+  // the row it changed rather than in a dialog that has already closed.
+  it('prints what the server warned about a swapped pair on the row itself', async () => {
+    mount(detail, (url, init) => (url === '/api/matches/1' && init?.method === 'PATCH'
+      ? { json: { warnings: ['3 weight classes apart', 'Already met'] } }
+      : { json: {} }))
+    const user = userEvent.setup()
+    await user.click(within(pendingRows()[0]).getByRole('button', { name: 'Swap Olivia Kim, Lakeside' }))
+    await user.click(await screen.findByRole('button', { name: 'Iris Nolan' }))
+    const row = within(pendingRows()[0])
+    expect(await row.findByText('3 weight classes apart')).toBeInTheDocument()
+    expect(row.getByText('Already met')).toBeInTheDocument()
+  })
+
+  it('opens the Add match dialog on the competitor whose row asked for it', async () => {
+    mount()
+    const user = userEvent.setup()
+    await user.click(within(screen.getByRole('region', { name: 'Without a match' })).getByRole('button', { name: 'Add match for Iris Nolan' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByLabelText('First competitor')).toHaveTextContent('Iris Nolan')
+  })
+
+  it('spends --gray-10, not the decoration grey, on the word between two competitors', async () => {
     mount()
     await userEvent.setup().click(screen.getByRole('button', { name: 'Show' }))
-    for (const word of ['vs', 'beat']) {
-      const el = screen.getByText(word)
-      expect(el.className, word).toContain('text-gray-10')
-      expect(el.className, word).not.toContain('text-gray-9')
-    }
+    const el = screen.getByText('beat')
+    expect(el.className).toContain('text-gray-10')
+    expect(el.className).not.toContain('text-gray-9')
   })
 })
 
@@ -454,8 +513,8 @@ describe('MatchesTab on a certified event', () => {
     expect(row.getByRole('combobox', { name: `Ruleset for ${M1}` })).toBeDisabled()
     expect(row.getByLabelText(`Length for ${M1}`)).toBeDisabled()
     // The competitor swap is a button on each side of the pair.
-    expect(row.getByRole('button', { name: 'Mateo Rivera, Ridgeline' })).toBeDisabled()
-    expect(row.getByRole('button', { name: 'Olivia Kim, Lakeside' })).toBeDisabled()
+    expect(row.getByRole('button', { name: 'Swap Mateo Rivera, Ridgeline' })).toBeDisabled()
+    expect(row.getByRole('button', { name: 'Swap Olivia Kim, Lakeside' })).toBeDisabled()
   })
 
   // The running order cannot be dragged into a new one. Two things stop it, the disabled

@@ -3,7 +3,7 @@ import { formatClock } from '@shared/clock'
 import { writeErrorMessage } from '@/lib/eventMode'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import type { AthleteRow, EventDetail, TeamRow } from '@/lib/types'
-import { athleteName } from '@/lib/format'
+import { athleteName, beltLabel } from '@/lib/format'
 import { isDoubleBooked } from '@/lib/doubleBooking'
 import { cn } from '@/lib/utils'
 import { dialogBody, dialogFooter, dialogStack, dialogSurface } from '@/components/dialog-frame'
@@ -13,18 +13,24 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Toggle } from '@/components/ui/toggle'
+import { TeamPlate } from '@/components/TeamPlate'
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { clockToSec, maskClock } from './clock-input'
 
 const LEAST_LOADED = ''
 
-// Team A is left and first on every surface, so the two competitor slots are placed
-// rather than stacked: the dialog reads in the same direction as the Entry tab and the
-// board hero. DOM order still matches tab order.
-function KidSlot({ id, team, kids, matches, value, onChange, align, className }: {
+interface CreateResult { warnings?: string[] }
+
+/**
+ * An event holds up to eight teams, so neither slot belongs to one of them any more. Each
+ * offers every competitor on a team other than the one the other slot holds, and each
+ * option carries its own plate because the two lists now span the whole event.
+ */
+function KidSlot({ id, label, kids, teamOf, matches, value, onChange, align, className }: {
   id: string
-  team: TeamRow
+  label: string
   kids: AthleteRow[]
+  teamOf: (kid: AthleteRow) => TeamRow | undefined
   matches: EventDetail['matches']
   value: string
   onChange: (v: string) => void
@@ -37,52 +43,105 @@ function KidSlot({ id, team, kids, matches, value, onChange, align, className }:
   }))
   return (
     <div className={cn('grid gap-2', className)}>
-      <Label htmlFor={id} className={cn(align === 'right' && 'justify-end')}>{team.name} competitor</Label>
+      <Label htmlFor={id} className={cn(align === 'right' && 'justify-end')}>{label}</Label>
       <Select value={value} onValueChange={v => onChange(String(v ?? ''))} items={items}>
         <SelectTrigger id={id}><SelectValue placeholder="Pick a competitor" /></SelectTrigger>
         <SelectContent>
-          {items.map(i => <SelectItem key={i.value} value={i.value}>{i.label}</SelectItem>)}
+          {kids.map(k => {
+            const team = teamOf(k)
+            return (
+              <SelectItem key={k.id} value={String(k.id)}>
+                <span className="flex min-w-0 items-center gap-2">
+                  {team && <TeamPlate color={team.color} name={team.name} size="inline" showName={false} />}
+                  <span className="truncate">{athleteName(k)}</span>
+                </span>
+                <span className="ml-auto shrink-0 t2 text-gray-10">
+                  {[beltLabel(k.belt), k.age ?? '--', k.weightLbs === null ? '--' : `${k.weightLbs} lb`].join(' · ')}
+                </span>
+              </SelectItem>
+            )
+          })}
         </SelectContent>
       </Select>
     </div>
   )
 }
 
-export function AddMatchDialog({ detail, open, onOpenChange }: { detail: EventDetail; open: boolean; onOpenChange: (o: boolean) => void }) {
-  const [teamA, teamB] = detail.teams
+export function AddMatchDialog({ detail, start, open, onOpenChange }: {
+  detail: EventDetail
+  /** A competitor the caller already chose, seeded into the first slot. */
+  start?: number | null
+  open: boolean
+  onOpenChange: (o: boolean) => void
+}) {
   const [aId, setAId] = useState('')
   const [bId, setBId] = useState('')
   const [rulesetId, setRulesetId] = useState('')
   const [length, setLength] = useState('')
   const [matId, setMatId] = useState(LEAST_LOADED)
-  const create = useAdminMutation(detail.event.id, (body: unknown) => adminApi(`/api/events/${detail.event.id}/matches`, { method: 'POST', body }))
+  // What the server said about the pair it just accepted. A warning never blocks a save,
+  // so it is reported after the write rather than instead of it.
+  const [warnings, setWarnings] = useState<string[]>([])
+  const create = useAdminMutation(detail.event.id, (body: unknown) => adminApi<CreateResult>(`/api/events/${detail.event.id}/matches`, { method: 'POST', body }))
 
-  // Opening the dialog is the only thing that resets the form, so the deps stay at [open]:
-  // a later edit to the roster or the rulesets must not wipe what is half typed.
+  // Opening the dialog is the only thing that resets the form, so the deps stay at the
+  // two facts the caller controls: a later edit to the roster or the rulesets must not
+  // wipe what is half typed.
   useEffect(() => {
     if (!open) return
-    setAId('')
+    setAId(start === null || start === undefined ? '' : String(start))
     setBId('')
+    setWarnings([])
     setRulesetId(String(detail.rulesets[0]?.id ?? ''))
     setLength(formatClock((detail.rulesets[0]?.defaultLengthSec ?? 300) * 1000))
     setMatId(LEAST_LOADED)
     create.reset()
-  }, [open])
+  }, [open, start])
 
-  const kids = (teamId: number) => detail.athletes.filter(a => a.teamId === teamId).sort((x, y) => x.lastName.localeCompare(y.lastName))
+  const teamOf = (kid: AthleteRow) => detail.teams.find(t => t.id === kid.teamId)
+  // A competitor with no team cannot be in a match, because a match pairs two teams.
+  const placeable = detail.athletes.filter(a => a.teamId !== null).sort((x, y) => x.lastName.localeCompare(y.lastName))
+  const pickOf = (v: string) => detail.athletes.find(a => String(a.id) === v)
+  const aPick = pickOf(aId)
+  const bPick = pickOf(bId)
+  const otherThan = (kid: AthleteRow | undefined) => placeable.filter(k => kid === undefined || k.teamId !== kid.teamId)
+
   const rulesetItems = detail.rulesets.map(r => ({ value: String(r.id), label: r.name }))
-  const doubleBookedPicks = [aId, bId]
-    .map(v => detail.athletes.find(a => String(a.id) === v))
+  const doubleBookedPicks = [aPick, bPick]
     .filter((k): k is AthleteRow => k !== undefined && isDoubleBooked(k.id, detail.matches))
   const lengthSec = clockToSec(length)
   const ready = aId !== '' && bId !== '' && rulesetId !== '' && lengthSec !== null
 
+  // Changing one slot to a competitor on the other slot's team would leave a pairing the
+  // server refuses, so the other slot lets go rather than sitting there illegal.
+  const pickA = (v: string) => {
+    setAId(v)
+    const next = pickOf(v)
+    if (next && bPick && next.teamId === bPick.teamId) setBId('')
+  }
+  const pickB = (v: string) => {
+    setBId(v)
+    const next = pickOf(v)
+    if (next && aPick && next.teamId === aPick.teamId) setAId('')
+  }
+
   const submit = (e: FormEvent) => {
     e.preventDefault()
     if (!ready) return
+    setWarnings([])
     create.mutate(
       { athleteAId: Number(aId), athleteBId: Number(bId), rulesetId: Number(rulesetId), lengthSec, matId: matId === LEAST_LOADED ? undefined : Number(matId) },
-      { onSuccess: () => onOpenChange(false) },
+      {
+        onSuccess: r => {
+          const said = r?.warnings ?? []
+          if (said.length === 0) { onOpenChange(false); return }
+          // The match is on file. The dialog stays up to report what the server noticed
+          // about it, with both slots cleared for the next pair.
+          setWarnings(said)
+          setAId('')
+          setBId('')
+        },
+      },
     )
   }
 
@@ -92,8 +151,8 @@ export function AddMatchDialog({ detail, open, onOpenChange }: { detail: EventDe
         <form onSubmit={submit} className={dialogStack}>
           <DialogHeader><DialogTitle>Add match</DialogTitle></DialogHeader>
           <DialogBody className={cn(dialogBody, 'gap-4 sm:grid-cols-2')}>
-            <KidSlot id="am-a" team={teamA} kids={kids(teamA.id)} matches={detail.matches} value={aId} onChange={setAId} align="left" className="sm:col-start-1 sm:row-start-1" />
-            <KidSlot id="am-b" team={teamB} kids={kids(teamB.id)} matches={detail.matches} value={bId} onChange={setBId} align="right" className="sm:col-start-2 sm:row-start-1" />
+            <KidSlot id="am-a" label="First competitor" kids={otherThan(bPick)} teamOf={teamOf} matches={detail.matches} value={aId} onChange={pickA} align="left" className="sm:col-start-1 sm:row-start-1" />
+            <KidSlot id="am-b" label="Second competitor" kids={otherThan(aPick)} teamOf={teamOf} matches={detail.matches} value={bId} onChange={pickB} align="right" className="sm:col-start-2 sm:row-start-1" />
 
             <div className="grid gap-2">
               <Label htmlFor="am-rs">Ruleset</Label>
@@ -132,6 +191,12 @@ export function AddMatchDialog({ detail, open, onOpenChange }: { detail: EventDe
               </div>
             </div>
 
+            {warnings.length > 0 && (
+              <Alert variant="attend" className="sm:col-span-2">
+                <AlertTitle variant="attend">Match added</AlertTitle>
+                {warnings.map(w => <AlertDescription key={w}>{w}</AlertDescription>)}
+              </Alert>
+            )}
             {doubleBookedPicks.length > 0 && (
               <Alert variant="attend" className="sm:col-span-2">
                 <AlertTitle variant="attend">Already booked</AlertTitle>

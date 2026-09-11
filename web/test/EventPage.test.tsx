@@ -79,12 +79,12 @@ const snapshotReply = (url: string, snapshot: Snapshot = SLOW_SNAPSHOT): Reply |
 
 const pendingRows = () => within(screen.getByRole('region', { name: 'Pending matches' })).getAllByRole('row').slice(1)
 
-// The row's own account of who is in it: every competitor line is a button named
-// "<name>, <team>", and team A's is the one the running order is read by.
+// The row's own account of who is in it: every competitor line is a swap control named
+// "Swap <name>, <team>", and the Ridgeline one is what the running order is read by.
 const runningOrder = () => pendingRows().map(row =>
   within(row).getAllByRole('button')
     .map(b => b.getAttribute('aria-label') ?? '')
-    .find(label => label.endsWith(', Ridgeline')))
+    .find(label => label.startsWith('Swap ') && label.endsWith(', Ridgeline')))
 
 const snapshotGets = (f: { calls: { url: string }[] }) => f.calls.filter(c => c.url.includes('/snapshot')).length
 
@@ -109,7 +109,7 @@ describe('EventPage, 4.4: the event detail is held while the operator is engaged
     const user = userEvent.setup()
 
     await user.click(await screen.findByRole('tab', { name: /Matches/ }))
-    expect(runningOrder()).toEqual(['Mateo Rivera, Ridgeline', 'Ava Park, Ridgeline', 'Liam Cruz, Ridgeline'])
+    expect(runningOrder()).toEqual(['Swap Mateo Rivera, Ridgeline', 'Swap Ava Park, Ridgeline', 'Swap Liam Cruz, Ridgeline'])
 
     // The operator presses on row 1 and starts dragging it. jsdom has no PointerEvent, so
     // the polyfill is a MouseEvent and drops isPrimary, which the sensor checks first.
@@ -126,10 +126,10 @@ describe('EventPage, 4.4: the event detail is held while the operator is engaged
     await settled(qc, d => d.matches.some(m => m.id === 3 && m.orderIndex === 0))
 
     // The list the gesture is indexing against has not moved.
-    expect(runningOrder()).toEqual(['Mateo Rivera, Ridgeline', 'Ava Park, Ridgeline', 'Liam Cruz, Ridgeline'])
+    expect(runningOrder()).toEqual(['Swap Mateo Rivera, Ridgeline', 'Swap Ava Park, Ridgeline', 'Swap Liam Cruz, Ridgeline'])
 
     fireEvent.pointerUp(document, { clientX: 0, clientY: 40 })
-    await vi.waitFor(() => expect(runningOrder()).toEqual(['Liam Cruz, Ridgeline', 'Mateo Rivera, Ridgeline', 'Ava Park, Ridgeline']))
+    await vi.waitFor(() => expect(runningOrder()).toEqual(['Swap Liam Cruz, Ridgeline', 'Swap Mateo Rivera, Ridgeline', 'Swap Ava Park, Ridgeline']))
     // The sensor removes its capture-phase click swallower 50ms after the drop, and the
     // document outlives a test.
     await new Promise(resolve => setTimeout(resolve, 60))

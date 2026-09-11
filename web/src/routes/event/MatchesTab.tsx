@@ -28,6 +28,7 @@ import { Button } from '@/components/ui/button'
 import { Chip } from '@/components/ui/chip'
 import { OverflowMenu } from '@/components/OverflowMenu'
 import { EmptyState } from '@/components/ui/empty-state'
+import { FieldRow, FieldSet } from '@/components/ui/field-set'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Clock } from '@/components/Clock'
@@ -48,24 +49,37 @@ const pendingColumns = (entryMode: boolean) => (entryMode ? 8 : 9)
 // read at once.
 type Hover = (athleteId: number | null) => void
 
-// An unfilled side reads "Unpaired, Crimson", never blank (6.8).
-type NameOf = (athleteId: number, team: TeamRow) => string
+/**
+ * One competitor of a pairing: the name, and the team that competitor is actually on.
+ *
+ * An event holds up to eight teams, so a side's colour can no longer be read off the
+ * column it sits in. It comes off the roster row, and a competitor the roster no longer
+ * carries reads as unknown rather than borrowing somebody else's colour.
+ */
+interface Side { name: string; team: TeamRow | undefined }
+type SideOf = (athleteId: number) => Side
 
 interface Option { value: string; label: string }
 
-function CompetitorLine({ team, name, disabled = false, title, onHover, onPick }: {
-  team: TeamRow
-  name: string
+// A hand designed pair is never refused, so the server reports what it noticed instead.
+interface PatchResult { warnings?: string[] }
+
+// 7.1: the side itself is the swap control. One Swap button on the row could not say
+// which of the two competitors it replaces, and the organizer is already pointing at the
+// one they want changed.
+function CompetitorLine({ side, disabled = false, title, onHover, onPick }: {
+  side: Side
   disabled?: boolean
   title?: string
   onHover: (on: boolean) => void
   onPick: () => void
 }) {
+  const { name, team } = side
   return (
     <button
       type="button"
-      aria-label={`${name}, ${team.name}`}
-      title={title ?? name}
+      aria-label={`Swap ${name}, ${team?.name ?? 'no team'}`}
+      title={title ?? 'Swap'}
       disabled={disabled}
       onClick={onPick}
       onMouseEnter={() => onHover(true)}
@@ -74,7 +88,7 @@ function CompetitorLine({ team, name, disabled = false, title, onHover, onPick }
       onBlur={() => onHover(false)}
       className="-mx-2 flex h-8 min-w-0 items-center gap-2 rounded-md px-2 text-left outline-none transition-colors duration-150 ease-standard hover:bg-gray-3 focus-visible:shadow-focus active:bg-gray-4 disabled:pointer-events-none disabled:opacity-50"
     >
-      <TeamPlate color={team.color} name={team.name} size="inline" showName={false} />
+      {team && <TeamPlate color={team.color} name={team.name} size="inline" showName={false} />}
       <span className="truncate t3">{name}</span>
     </button>
   )
@@ -83,12 +97,10 @@ function CompetitorLine({ team, name, disabled = false, title, onHover, onPick }
 // The live match is not one of forty identical rows. It is lifted into its own strip at
 // t5, and it is where "refuse rather than ask" is visible: the controls that would touch
 // a running match are disabled with the reason printed beside them.
-function LiveStrip({ line, teamA, teamB, nameA, nameB, serverNow, lastSuccessAt, pollIntervalMs, highlight, onHover }: {
+function LiveStrip({ line, a, b, serverNow, lastSuccessAt, pollIntervalMs, highlight, onHover }: {
   line: MatchLine
-  teamA: TeamRow
-  teamB: TeamRow
-  nameA: string
-  nameB: string
+  a: Side
+  b: Side
   serverNow: string | null
   pollIntervalMs: number
   lastSuccessAt: number | null
@@ -120,20 +132,20 @@ function LiveStrip({ line, teamA, teamB, nameA, nameB, serverNow, lastSuccessAt,
       </div>
       <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 t5">
         <span className="flex min-w-0 items-center gap-2" onMouseEnter={() => onHover(line.row.athleteAId)} onMouseLeave={() => onHover(null)}>
-          <TeamPlate color={teamA.color} name={teamA.name} size="inline" showName={false} />
-          <span className="truncate">{nameA}</span>
+          {a.team && <TeamPlate color={a.team.color} name={a.team.name} size="inline" showName={false} />}
+          <span className="truncate">{a.name}</span>
         </span>
         <span className="t1 text-gray-10 uppercase">vs</span>
         <span className="flex min-w-0 items-center gap-2" onMouseEnter={() => onHover(line.row.athleteBId)} onMouseLeave={() => onHover(null)}>
-          <TeamPlate color={teamB.color} name={teamB.name} size="inline" showName={false} />
-          <span className="truncate">{nameB}</span>
+          {b.team && <TeamPlate color={b.team.color} name={b.team.name} size="inline" showName={false} />}
+          <span className="truncate">{b.name}</span>
         </span>
       </div>
       <div className="flex items-center gap-4">
         <span className="t2 text-gray-10">{reason}</span>
         <Button
           size="sm" variant="destructive" title={reason} disabled
-          aria-label={`Delete ${matchLabel(line.position, nameA, nameB)}`}
+          aria-label={`Delete ${matchLabel(line.position, a.name, b.name)}`}
         >
           Delete
         </Button>
@@ -190,10 +202,11 @@ function LengthCell({ label, value, disabled = false, title, onSave }: {
   )
 }
 
-function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, doubleBooked, entryMode, certified, highlight, onHover, onPick, onPatch, onDelete, onMove }: {
+function PendingRow({ line, sideOf, warnings, matItems, rulesetItems, index, count, doubleBooked, entryMode, certified, highlight, onHover, onPick, onPatch, onDelete, onMove }: {
   line: MatchLine
-  teams: TeamRow[]
-  name: NameOf
+  sideOf: SideOf
+  /** What the server said about the pair the last swap on this row produced. */
+  warnings: string[]
   matItems: Option[]
   rulesetItems: Option[]
   index: number
@@ -211,13 +224,12 @@ function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, d
 }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: line.row.id })
   const m = line.row
-  const [teamA, teamB] = teams
+  const a = sideOf(m.athleteAId)
+  const b = sideOf(m.athleteBId)
   const attend = doubleBooked || line.state === 'skipped'
   const ready = line.state === 'ready' ? readyNote(line) : null
-  const nameA = name(m.athleteAId, teamA)
-  const nameB = name(m.athleteBId, teamB)
   // Every control below is otherwise named the same on all fourteen rows.
-  const row = matchLabel(line.position, nameA, nameB)
+  const row = matchLabel(line.position, a.name, b.name)
 
   return (
     <TableRow
@@ -258,14 +270,14 @@ function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, d
       <TableCell className="min-w-0">
         <div className="grid min-w-0">
           <CompetitorLine
-            team={teamA} name={nameA} disabled={certified} title={certified ? CERTIFIED_REFUSAL : undefined}
+            side={a} disabled={certified || b.team === undefined} title={certified ? CERTIFIED_REFUSAL : undefined}
             onHover={on => onHover(on ? m.athleteAId : null)}
-            onPick={() => onPick({ matchId: m.id, side: 'a', exclude: teamB.id, held: m.athleteAId })}
+            onPick={() => { if (b.team) onPick({ matchId: m.id, side: 'a', exclude: b.team.id, held: m.athleteAId }) }}
           />
           <CompetitorLine
-            team={teamB} name={nameB} disabled={certified} title={certified ? CERTIFIED_REFUSAL : undefined}
+            side={b} disabled={certified || a.team === undefined} title={certified ? CERTIFIED_REFUSAL : undefined}
             onHover={on => onHover(on ? m.athleteBId : null)}
-            onPick={() => onPick({ matchId: m.id, side: 'b', exclude: teamA.id, held: m.athleteBId })}
+            onPick={() => { if (a.team) onPick({ matchId: m.id, side: 'b', exclude: a.team.id, held: m.athleteBId }) }}
           />
         </div>
       </TableCell>
@@ -279,6 +291,9 @@ function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, d
           <span className="flex h-4 min-w-0 items-center gap-3 overflow-hidden whitespace-nowrap">
             {line.state === 'skipped' && <span className="t2 text-attend">{skipNote(line)}</span>}
             {doubleBooked && <span className="t2 text-attend">Double booked</span>}
+            {/* A swap never blocks, so what the server noticed about the new pair is
+                reported on the row it changed, the picker that made it having closed. */}
+            {warnings.map(w => <span key={w} className="t2 text-attend">{w}</span>)}
             {ready && <span className="t2 text-gray-10">{ready}</span>}
           </span>
         </div>
@@ -326,10 +341,9 @@ function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, d
   )
 }
 
-function SettledRow({ line, teams, name, highlight, certified, onHover, onHistory, onEdit }: {
+function SettledRow({ line, sideOf, highlight, certified, onHover, onHistory, onEdit }: {
   line: MatchLine
-  teams: TeamRow[]
-  name: NameOf
+  sideOf: SideOf
   highlight: boolean
   /** Refuse rather than ask (6.8): a certified record cannot be corrected from here. */
   certified: boolean
@@ -338,10 +352,11 @@ function SettledRow({ line, teams, name, highlight, certified, onHover, onHistor
   onEdit: () => void
 }) {
   const m = line.row
-  const [teamA, teamB] = teams
   const aWon = m.winnerAthleteId === m.athleteAId
-  const winner = { id: aWon ? m.athleteAId : m.athleteBId, team: aWon ? teamA : teamB }
-  const loser = { id: aWon ? m.athleteBId : m.athleteAId, team: aWon ? teamB : teamA }
+  const winnerId = aWon ? m.athleteAId : m.athleteBId
+  const loserId = aWon ? m.athleteBId : m.athleteAId
+  const winner = sideOf(winnerId)
+  const loser = sideOf(loserId)
 
   return (
     <TableRow data-match-state="done" selected={highlight}>
@@ -352,21 +367,21 @@ function SettledRow({ line, teams, name, highlight, certified, onHover, onHistor
           {/* 7.4: the winner is white at 500 and the loser --gray-10 at 400, never --fault. */}
           <span
             className="flex min-w-0 items-center gap-2"
-            onMouseEnter={() => onHover(winner.id)}
+            onMouseEnter={() => onHover(winnerId)}
             onMouseLeave={() => onHover(null)}
           >
-            <TeamPlate color={winner.team.color} name={winner.team.name} size="inline" showName={false} />
-            <span className="truncate t3 font-medium text-white">{name(winner.id, winner.team)}</span>
+            {winner.team && <TeamPlate color={winner.team.color} name={winner.team.name} size="inline" showName={false} />}
+            <span className="truncate t3 font-medium text-white">{winner.name}</span>
           </span>
           {/* 2.1: --gray-9 is decoration only. This is the verb of the row's sentence. */}
           <span className="shrink-0 t2 text-gray-10">beat</span>
           <span
             className="flex min-w-0 items-center gap-2"
-            onMouseEnter={() => onHover(loser.id)}
+            onMouseEnter={() => onHover(loserId)}
             onMouseLeave={() => onHover(null)}
           >
-            <TeamPlate color={loser.team.color} name={loser.team.name} size="inline" showName={false} />
-            <span className="truncate t3 text-gray-10">{name(loser.id, loser.team)}</span>
+            {loser.team && <TeamPlate color={loser.team.color} name={loser.team.name} size="inline" showName={false} />}
+            <span className="truncate t3 text-gray-10">{loser.name}</span>
           </span>
         </span>
       </TableCell>
@@ -374,7 +389,7 @@ function SettledRow({ line, teams, name, highlight, certified, onHover, onHistor
       <TableCell numeric className="w-[80px] text-gray-10">{endedLabel(line.endedAt)}</TableCell>
       <TableCell className="w-px pl-0">
         <OverflowMenu
-          label={`${matchLabel(line.position, name(m.athleteAId, teamA), name(m.athleteBId, teamB))} actions`}
+          label={`${matchLabel(line.position, sideOf(m.athleteAId).name, sideOf(m.athleteBId).name)} actions`}
           items={[
             { key: 'history', label: 'Match history', disabled: false, onSelect: onHistory },
             { key: 'edit', label: 'Edit result', disabled: certified, onSelect: onEdit },
@@ -400,6 +415,12 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
   const certified = statusOf(liveSnapshot, detail.event.status) === 'certified'
   const [pick, setPick] = useState<Pick | null>(null)
   const [addOpen, setAddOpen] = useState(false)
+  // The competitor the Add match dialog opens on, when it was opened from a row that
+  // names one. Null when it was opened from the toolbar.
+  const [addStart, setAddStart] = useState<number | null>(null)
+  // What the server said about each pair a swap on this tab produced, by match. A warning
+  // never blocks the write, so it is reported on the row rather than in a refusal.
+  const [swapNotes, setSwapNotes] = useState<Record<number, string[]>>({})
   const [dragging, setDragging] = useState(false)
   const [hovered, setHovered] = useState<number | null>(null)
   const [showSettled, setShowSettled] = useState(false)
@@ -423,7 +444,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
     [lines],
   )
 
-  const patch = useAdminMutation(eventId, (v: { id: number; body: Partial<MatchRow> }) => adminApi(`/api/matches/${v.id}`, { method: 'PATCH', body: v.body }))
+  const patch = useAdminMutation(eventId, (v: { id: number; body: Partial<MatchRow> }) => adminApi<PatchResult>(`/api/matches/${v.id}`, { method: 'PATCH', body: v.body }))
   const del = useAdminMutation(eventId, (id: number) => adminApi(`/api/matches/${id}`, { method: 'DELETE' }))
   const reorder = useAdminMutation(eventId, (next: number[]) => adminApi(`/api/events/${eventId}/matches/reorder`, { method: 'POST', body: { ids: next } }))
 
@@ -462,8 +483,12 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
   }
   const onPicked = (athleteId: number) => {
     if (!pick) return
+    const { matchId, side } = pick
     resetExcept('patch')
-    patch.mutate({ id: pick.matchId, body: pick.side === 'a' ? { athleteAId: athleteId } : { athleteBId: athleteId } })
+    patch.mutate(
+      { id: matchId, body: side === 'a' ? { athleteAId: athleteId } : { athleteBId: athleteId } },
+      { onSuccess: r => setSwapNotes(n => ({ ...n, [matchId]: r?.warnings ?? [] })) },
+    )
     setPick(null)
   }
   // onError is how a cell that holds a draft learns its write was refused, so the
@@ -477,19 +502,23 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
     del.mutate(id)
   }
 
-  const [teamA, teamB] = detail.teams
   const byId = useMemo(() => new Map(detail.athletes.map(a => [a.id, a])), [detail.athletes])
-  const nameOf: NameOf = (id, team) => {
+  const teamById = useMemo(() => new Map(detail.teams.map(t => [t.id, t])), [detail.teams])
+  const sideOf: SideOf = id => {
     const k = byId.get(id)
-    return k ? athleteName(k) : `Unpaired, ${team.name}`
+    if (!k) return { name: 'Unknown competitor', team: undefined }
+    return { name: athleteName(k), team: k.teamId === null ? undefined : teamById.get(k.teamId) }
   }
   const matItems = useMemo(() => [
     { value: '', label: 'No mat' },
     ...detail.mats.map(mat => ({ value: String(mat.id), label: `Mat ${mat.number}` })),
   ], [detail.mats])
   const rulesetItems = useMemo(() => detail.rulesets.map(r => ({ value: String(r.id), label: r.name })), [detail.rulesets])
-  const inMatch = new Set(detail.matches.flatMap(m => [m.athleteAId, m.athleteBId]))
-  const unpaired = detail.teams.map(t => ({ team: t, kids: detail.athletes.filter(a => a.teamId === t.id && !inMatch.has(a.id)) }))
+  // Spec 6's "Without a match": a competitor in a pending or a live match is busy, and
+  // one whose matches have all settled is free to be paired again.
+  const booked = new Set(detail.matches.filter(m => m.status === 'pending' || m.status === 'live').flatMap(m => [m.athleteAId, m.athleteBId]))
+  const free = detail.teams.map(t => ({ team: t, kids: detail.athletes.filter(a => a.teamId === t.id && !booked.has(a.id)) }))
+  const openAdd = (startId: number | null) => { setAddStart(startId); setAddOpen(true) }
   const holds = (line: MatchLine) => hovered !== null && (line.row.athleteAId === hovered || line.row.athleteBId === hovered)
   const viewOf = (line: MatchLine) => matchViewOf(line.row, detail, snapshot)
 
@@ -503,7 +532,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
     // committed, while this is set.
     <div className="grid gap-6" data-dragging={dragging ? 'true' : undefined}>
       <div className="flex flex-wrap items-center gap-3">
-        <Button size="sm" variant="secondary" disabled={certified} onClick={() => setAddOpen(true)}>Add match</Button>
+        <Button size="sm" variant="secondary" disabled={certified} onClick={() => openAdd(null)}>Add match</Button>
         {/* 6.8: the reason a control is dead is printed once, beside the controls it kills,
             rather than waiting for somebody to press one and read a banner. */}
         {certified && <span className="t2 text-gray-10">{CERTIFIED_REFUSAL}</span>}
@@ -523,8 +552,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
         <section aria-label="Live now" className="grid gap-3">
           {live.map(l => (
             <LiveStrip
-              key={l.row.id} line={l} teamA={teamA} teamB={teamB}
-              nameA={nameOf(l.row.athleteAId, teamA)} nameB={nameOf(l.row.athleteBId, teamB)}
+              key={l.row.id} line={l} a={sideOf(l.row.athleteAId)} b={sideOf(l.row.athleteBId)}
               serverNow={snapshot?.now ?? null} lastSuccessAt={lastSuccessAt} pollIntervalMs={pollIntervalMs}
               highlight={holds(l)} onHover={setHovered}
             />
@@ -541,7 +569,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
         onOpenChange={o => { if (!o) setPick(null) }}
         onPick={onPicked}
       />
-      <AddMatchDialog detail={detail} open={addOpen} onOpenChange={setAddOpen} />
+      <AddMatchDialog detail={detail} start={addStart} open={addOpen} onOpenChange={setAddOpen} />
       {/* The one correction dialog, reached from the settled field as well as from the
           Live tab's panel overflow and the Entry tab's ledger. */}
       <ResultDialog detail={detail} match={editing} open={editing !== null} onOpenChange={o => { if (!o) setEditing(null) }} />
@@ -555,11 +583,6 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
         <div className="flex flex-wrap items-baseline gap-3">
           <h3 className="t4">Pending</h3>
           <span className="t2 text-gray-10"><span className="fig">{pendingCount}</span> to run</span>
-          <span className="ml-auto flex items-center gap-3">
-            <TeamPlate color={teamA.color} name={teamA.name} />
-            <span className="t1 text-gray-10 uppercase">vs</span>
-            <TeamPlate color={teamB.color} name={teamB.name} />
-          </span>
         </div>
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={() => setDragging(true)} onDragCancel={() => setDragging(false)} onDragEnd={onDragEnd}>
           <SortableContext items={pendingIds} strategy={verticalListSortingStrategy}>
@@ -583,13 +606,13 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
                     <TableCell colSpan={pendingColumns(entryMode)} className="p-0">
                       <EmptyState
                         message="No matches yet."
-                        action={<Button size="sm" variant="ghost" disabled={certified} onClick={() => setAddOpen(true)}>Add match</Button>}
+                        action={<Button size="sm" variant="ghost" disabled={certified} onClick={() => openAdd(null)}>Add match</Button>}
                       />
                     </TableCell>
                   </TableRow>
                 ) : pending.map((l, i) => (
                   <PendingRow
-                    key={l.row.id} line={l} teams={detail.teams} name={nameOf}
+                    key={l.row.id} line={l} sideOf={sideOf} warnings={swapNotes[l.row.id] ?? []}
                     matItems={matItems} rulesetItems={rulesetItems} index={i} count={pending.length}
                     doubleBooked={doubleBooked.has(l.row.id)} entryMode={entryMode} certified={certified}
                     highlight={holds(l)} onHover={setHovered}
@@ -627,7 +650,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
                 <TableBody>
                   {settled.map(l => (
                     <SettledRow
-                      key={l.row.id} line={l} teams={detail.teams} name={nameOf}
+                      key={l.row.id} line={l} sideOf={sideOf}
                       highlight={holds(l)} certified={certified} onHover={setHovered}
                       onHistory={() => setHistory(matchHistorySource(viewOf(l), l.matNumber, detail))}
                       onEdit={() => setEditing(viewOf(l))}
@@ -640,22 +663,38 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
         </section>
       )}
 
-      <section aria-label="Unpaired" className="grid items-start gap-6 md:grid-cols-2">
-        {unpaired.map(({ team, kids }) => (
-          <div key={team.id} className="grid gap-3">
-            <div className="flex items-baseline gap-3">
-              <TeamPlate color={team.color} name={team.name} />
-              <span className="ml-auto t2 text-gray-10"><span className="fig">{kids.length}</span> unpaired</span>
+      <section aria-label="Without a match" className="grid gap-3">
+        <h3 className="t4">Without a match</h3>
+        <div className="grid items-start gap-6 [grid-template-columns:repeat(auto-fit,minmax(280px,1fr))]">
+          {free.map(({ team, kids }) => (
+            <div key={team.id} className="grid min-w-0 gap-3">
+              <div className="flex items-baseline gap-3">
+                <TeamPlate color={team.color} name={team.name} />
+                <span className="ml-auto fig t2 text-gray-10">{kids.length}</span>
+              </div>
+              <FieldSet>
+                {kids.length === 0
+                  ? <EmptyState message="Everybody here has a match." />
+                  : (
+                    <div role="list">
+                      {kids.map(k => (
+                        <FieldRow key={k.id} role="listitem" className="flex h-10 gap-3">
+                          <span className="min-w-0 flex-1 truncate t3 text-gray-11">{athleteName(k)}</span>
+                          <Button
+                            size="sm" variant="ghost" aria-label={`Add match for ${athleteName(k)}`}
+                            title={certified ? CERTIFIED_REFUSAL : undefined} disabled={certified}
+                            onClick={() => openAdd(k.id)}
+                          >
+                            Add match
+                          </Button>
+                        </FieldRow>
+                      ))}
+                    </div>
+                  )}
+              </FieldSet>
             </div>
-            {kids.length === 0
-              ? <span className="t2 text-gray-10">Everyone is paired.</span>
-              : (
-                <ul className="grid gap-1 sm:grid-cols-2">
-                  {kids.map(k => <li key={k.id} className="truncate t3 text-gray-11">{athleteName(k)}</li>)}
-                </ul>
-              )}
-          </div>
-        ))}
+          ))}
+        </div>
       </section>
     </div>
   )
