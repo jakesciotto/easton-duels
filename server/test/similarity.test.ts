@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { normalize, dice, NICKNAMES, canonicalFirst, exactName, nameScore, SUGGEST_FLOOR, SUGGEST_MARGIN } from '../src/shared/similarity.js'
+import { normalize, dice, NICKNAMES, canonicalFirst, exactName, nameScore, nameTokens, SUGGEST_FLOOR, SUGGEST_MARGIN } from '../src/shared/similarity.js'
 
 describe('normalize', () => {
   it('lowercases and keeps only letters and digits', () => {
@@ -121,5 +121,35 @@ describe('nameScore', () => {
   it('keeps a floor of 0.6 and a margin of 0.05', () => {
     expect(SUGGEST_FLOOR).toBe(0.6)
     expect(SUGGEST_MARGIN).toBe(0.05)
+  })
+})
+
+describe('nameTokens', () => {
+  it('takes the whole name as one token when nothing separates it', () => {
+    expect(nameTokens('Rivera')).toEqual(['rivera'])
+  })
+
+  it('splits on hyphens, spaces, and punctuation', () => {
+    expect(nameTokens('Mary Kate-Olsen')).toEqual(['mary', 'kate', 'olsen'])
+    expect(nameTokens("O'Neil")).toEqual(['neil'])
+  })
+
+  it('carries an accented token both as typed and folded to ASCII', () => {
+    expect(nameTokens('Nunez-Ortiz')).toEqual(['nunez', 'ortiz'])
+    expect(nameTokens('Nuñez-Ortiz')).toEqual(['nuñez', 'nunez', 'ortiz'])
+  })
+
+  it('drops a token under three letters, which narrows nothing', () => {
+    expect(nameTokens('Li')).toEqual([])
+    expect(nameTokens('Ana Li Vo')).toEqual(['ana'])
+  })
+
+  it('answers each token once', () => {
+    expect(nameTokens('Smith-Smith')).toEqual(['smith'])
+  })
+
+  it('answers nothing for a name with no letters', () => {
+    expect(nameTokens('  ')).toEqual([])
+    expect(nameTokens('--')).toEqual([])
   })
 })

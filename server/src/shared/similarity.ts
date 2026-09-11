@@ -7,6 +7,26 @@ export function normalize(s: string): string {
   return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '')
 }
 
+// A part of a name shorter than this narrows nothing: a `like` on two letters answers
+// half the gym.
+const MIN_TOKEN = 3
+
+/**
+ * The parts of a name worth searching WellnessLiving by: its alphabetic runs, lowercased,
+ * each one both as typed and folded to ASCII when the two differ, so "Nuñez-Ortiz" is
+ * looked for as nuñez, nunez and ortiz. Hyphens, spaces and punctuation all separate,
+ * which is what catches the half of a hyphenated surname a roster leaves out.
+ */
+export function nameTokens(name: string): string[] {
+  const out: string[] = []
+  for (const part of name.split(/[^\p{L}]+/u)) {
+    for (const token of [part.toLowerCase(), normalize(part)]) {
+      if (token.length >= MIN_TOKEN && !out.includes(token)) out.push(token)
+    }
+  }
+  return out
+}
+
 function bigrams(s: string): string[] {
   const out: string[] = []
   for (let i = 0; i < s.length - 1; i++) out.push(s.slice(i, i + 2))
