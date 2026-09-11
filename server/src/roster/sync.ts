@@ -108,8 +108,10 @@ export async function syncRoster(
   const looked = records !== null
 
   const at = new Date().toISOString()
-  const write = async (id: number, update: AthleteUpdate) => {
-    await db.update(athletes).set({ ...update, syncedAt: at }).where(eq(athletes.id, id)).run()
+  // syncedAt is the time the sync looked at that row, so only a row it could ask
+  // WellnessLiving about earns one. Every write still counts towards the version.
+  const write = async (id: number, update: AthleteUpdate, { stamp = true } = {}) => {
+    await db.update(athletes).set(stamp ? { ...update, syncedAt: at } : update).where(eq(athletes.id, id)).run()
     wrote += 1
   }
 
@@ -162,11 +164,14 @@ export async function syncRoster(
       // that yields none is a name the pull never carried to WellnessLiving.
       const asked = looked && nameTokens(athlete.lastName).length > 0
       const update: AthleteUpdate = asked ? { syncChanges: {} } : {}
+      // A suggestion the pool no longer holds goes whether or not the sync asked about the
+      // row, because the candidate behind it is gone. Clearing it is not evidence that
+      // anybody looked, so it carries no stamp of its own.
       if (athlete.suggestedWlUid !== null) {
         update.suggestedWlUid = null
         update.suggestedScore = null
       }
-      if (Object.keys(update).length > 0) await write(athlete.id, update)
+      if (Object.keys(update).length > 0) await write(athlete.id, update, { stamp: asked })
       continue
     }
     suggested.push({ athleteId: athlete.id, name, candidate: fullName(best.cand), location: best.cand.wlLocation ?? '', score: best.score })

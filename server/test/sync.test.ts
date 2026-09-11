@@ -273,6 +273,22 @@ describe('syncRoster', () => {
     expect((await row(db, kai.id))!.syncedAt).toBeNull()
   })
 
+  it('clears a stale suggestion on a row it could not ask about, without saying it looked', async () => {
+    const db = await freshDb()
+    const s = await seedEvent(db, { matches: 0 })
+    const looked = '2026-09-01T00:00:00.000Z'
+    // The row earned its suggestion while its name still carried a token, and was renamed
+    // to something searchable by nothing after that.
+    await db.update(athletes).set({ suggestedWlUid: 'w9', suggestedScore: 0.8, syncedAt: looked }).where(eq(athletes.id, s.a1)).run()
+    await db.update(athletes).set({ firstName: 'Kai', lastName: '--' }).where(eq(athletes.id, s.a1)).run()
+
+    await syncRoster(db, s.eventId, [rec({})], [], { locations: 1, warnings: 0 })
+
+    const after = await row(db, s.a1)
+    expect(after).toMatchObject({ suggestedWlUid: null, suggestedScore: null })
+    expect(after!.syncedAt).toBe(looked)
+  })
+
   it('leaves syncedAt alone on a rematch, which asked WellnessLiving nothing', async () => {
     const db = await freshDb()
     const s = await seedEvent(db, { matches: 0 })
