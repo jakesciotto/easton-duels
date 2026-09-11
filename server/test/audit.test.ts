@@ -263,7 +263,7 @@ describe('audit log, the roster and the running order', () => {
     expect(await last(db, s.eventId)).toMatchObject({ action: 'roster_remove', detail: { athleteId: s.a1, name: 'Mateo Rivera' } })
   })
 
-  it('records the matches created, edited, reordered, generated, and deleted', async () => {
+  it('records the matches created, edited, reordered, and deleted', async () => {
     const { app, db, adminToken } = await createTestApp()
     const s = await seedEvent(db, { matches: 0 })
     const created = await call(app, 'POST', `/api/events/${s.eventId}/matches`, { athleteAId: s.a1, athleteBId: s.b1 }, adminToken)
@@ -276,8 +276,6 @@ describe('audit log, the roster and the running order', () => {
     expect(await last(db, s.eventId)).toMatchObject({ action: 'reorder', detail: { count: 1, ids: [matchId] } })
     expect((await call(app, 'DELETE', `/api/matches/${matchId}`, undefined, adminToken)).status).toBe(204)
     expect(await last(db, s.eventId)).toMatchObject({ action: 'match_delete', matchId })
-    await call(app, 'POST', `/api/events/${s.eventId}/matches/generate`, undefined, adminToken)
-    expect(await last(db, s.eventId)).toMatchObject({ action: 'generate', detail: { created: 2 } })
   })
 
   it('records a ruleset created, edited, and deleted', async () => {

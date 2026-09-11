@@ -1,15 +1,15 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
-import { and, asc, eq, sql } from 'drizzle-orm'
+import { and, asc, eq } from 'drizzle-orm'
 import type { Env } from '../context.js'
 import { auditLog, events, rulesets, mats, matches } from '../db/schema.js'
 import { validate } from '../lib/validate.js'
 import { errorJson, requireAdmin } from '../auth/middleware.js'
-import { generateMatches } from '../matchmaker/generate.js'
 import { eventDetail } from './events.js'
 import { bumpVersion } from '../match/events.js'
 import { createMatch } from '../match/create.js'
 import { resolvePair } from '../match/pairs.js'
+import { pairWarnings } from '../matchmaker/propose.js'
 import { recordAudit, HISTORY_LIMIT } from '../audit/log.js'
 import { assertNotCertified } from '../audit/certify.js'
 import type { AuditEntry } from '../shared/types.js'
@@ -37,19 +37,6 @@ matchRoutes.get('/matches/:matchId/history', requireAdmin, async c => {
   return c.json(rows)
 })
 
-matchRoutes.post('/events/:eventId/matches/generate', requireAdmin, async c => {
-  const { db } = c.get('ctx')
-  const eventId = Number(c.req.param('eventId'))
-  await assertNotCertified(db, eventId)
-  const result = await db.transaction(async tx => {
-    const generated = await generateMatches(tx, eventId)
-    await recordAudit(tx, { eventId, actor: 'admin', action: 'generate', detail: { created: generated.created } })
-    await bumpVersion(tx, eventId)
-    return generated
-  })
-  return c.json(result)
-})
-
 matchRoutes.post('/events/:eventId/matches', requireAdmin, validate('json', createSchema), async c => {
   const { db } = c.get('ctx')
   const eventId = Number(c.req.param('eventId'))
@@ -58,7 +45,10 @@ matchRoutes.post('/events/:eventId/matches', requireAdmin, validate('json', crea
   const body = c.req.valid('json')
   const created = await createMatch(db, { eventId, ...body, source: 'designed' })
   if (!created.ok) return errorJson(c, 422, 'validation', created.message)
-  return c.json(created.match, 201)
+  // A pair a person picked is never refused for being odd, only reported back, because the
+  // organizer knows things the roster does not.
+  const warnings = await pairWarnings(db, eventId, created.match.athleteAId, created.match.athleteBId, { exceptMatchId: created.match.id })
+  return c.json({ ...created.match, warnings }, 201)
 })
 
 matchRoutes.patch('/matches/:matchId', requireAdmin, validate('json', patchSchema), async c => {
@@ -92,7 +82,9 @@ matchRoutes.patch('/matches/:matchId', requireAdmin, validate('json', patchSchem
     await recordAudit(tx, { eventId: existing.eventId, matchId: id, actor: 'admin', action: 'match_edit', detail: { fields: Object.keys(update), ...update } })
     await bumpVersion(tx, existing.eventId)
   })
-  return c.json(await db.select().from(matches).where(eq(matches.id, id)).get())
+  const row = (await db.select().from(matches).where(eq(matches.id, id)).get())!
+  const warnings = await pairWarnings(db, existing.eventId, row.athleteAId, row.athleteBId, { exceptMatchId: id })
+  return c.json({ ...row, warnings })
 })
 
 matchRoutes.delete('/matches/:matchId', requireAdmin, async c => {

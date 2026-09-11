@@ -75,7 +75,6 @@ const WRITES: Write[] = [
   { name: 'roster match', method: 'POST', path: s => `/api/events/${s.eventId}/roster/match` },
   { name: 'athlete link', method: 'POST', path: s => `/api/athletes/${s.a1}/link`, body: () => ({ wlUid: 'w0' }) },
   { name: 'athlete dismiss', method: 'POST', path: s => `/api/athletes/${s.a1}/dismiss`, body: () => ({ wlUid: 'w0' }) },
-  { name: 'match generate', method: 'POST', path: s => `/api/events/${s.eventId}/matches/generate` },
   { name: 'propose', method: 'POST', path: s => `/api/events/${s.eventId}/proposals` },
   { name: 'confirm all proposals', method: 'POST', path: s => `/api/events/${s.eventId}/proposals/confirm-all` },
   { name: 'proposal confirm', method: 'POST', path: s => `/api/proposals/${s.proposalId}/confirm` },

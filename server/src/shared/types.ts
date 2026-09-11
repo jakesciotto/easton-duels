@@ -49,8 +49,10 @@ export type AuditAction =
   | 'certify' | 'uncertify'
   | 'team_edit'
   | 'roster_add' | 'roster_edit' | 'roster_assign' | 'roster_remove' | 'roster_sync' | 'roster_link'
-  | 'match_create' | 'match_edit' | 'match_delete' | 'generate' | 'reorder'
-  | 'propose'
+  | 'match_create' | 'match_edit' | 'match_delete' | 'reorder'
+  // The proposer replaced the two-team generator in 0.12.0. Nothing writes 'generate' any
+  // more, but the log is append only and every event run before then carries the rows.
+  | 'propose' | 'generate'
   | 'ruleset_create' | 'ruleset_edit' | 'ruleset_delete'
   // Backfilled rows carry the match event's own type, and two of those are not verbs any
   // live write records: a desk entry's absolute score, and the pre-0007 admin event kind.

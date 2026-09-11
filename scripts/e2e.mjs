@@ -119,7 +119,9 @@ async function certifyArm(admin) {
   for (const [last, teamId] of [['Echo', teamA.id], ['Foxtrot', teamB.id]]) {
     assert((await j('POST', `/api/events/${eventId}/athletes`, { manual: { firstName: 'Cert', lastName: last, age: 9, weightLbs: 66, belt: 'grey', gender: 'M', teamId } }, admin)).status === 201, `certify athlete ${last}`)
   }
-  assert((await j('POST', `/api/events/${eventId}/matches/generate`, undefined, admin)).body.created === 1, 'certify match generated')
+  const drafts = await j('POST', `/api/events/${eventId}/proposals`, undefined, admin)
+  assert(drafts.body.length === 1, 'certify match proposed')
+  assert((await j('POST', `/api/events/${eventId}/proposals/confirm-all`, undefined, admin)).body.created === 1, 'certify match confirmed')
   assert((await j('PATCH', `/api/events/${eventId}`, { status: 'live' }, admin)).status === 200, 'certify event live')
 
   const { matCode } = (await j('GET', `/api/events/${eventId}/connect`, undefined, admin)).body
@@ -174,8 +176,8 @@ async function certifyArm(admin) {
   assert(fresh.status === 409 && fresh.body.error.message === 'event is done', 'a finished event still refuses a new result')
 
   const matchHistory = (await j('GET', `/api/matches/${matchId}/history`, undefined, admin)).body
-  // generate wrote this match into existence, and Start loaded it onto its one mat, which
-  // is the match_create and advance rows ahead of the mat's own score.
+  // A confirmed proposal wrote this match into existence, and Start loaded it onto its one
+  // mat, which is the match_create and advance rows ahead of the mat's own score.
   assert(matchHistory.map(r => r.action).join() === 'match_create,advance,score,end,correction,correction', 'the match history lists the match_create, the advance, the mat, and both corrections')
   assert(matchHistory.map(r => r.actor).join() === 'admin,system,mat:1,mat:1,desk,desk', 'the match history names who did each')
   assert(matchHistory[4].detail.reason === 'the mat called the wrong colour', 'a correction carries its reason')
@@ -236,8 +238,10 @@ try {
     const r = await j('POST', `/api/events/${eventId}/athletes`, { manual: { firstName: 'Test', lastName: last, age: 8, weightLbs: 60, belt: 'grey', gender: 'M', teamId } }, admin)
     assert(r.status === 201, `athlete ${last}`)
   }
-  const gen = await j('POST', `/api/events/${eventId}/matches/generate`, undefined, admin)
-  assert(gen.body.created === 1, 'one match generated')
+  const proposed = await j('POST', `/api/events/${eventId}/proposals`, undefined, admin)
+  assert(proposed.body.length === 1, 'one match proposed')
+  assert(proposed.body[0].why === 'same class, same age', 'the draft says why the pair fits')
+  assert((await j('POST', `/api/events/${eventId}/proposals/confirm-all`, undefined, admin)).body.created === 1, 'one match confirmed')
   assert((await j('PATCH', `/api/events/${eventId}`, { status: 'live' }, admin)).status === 200, 'event live')
   const { matCode } = (await j('GET', `/api/events/${eventId}/connect`, undefined, admin)).body
   const bind = await j('POST', `/api/events/${eventId}/mats/${matId}/bind`, { code: matCode })
