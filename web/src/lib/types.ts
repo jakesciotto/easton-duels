@@ -87,6 +87,8 @@ export interface MatchRow {
   pendingTerminalKey: string | null
   lastSeq: number
   why: string | null
+  /** Whether the proposer paired these two or somebody designed the match by hand. */
+  source: 'designed' | 'proposed'
   // Derived server side from the latest end event rather than stored on the row, so
   // it is read only here and absent on any row this client has built itself.
   endedAt?: string | null
@@ -105,6 +107,25 @@ export interface RosterCandidate {
   weightLbs: number | null
   gender: string | null
 }
+/**
+ * A draft pairing, and the standing of one team. Both are mirrored here for the same
+ * reason `RosterCandidate` is: the screens that print them read one shape from this
+ * module rather than each reaching into the server's own.
+ */
+export interface ProposalSide {
+  athleteId: number
+  firstName: string
+  lastName: string
+  teamId: number
+  age: number | null
+  weightLbs: number | null
+  weightClass: string | null
+  belt: string | null
+  erp: number | null
+}
+export interface Proposal { id: number; eventId: number; cost: number; why: string; a: ProposalSide; b: ProposalSide }
+export interface LeaderboardRow { teamId: number; rank: number; wins: number; points: number }
+
 export interface ManualKid {
   firstName: string
   lastName: string

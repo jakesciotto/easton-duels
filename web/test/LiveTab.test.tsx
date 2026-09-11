@@ -34,7 +34,7 @@ const withLiveMat: EventDetail = {
   matches: [{
     id: 10, eventId: 1, matId: 1, orderIndex: 1, rulesetId: 1, lengthSec: 300, athleteAId: 100, athleteBId: 200,
     status: 'live', winnerAthleteId: null, winType: null, pointsA: 6, pointsB: 2, clockElapsedMs: 0,
-    clockStartedAt: SERVER_NOW, pendingTerminalAthleteId: null, pendingTerminalKey: null, lastSeq: 0, why: null,
+    clockStartedAt: SERVER_NOW, pendingTerminalAthleteId: null, pendingTerminalKey: null, lastSeq: 0, why: null, source: 'designed',
   }],
 }
 

@@ -21,7 +21,7 @@ const kid = (id: number, teamId: number | null): AthleteRow => ({
 const match = (id: number, over: Partial<MatchRow>): MatchRow => ({
   id, eventId: 7, matId: null, orderIndex: id, rulesetId: 1, lengthSec: 300, athleteAId: 100, athleteBId: 200,
   status: 'pending', winnerAthleteId: null, winType: null, pointsA: 0, pointsB: 0, clockElapsedMs: 0, clockStartedAt: null,
-  pendingTerminalAthleteId: null, pendingTerminalKey: null, lastSeq: 0, why: null, ...over,
+  pendingTerminalAthleteId: null, pendingTerminalKey: null, lastSeq: 0, why: null, source: 'designed', ...over,
 })
 
 beforeEach(() => sessionStorage.clear())

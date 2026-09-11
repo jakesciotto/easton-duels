@@ -26,7 +26,7 @@ const ROSTER = [
 const match = (id: number, orderIndex: number, a: number, b: number, status: MatchRow['status'] = 'pending'): MatchRow => ({
   id, eventId: 7, matId: 1, orderIndex, rulesetId: 1, lengthSec: 300, athleteAId: a, athleteBId: b, status,
   winnerAthleteId: null, winType: null, pointsA: 0, pointsB: 0, clockElapsedMs: 0, clockStartedAt: null,
-  pendingTerminalAthleteId: null, pendingTerminalKey: null, lastSeq: 0, why: null,
+  pendingTerminalAthleteId: null, pendingTerminalKey: null, lastSeq: 0, why: null, source: 'designed',
 })
 
 function detailWith(matches: MatchRow[]): EventDetail {

@@ -25,7 +25,7 @@ const kid = (id: number, teamId: number, first: string, last: string): EventDeta
 const match = (id: number, orderIndex: number, a: number, b: number): MatchRow => ({
   id, eventId: 7, matId: 1, orderIndex, rulesetId: 1, lengthSec: 300, athleteAId: a, athleteBId: b, status: 'pending',
   winnerAthleteId: null, winType: null, pointsA: 0, pointsB: 0, clockElapsedMs: 0, clockStartedAt: null,
-  pendingTerminalAthleteId: null, pendingTerminalKey: null, lastSeq: 0, why: null,
+  pendingTerminalAthleteId: null, pendingTerminalKey: null, lastSeq: 0, why: null, source: 'designed',
 })
 
 const ROSTER = [

@@ -35,7 +35,7 @@ const placed: EventDetail = {
     id: 1, eventId: 7, matId: null, orderIndex: 0, rulesetId: 1, lengthSec: 300,
     athleteAId: 300, athleteBId: 200, status: 'pending', winnerAthleteId: null, winType: null,
     pointsA: 0, pointsB: 0, clockElapsedMs: 0, clockStartedAt: null,
-    pendingTerminalAthleteId: null, pendingTerminalKey: null, lastSeq: 0, why: null,
+    pendingTerminalAthleteId: null, pendingTerminalKey: null, lastSeq: 0, why: null, source: 'designed',
   }],
 }
 

@@ -34,7 +34,7 @@ const ruleset: RulesetRow = {
 const match = (id: number, rulesetId: number, status: MatchRow['status'] = 'pending'): MatchRow => ({
   id, eventId: 7, matId: null, orderIndex: id, rulesetId, lengthSec: 300, athleteAId: 1, athleteBId: 2,
   status, winnerAthleteId: null, winType: null, pointsA: 0, pointsB: 0, clockElapsedMs: 0, clockStartedAt: null,
-  pendingTerminalAthleteId: null, pendingTerminalKey: null, lastSeq: 0, why: null,
+  pendingTerminalAthleteId: null, pendingTerminalKey: null, lastSeq: 0, why: null, source: 'designed',
 })
 
 const detail: EventDetail = {

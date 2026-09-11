@@ -7,7 +7,7 @@ const row: MatchRow = {
   id: 10, eventId: 1, matId: 1, orderIndex: 3, rulesetId: 1, lengthSec: 300,
   athleteAId: 100, athleteBId: 200, status: 'done', winnerAthleteId: 200, winType: 'submission',
   pointsA: 4, pointsB: 1, clockElapsedMs: 12_000, clockStartedAt: null,
-  pendingTerminalAthleteId: null, pendingTerminalKey: null, lastSeq: 6, why: null,
+  pendingTerminalAthleteId: null, pendingTerminalKey: null, lastSeq: 6, why: null, source: 'designed',
   endedAt: '2026-10-03T15:41:00.000Z',
 }
 

@@ -2,11 +2,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError, type ApiOptions } from './api'
 import { clearAdminToken, getAdminToken } from './auth'
 import { useHeldWhileEngaged } from './operatorEngaged'
-import type { EventDetail, EventSummary } from './types'
+import type { EventDetail, EventSummary, Proposal } from './types'
 
 export const qk = {
   events: ['events'] as const,
   event: (id: number) => ['event', id] as const,
+  proposals: (id: number) => ['proposals', id] as const,
 }
 
 // Admin request: injects the token; a 401 clears it so PinGate asks again. Certify,
@@ -45,7 +46,18 @@ export function useEventDetail(eventId: number): EventDetailQuery {
   return { data: useHeldWhileEngaged(q.data, eventId), error: q.error, isLoading: q.isLoading }
 }
 
+/**
+ * The drafts the proposer made, which are never part of the snapshot and never part of
+ * the event detail: a proposal is not a match until it is confirmed, so it lives in its
+ * own cache entry and only the writes that touch it refetch it.
+ */
+export function useProposals(eventId: number) {
+  return useQuery({ queryKey: qk.proposals(eventId), queryFn: () => adminApi<Proposal[]>(`/api/events/${eventId}/proposals`) })
+}
+
 export interface AdminMutationOptions {
+  /** Whether the write also changes the draft list, which lives in its own cache entry. */
+  proposals?: boolean
   /**
    * Whether the write is finished only once the event has been refetched. It is, for
    * every screen that reports the write by showing the refreshed row, which is all of
@@ -73,6 +85,7 @@ export function useAdminMutation<TVars, TResult = unknown>(
       const refetched = Promise.all([
         qc.invalidateQueries({ queryKey: qk.events }),
         eventId !== null ? qc.invalidateQueries({ queryKey: qk.event(eventId) }) : Promise.resolve(),
+        eventId !== null && opts.proposals ? qc.invalidateQueries({ queryKey: qk.proposals(eventId) }) : Promise.resolve(),
       ])
       return opts.awaitRefetch === false ? undefined : refetched
     },
