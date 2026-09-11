@@ -86,3 +86,56 @@ describe('WlClient', () => {
     await expect(wl.fetchKidsBeltRecords('1', 'X')).rejects.toThrow(/truncated/)
   })
 })
+
+describe('WlClient, a filtered search', () => {
+  const FIELDS = ['uid', 'text_rank', 'text_rank_category', 'o_client.text_first', 'o_client.text_last', 'o_rank_promotion_date.dtl_promotion_date']
+  const filter = { uids: ['w1'], lastTokens: ['martin'], firstTokens: [] }
+
+  it('asks for the named subset and maps the rows it answers', async () => {
+    const { fetchFn, calls } = fakeFetch([
+      token,
+      { json: { id_report_status: 3, a_field: FIELDS, a_row: [['w1', 'Grey Belt', 'Kids IBJJF Belts', 'Zoe', 'Martin', '2026-01-01']] } },
+    ])
+    const wl = new WlClient(cfg, { fetchFn, sleep: noSleep })
+    const rows = await wl.searchKidsBeltRecords('100001', 'Ridgeline', filter)
+    expect(rows).toEqual([{ uid: 'w1', kBusiness: '100001', location: 'Ridgeline', firstName: 'Zoe', lastName: 'Martin', rankTitle: 'Grey Belt', categoryTitle: 'Kids IBJJF Belts', promotedAt: '2026-01-01' }])
+    const body = JSON.parse(String(calls[1].init?.body))
+    expect(body.s_sql).toContain("and (uid in ('w1') or `o_client.text_last` like '%martin%')")
+  })
+
+  it('asks WellnessLiving nothing when the filter names nobody', async () => {
+    const { fetchFn, calls } = fakeFetch([])
+    const wl = new WlClient(cfg, { fetchFn, sleep: noSleep })
+    expect(await wl.searchKidsBeltRecords('100001', 'Ridgeline', { uids: [], lastTokens: [], firstTokens: [] })).toEqual([])
+    expect(calls).toHaveLength(0)
+  })
+
+  it('keeps one record per uid across the queries of a split, at the later promotion', async () => {
+    const { fetchFn, calls } = fakeFetch([
+      token,
+      { json: { id_report_status: 3, a_field: FIELDS, a_row: [['w1', 'Grey Belt', 'Kids IBJJF Belts', 'Zoe', 'Martin', '2026-01-01']] } },
+      { json: { id_report_status: 3, a_field: FIELDS, a_row: [['w1', 'Grey/White Belt', 'Kids IBJJF Belts', 'Zoe', 'Martin', '2026-05-01'], ['w2', 'Yellow Belt', 'Kids IBJJF Belts', 'Ana', 'Bell', '2026-02-01']] } },
+    ])
+    const wl = new WlClient(cfg, { fetchFn, sleep: noSleep })
+    const rows = await wl.searchKidsBeltRecords('100001', 'Ridgeline', { uids: [], lastTokens: Array.from({ length: 61 }, (_, i) => `token${i}`), firstTokens: [] })
+    expect(calls).toHaveLength(3)
+    expect(rows).toEqual([
+      { uid: 'w1', kBusiness: '100001', location: 'Ridgeline', firstName: 'Zoe', lastName: 'Martin', rankTitle: 'Grey/White Belt', categoryTitle: 'Kids IBJJF Belts', promotedAt: '2026-05-01' },
+      { uid: 'w2', kBusiness: '100001', location: 'Ridgeline', firstName: 'Ana', lastName: 'Bell', rankTitle: 'Yellow Belt', categoryTitle: 'Kids IBJJF Belts', promotedAt: '2026-02-01' },
+    ])
+  })
+
+  it('carries the deadline into the report it polls', async () => {
+    const { fetchFn, calls } = fakeFetch([token, { json: { id_report_status: 2 } }, { json: { id_report_status: 3, a_field: FIELDS, a_row: [] } }])
+    const wl = new WlClient(cfg, { fetchFn, sleep: noSleep })
+    await expect(wl.searchKidsBeltRecords('100001', 'Ridgeline', filter, Date.now() - 1)).rejects.toThrow('sync deadline exceeded')
+    expect(calls).toHaveLength(2)
+  })
+
+  it('refuses a filtered page whose row count equals the limit', async () => {
+    const rows = Array.from({ length: 3 }, (_, i) => [`w${i}`, 'Grey Belt', 'Kids IBJJF Belts', 'A', 'B', ''])
+    const { fetchFn } = fakeFetch([token, { json: { id_report_status: 3, a_field: FIELDS, a_row: rows } }])
+    const wl = new WlClient(cfg, { fetchFn, sleep: noSleep, kidsLimit: 3 })
+    await expect(wl.searchKidsBeltRecords('100001', 'Ridgeline', filter)).rejects.toThrow(/truncated/)
+  })
+})

@@ -1,5 +1,5 @@
-import type { WlLike, WlLocation, WlBeltRecord } from './types.js'
-import { kidsQuery, normalizeTitle } from './belts.js'
+import type { WlLike, WlLocation, WlBeltRecord, WlNameFilter } from './types.js'
+import { kidsQuery, normalizeTitle, searchQuery } from './belts.js'
 
 const AUTH_URL = 'https://access.api.wellnessliving.io/oauth2/token'
 const API_BASE = 'https://api.wellnessliving.io'
@@ -123,8 +123,8 @@ export class WlClient implements WlLike {
     throw new WlRequestError('report query exhausted retries', null, null)
   }
 
-  async fetchKidsBeltRecords(kBusiness: string, location: string, deadlineMs?: number): Promise<WlBeltRecord[]> {
-    const page = await this.queryReportPage({ cidReport: BELTS_REPORT, kBusiness, limit: this.kidsLimit, sSql: kidsQuery(this.cfg.kidsCategory), deadlineMs })
+  private async beltPage(kBusiness: string, location: string, sSql: string, deadlineMs?: number): Promise<WlBeltRecord[]> {
+    const page = await this.queryReportPage({ cidReport: BELTS_REPORT, kBusiness, limit: this.kidsLimit, sSql, deadlineMs })
     if (page.rows.length >= this.kidsLimit) {
       throw new WlRequestError(`${location} returned ${page.rows.length} rows, equal to the limit; the page may be truncated`, null, null)
     }
@@ -145,5 +145,23 @@ export class WlClient implements WlLike {
         promotedAt: cell(row, 'o_rank_promotion_date.dtl_promotion_date') || null,
       }))
       .filter(r => r.uid !== '' && (r.firstName !== '' || r.lastName !== ''))
+  }
+
+  async fetchKidsBeltRecords(kBusiness: string, location: string, deadlineMs?: number): Promise<WlBeltRecord[]> {
+    return this.beltPage(kBusiness, location, kidsQuery(this.cfg.kidsCategory), deadlineMs)
+  }
+
+  // The people a filter names, at one query per batch of terms. A child named by uid in
+  // one batch and by a name token in another answers twice, and the later promotion is
+  // the record the pool keeps.
+  async searchKidsBeltRecords(kBusiness: string, location: string, filter: WlNameFilter, deadlineMs?: number): Promise<WlBeltRecord[]> {
+    const byUid = new Map<string, WlBeltRecord>()
+    for (const sSql of searchQuery(filter, this.cfg.kidsCategory)) {
+      for (const record of await this.beltPage(kBusiness, location, sSql, deadlineMs)) {
+        const prev = byUid.get(record.uid)
+        if (!prev || String(record.promotedAt ?? '') > String(prev.promotedAt ?? '')) byUid.set(record.uid, record)
+      }
+    }
+    return [...byUid.values()]
   }
 }

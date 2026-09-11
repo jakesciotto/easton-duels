@@ -6,7 +6,7 @@ import { makeCompetitorId } from '../src/roster/slug.js'
 import { buildCandidates } from '../src/roster/join.js'
 import { rosterFromEnv } from '../src/roster/config.js'
 import { WlRequestError } from '../src/roster/wl.js'
-import type { WlBeltRecord, LeaderboardCompetitor } from '../src/roster/types.js'
+import type { WlBeltRecord, LeaderboardCompetitor, WlNameFilter } from '../src/roster/types.js'
 import { events, athletes, rosterCandidates } from '../src/db/schema.js'
 import { createTestApp, call } from './helpers.js'
 import { seedEvent } from './fixtures.js'
@@ -99,6 +99,9 @@ describe('roster routes', () => {
     async fetchKidsBeltRecords(kBusiness: string, location: string) {
       return [{ uid: '9', kBusiness, location, firstName: 'Zoe', lastName: 'Martin', rankTitle: 'Grey Belt', categoryTitle: 'Kids IBJJF Belts', promotedAt: null }]
     },
+    async searchKidsBeltRecords(kBusiness: string, location: string) {
+      return this.fetchKidsBeltRecords(kBusiness, location)
+    },
   }
 
   it('503s when WL is not configured', async () => {
@@ -139,6 +142,9 @@ describe('roster routes', () => {
         }
         return [{ uid: kBusiness, kBusiness, location, firstName: 'Zoe', lastName: 'Martin', rankTitle: 'Grey Belt', categoryTitle: 'Kids IBJJF Belts', promotedAt: null }]
       },
+      async searchKidsBeltRecords(kBusiness: string, location: string, _filter: WlNameFilter, deadlineMs?: number) {
+        return this.fetchKidsBeltRecords(kBusiness, location, deadlineMs)
+      },
     }
     const { app, db, adminToken } = await createTestApp({ roster: { wl: slowWl, leaderboard: null, syncBudgetMs: 300_000 } })
     const s = await seedEvent(db)
@@ -166,6 +172,9 @@ describe('roster routes', () => {
       },
       async fetchKidsBeltRecords(kBusiness: string, location: string) {
         return [{ uid: kBusiness, kBusiness, location, firstName: 'Zoe', lastName: `Martin${kBusiness}`, rankTitle: 'Grey Belt', categoryTitle: 'Kids IBJJF Belts', promotedAt: null }]
+      },
+      async searchKidsBeltRecords(kBusiness: string, location: string) {
+        return this.fetchKidsBeltRecords(kBusiness, location)
       },
     }
     const { app, db, adminToken } = await createTestApp({ roster: { wl: slowWl, leaderboard: null, syncBudgetMs: null } })

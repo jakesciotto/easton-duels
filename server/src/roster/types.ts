@@ -11,9 +11,14 @@ export interface WlBeltRecord {
   promotedAt: string | null
 }
 
+// Who a search is looking for: the uids already linked, and the name parts of the rest.
+// A record answers when any one of them matches.
+export interface WlNameFilter { uids: string[]; lastTokens: string[]; firstTokens: string[] }
+
 export interface WlLike {
   listLocations(): Promise<WlLocation[]>
   fetchKidsBeltRecords(kBusiness: string, location: string, deadlineMs?: number): Promise<WlBeltRecord[]>
+  searchKidsBeltRecords(kBusiness: string, location: string, filter: WlNameFilter, deadlineMs?: number): Promise<WlBeltRecord[]>
 }
 
 export interface LeaderboardConfig { url: string; key: string }
