@@ -282,6 +282,26 @@ export function teamWins(matches: MatchRow[], athletes: AthleteRow[]): Map<numbe
   return wins
 }
 
+/**
+ * Points scored by each team, from the results already on file. The leaderboard breaks a
+ * tie on wins with them, so the running header needs both to put the teams in order.
+ */
+export function teamPoints(matches: MatchRow[], athletes: AthleteRow[]): Map<number, number> {
+  const teamOf = new Map(athletes.map(a => [a.id, a.teamId]))
+  const points = new Map<number, number>()
+  const add = (athleteId: number, scored: number) => {
+    const teamId = teamOf.get(athleteId)
+    if (teamId === null || teamId === undefined) return
+    points.set(teamId, (points.get(teamId) ?? 0) + scored)
+  }
+  for (const m of matches) {
+    if (m.status !== 'done') continue
+    add(m.athleteAId, m.pointsA)
+    add(m.athleteBId, m.pointsB)
+  }
+  return points
+}
+
 export interface SaveErrorCopy { title: string; body: string }
 
 // The banner a restored, never-sent NEW entry wears. A restored correction never

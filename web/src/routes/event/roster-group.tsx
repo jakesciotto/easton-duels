@@ -20,7 +20,7 @@ import { ROSTER_COLS, RosterRow } from './roster-row'
 const SUBHEAD_STICKY = 'sticky top-[var(--app-header-h,57px)] z-1'
 
 export function RosterGroup({
-  title, color, teamId, kids, selected, faults, inMatch, suggestions, firstGroup, dragging, over,
+  title, color, teamId, kids, selected, faults, inMatch, suggestions, dragging, over,
   onSelect, onPatch, onRemove, onLink, onConfirm, onDismiss, onProfile, onDragStart, onAdd,
 }: {
   title: string
@@ -32,7 +32,6 @@ export function RosterGroup({
   inMatch: Set<number>
   /** The pool read by uid, so a row can name the candidate its suggestion points at. */
   suggestions: Map<string, RosterCandidate>
-  firstGroup: boolean
   dragging: boolean
   over: boolean
   onSelect: (id: number, v: boolean, range: boolean) => void
@@ -47,7 +46,7 @@ export function RosterGroup({
 }) {
   return (
     <section aria-label={title} className="min-w-0" {...{ [DROP_ATTR]: dropZoneValue(teamId) }}>
-      {/* Below 1280 the three columns are one field, so the group head pins itself
+      {/* The columns fall to one field on a narrow window, so the group head pins itself
           as a subhead over the ground rather than sitting beside its neighbours. */}
       <div className={cn(SUBHEAD_STICKY, 'flex h-10 items-center gap-3 bg-background xl:static xl:h-8 xl:bg-transparent')}>
         {color
@@ -64,7 +63,7 @@ export function RosterGroup({
           over && 'bg-gray-3 shadow-[inset_0_0_0_2px_var(--white)]',
         )}
       >
-        <FieldHead className={cn(ROSTER_COLS, 'font-mono t2', !firstGroup && 'hidden xl:grid')}>
+        <FieldHead className={cn(ROSTER_COLS, 'font-mono t2')}>
           <span />
           <span />
           <span className="t1 font-sans">Competitor</span>

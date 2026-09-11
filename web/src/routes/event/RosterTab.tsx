@@ -14,6 +14,7 @@ import { RosterGroup } from './roster-group'
 import { dropZoneValue, useRosterDrag } from './roster-drag'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { OverflowMenu } from '@/components/OverflowMenu'
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 export function RosterTab({ detail }: { detail: EventDetail }) {
@@ -59,11 +60,11 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
   }, [eventId, suggestedKey])
 
   const byTeam = (teamId: number | null) => detail.athletes.filter(a => a.teamId === teamId).sort((x, y) => x.lastName.localeCompare(y.lastName) || x.firstName.localeCompare(y.firstName))
-  const [teamA, teamB] = detail.teams
+  // One column per team, in the order the event holds them, and the pool last: an event
+  // carries two to eight teams, so the columns are a list rather than a fixed A, pool, B.
   const groups = [
-    { key: 'a', title: teamA.name, color: teamA.color, teamId: teamA.id as number | null, kids: byTeam(teamA.id) },
-    { key: 'u', title: 'Unassigned', color: null, teamId: null as number | null, kids: byTeam(null) },
-    { key: 'b', title: teamB.name, color: teamB.color, teamId: teamB.id as number | null, kids: byTeam(teamB.id) },
+    ...detail.teams.map(t => ({ key: `t${t.id}`, title: t.name, color: t.color as string | null, teamId: t.id as number | null, kids: byTeam(t.id) })),
+    { key: 'u', title: 'Unassigned', color: null as string | null, teamId: null as number | null, kids: byTeam(null) },
   ]
   // Reading order, which is also the order a shift-click range walks.
   const order = groups.flatMap(g => g.kids.map(k => k.id))
@@ -182,9 +183,15 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
       {selected.size > 0 ? (
         <div role="group" aria-label="Selection" className="flex min-h-10 flex-wrap items-center gap-3">
           <span className="t3 font-medium!"><span className="fig">{selected.size}</span> selected</span>
-          <Button size="sm" variant="secondary" onClick={() => moveTo([...selected], teamA.id)}>Move to {teamA.name}</Button>
-          <Button size="sm" variant="secondary" onClick={() => moveTo([...selected], teamB.id)}>Move to {teamB.name}</Button>
-          <Button size="sm" variant="secondary" onClick={() => moveTo([...selected], null)}>Move to Unassigned</Button>
+          {/* 6.9: eight teams plus the pool is nine destinations, which is a menu rather
+              than a row of nine identical buttons across the toolbar. */}
+          <OverflowMenu
+            label="Move to"
+            items={[
+              ...detail.teams.map(t => ({ key: String(t.id), label: `Move to ${t.name}`, disabled: false, onSelect: () => moveTo([...selected], t.id) })),
+              { key: 'none', label: 'Move to Unassigned', disabled: false, onSelect: () => moveTo([...selected], null) },
+            ]}
+          />
           <Button size="sm" variant="ghost" disabled={removable.length === 0} onClick={() => setRemoving(removable)}>Remove</Button>
           <Button size="sm" variant="ghost" onClick={clearSelection}>Clear</Button>
           {/* Refuse rather than ask (6.8): the blocked competitors are dropped from the
@@ -273,8 +280,8 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
           </DialogContent>
         )}
       </Dialog>
-      <div className="grid items-start gap-6 xl:grid-cols-3">
-        {groups.map((g, i) => (
+      <div className="grid items-start gap-6 [grid-template-columns:repeat(auto-fit,minmax(280px,1fr))]">
+        {groups.map(g => (
           <RosterGroup
             onAdd={() => setAddOpen(true)}
             key={g.key}
@@ -286,7 +293,6 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
             faults={faults}
             inMatch={inMatch}
             suggestions={suggestions}
-            firstGroup={i === 0}
             dragging={drag.dragging}
             over={drag.over === dropZoneValue(g.teamId)}
             onSelect={onSelect}

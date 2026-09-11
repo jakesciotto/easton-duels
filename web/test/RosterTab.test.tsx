@@ -47,6 +47,13 @@ function mount(d: EventDetail = detail) {
 const rowOf = (scope: HTMLElement, name: string) =>
   within(scope).getByRole('button', { name: `Remove ${name}` }).closest('[data-slot="field-row"]') as HTMLElement
 
+// Eight teams plus the pool is nine destinations, so the selection bar moves through one
+// menu rather than a row of nine buttons.
+const moveTo = async (user: ReturnType<typeof userEvent.setup>, team: string) => {
+  await user.click(screen.getByRole('button', { name: 'Move to' }))
+  await user.click(await screen.findByRole('menuitem', { name: `Move to ${team}` }))
+}
+
 describe('RosterTab', () => {
   it('prints the numeric column labels once per field instead of a badge on every row', () => {
     fakeFetch(() => ({ json: [] }))
@@ -85,17 +92,48 @@ describe('RosterTab', () => {
     expect(within(row).getByText('Grey · M · ERP 5.2')).toBeInTheDocument()
   })
 
-  it('becomes one field below 1280 and three columns above it', () => {
+  // An event holds two to eight teams, so the column count is a wrap rather than a
+  // breakpoint, and every group carries its own head because no width makes them one
+  // field with one head at the top.
+  it('gives every team a column plus the pool, and heads each of them', () => {
     fakeFetch(() => ({ json: [] }))
     mount()
     const grid = screen.getByRole('region', { name: 'Ridgeline' }).parentElement
-    expect(grid?.className).toContain('xl:grid-cols-3')
-    expect(grid?.className).not.toContain('lg:grid-cols-2')
+    expect(grid?.className).toContain('repeat(auto-fit,minmax(280px,1fr))')
+    expect(grid?.className).not.toContain('grid-cols-3')
+    expect(grid?.children).toHaveLength(3)
     const heads = Array.from(document.querySelectorAll('[data-slot="field-head"]'))
     expect(heads).toHaveLength(3)
-    expect(heads[0].className).not.toContain('hidden')
-    expect(heads[1].className).toContain('hidden xl:grid')
-    expect(heads[2].className).toContain('hidden xl:grid')
+    for (const head of heads) expect(head.className).not.toContain('hidden')
+  })
+
+  it('carries a column for a third team, with the pool last', () => {
+    fakeFetch(() => ({ json: [] }))
+    mount({
+      ...detail,
+      teams: [...detail.teams, { id: 3, eventId: 7, name: 'Fernwood', color: 'teal', position: 2 }],
+      athletes: [...detail.athletes, kid(500, 3, 'Iris')],
+    })
+    const grid = screen.getByRole('region', { name: 'Ridgeline' }).parentElement!
+    expect(Array.from(grid.children).map(c => c.getAttribute('aria-label')))
+      .toEqual(['Ridgeline', 'Lakeside', 'Fernwood', 'Unassigned'])
+    expect(within(screen.getByRole('region', { name: 'Fernwood' })).getByText('Iris Kid')).toBeInTheDocument()
+  })
+
+  it('offers every team and the pool as a move destination', async () => {
+    const f = fakeFetch(() => ({ json: [] }))
+    mount({
+      ...detail,
+      teams: [...detail.teams, { id: 3, eventId: 7, name: 'Fernwood', color: 'teal', position: 2 }],
+    })
+    const user = userEvent.setup()
+    await user.click(within(screen.getByRole('region', { name: 'Unassigned' })).getByRole('checkbox', { name: 'Select Noah Kid' }))
+    await user.click(screen.getByRole('button', { name: 'Move to' }))
+    expect((await screen.findAllByRole('menuitem')).map(i => i.textContent))
+      .toEqual(['Move to Ridgeline', 'Move to Lakeside', 'Move to Fernwood', 'Move to Unassigned'])
+    await user.click(screen.getByRole('menuitem', { name: 'Move to Fernwood' }))
+    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/events/7/athletes/assign')).toBe(true))
+    expect(f.body(f.calls.findIndex(c => c.url === '/api/events/7/athletes/assign'))).toEqual({ ids: [300], teamId: 3 })
   })
 
   // 7.1: one press, offered whether or not a pool has ever been pulled. An event with no
@@ -132,7 +170,7 @@ describe('RosterTab', () => {
     expect(within(bar).getByText('2', { selector: 'span.fig' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Add competitor' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Move 2 here' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Move to Lakeside' }))
+    await moveTo(user, 'Lakeside')
     await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/events/7/athletes/assign')).toBe(true))
     const i = f.calls.findIndex(c => c.url === '/api/events/7/athletes/assign')
     expect(f.body(i)).toEqual({ ids: [300, 400], teamId: 2 })
@@ -149,8 +187,9 @@ describe('RosterTab', () => {
     await user.click(within(pool).getByRole('checkbox', { name: 'Select Zoe Kid' }))
     await user.keyboard('{/Shift}')
     const bar = screen.getByRole('group', { name: 'Selection' })
-    expect(within(bar).getByText('3', { selector: 'span.fig' })).toBeInTheDocument()
+    expect(within(bar).getByText('4', { selector: 'span.fig' })).toBeInTheDocument()
     expect(within(pool).getByRole('checkbox', { name: 'Select Noah Kid' })).toBeChecked()
+    expect(within(screen.getByRole('region', { name: 'Lakeside' })).getByRole('checkbox', { name: 'Select Olivia Kid' })).toBeChecked()
   })
 
   it('shows the server error when an assign fails, and keeps it while the selection stands', async () => {
@@ -164,7 +203,7 @@ describe('RosterTab', () => {
     const user = userEvent.setup()
     const pool = screen.getByRole('region', { name: 'Unassigned' })
     await user.click(within(pool).getByRole('checkbox', { name: 'Select Noah Kid' }))
-    await user.click(screen.getByRole('button', { name: 'Move to Lakeside' }))
+    await moveTo(user, 'Lakeside')
     // The Alert primitive, not a bare red paragraph: a title naming the failed action
     // plus the server sentence, each in its own slot.
     const alert = await screen.findByRole('alert')
@@ -193,7 +232,7 @@ describe('RosterTab', () => {
     const user = userEvent.setup()
     const pool = screen.getByRole('region', { name: 'Unassigned' })
     await user.click(within(pool).getByRole('checkbox', { name: 'Select Noah Kid' }))
-    await user.click(screen.getByRole('button', { name: 'Move to Lakeside' }))
+    await moveTo(user, 'Lakeside')
     const first = await screen.findByRole('alert')
     expect(first.querySelector('[data-slot="alert-title"]')).toHaveTextContent('The move failed')
 
@@ -534,7 +573,7 @@ describe('RosterTab, the WellnessLiving link', () => {
 
     const pool = screen.getByRole('region', { name: 'Unassigned' })
     await user.click(within(pool).getByRole('checkbox', { name: 'Select Noah Kid' }))
-    await user.click(screen.getByRole('button', { name: 'Move to Ridgeline' }))
+    await moveTo(user, 'Ridgeline')
     await vi.waitFor(() => expect(screen.queryByText('Not found: Noah Kid.')).not.toBeInTheDocument())
   })
 

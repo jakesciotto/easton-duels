@@ -79,7 +79,7 @@ function mountLive() {
 // name is the name plus that line and a pick matches on the name it starts with.
 async function pick(user: UserEvent, field: string, name: string) {
   await user.click(screen.getByRole('combobox', { name: field }))
-  await user.click(await screen.findByRole('option', { name: new RegExp(`^${name}\\b`) }))
+  await user.click(await screen.findByRole('option', { name: new RegExp(`\\b${name}\\b`) }))
 }
 // The label is the confirmation channel, so it reads Save, Saving or Saved
 // depending on where the round trip is.
@@ -92,10 +92,10 @@ describe('EntryTab', () => {
     const f = fakeFetch(() => ({ status: 201, json: { match: { id: 9 }, version: 1 } }))
     mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '5')
-    await user.type(screen.getByLabelText('Lakeside points'), '2')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '5')
+    await user.type(screen.getByLabelText('Second competitor points'), '2')
     expect(screen.getByRole('button', { name: 'Ava Park wins' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: 'On points' })).toHaveAttribute('aria-pressed', 'true')
     await user.click(saveButton())
@@ -106,25 +106,29 @@ describe('EntryTab', () => {
     // The confirmation is a word from the response, not the form clearing.
     expect(await screen.findByRole('button', { name: 'Saved' })).toBeInTheDocument()
     expect(screen.getByText(/^Saved\. Ava Park beat Noah Tran on points, 5 to 2\.$/)).toBeInTheDocument()
-    await vi.waitFor(() => expect(screen.getByLabelText('Ridgeline points')).toHaveValue(''))
+    await vi.waitFor(() => expect(screen.getByLabelText('First competitor points')).toHaveValue(''))
   })
 
-  it('shows the running team score for both teams', () => {
-    mount()
+  // Spec 6: every team on the event, in leaderboard order, whatever the count.
+  it('shows the running team score for every team, the leader first', () => {
+    mount({
+      ...detail,
+      teams: [...detail.teams, { id: 3, eventId: 7, name: 'Fernwood', color: 'teal', position: 2 }],
+    })
     const score = screen.getByRole('region', { name: 'Running team score' })
-    expect(within(score).getByText('Ridgeline')).toBeInTheDocument()
-    expect(within(score).getByText('1')).toBeInTheDocument()
-    expect(within(score).getByText('0')).toBeInTheDocument()
+    const rows = Array.from(score.children).slice(1)
+    // Ridgeline holds the only win; Lakeside scored 2 in it, so it leads Fernwood on points.
+    expect(rows.map(r => r.textContent)).toEqual(['1RIDRidgeline1', '2LAKLakeside0', '3FERFernwood0'])
   })
 
   it('blocks save on a tie until a winner is picked, then sends a decision', async () => {
     const f = fakeFetch(() => ({ status: 201, json: { match: { id: 9 }, version: 1 } }))
     mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Mateo Rivera')
-    await pick(user, 'Lakeside competitor', 'Olivia Kim')
-    await user.type(screen.getByLabelText('Ridgeline points'), '2')
-    await user.type(screen.getByLabelText('Lakeside points'), '2')
+    await pick(user, 'First competitor', 'Mateo Rivera')
+    await pick(user, 'Second competitor', 'Olivia Kim')
+    await user.type(screen.getByLabelText('First competitor points'), '2')
+    await user.type(screen.getByLabelText('Second competitor points'), '2')
     expect(saveButton()).toBeDisabled()
     await user.click(screen.getByRole('button', { name: 'Olivia Kim wins' }))
     await user.click(saveButton())
@@ -139,9 +143,9 @@ describe('EntryTab', () => {
     const results = screen.getByRole('region', { name: 'Results' })
     expect(within(results).getByText('newest first', { exact: false })).toBeInTheDocument()
     await user.click(within(results).getByRole('button', { name: 'Edit Mateo Rivera over Olivia Kim' }))
-    expect(screen.getByLabelText('Ridgeline points')).toHaveValue('4')
-    await user.clear(screen.getByLabelText('Lakeside points'))
-    await user.type(screen.getByLabelText('Lakeside points'), '4')
+    expect(screen.getByLabelText('First competitor points')).toHaveValue('4')
+    await user.clear(screen.getByLabelText('Second competitor points'))
+    await user.type(screen.getByLabelText('Second competitor points'), '4')
     await user.click(screen.getByRole('button', { name: 'Olivia Kim wins' }))
     await user.click(screen.getByRole('button', { name: 'Save correction' }))
     await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/matches/1/entry')).toBe(true))
@@ -220,10 +224,10 @@ describe('EntryTab', () => {
     mount(submissionDetail)
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'Edit Mateo Rivera over Olivia Kim' }))
-    expect(screen.getByLabelText('Ridgeline points')).toHaveValue('2')
+    expect(screen.getByLabelText('First competitor points')).toHaveValue('2')
     expect(screen.getByRole('button', { name: 'By submission' })).toHaveAttribute('aria-pressed', 'true')
-    await user.clear(screen.getByLabelText('Ridgeline points'))
-    await user.type(screen.getByLabelText('Ridgeline points'), '3')
+    await user.clear(screen.getByLabelText('First competitor points'))
+    await user.type(screen.getByLabelText('First competitor points'), '3')
     expect(screen.getByRole('button', { name: 'By submission' })).toHaveAttribute('aria-pressed', 'true')
     await user.click(screen.getByRole('button', { name: 'Save correction' }))
     await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/matches/3/entry')).toBe(true))
@@ -235,8 +239,8 @@ describe('EntryTab', () => {
     mount()
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'Use' }))
-    expect(screen.getByRole('combobox', { name: 'Ridgeline competitor' })).toHaveTextContent('Ava Park')
-    expect(screen.getByRole('combobox', { name: 'Lakeside competitor' })).toHaveTextContent('Noah Tran')
+    expect(screen.getByRole('combobox', { name: 'First competitor' })).toHaveTextContent('Ava Park')
+    expect(screen.getByRole('combobox', { name: 'Second competitor' })).toHaveTextContent('Noah Tran')
     await user.click(screen.getByRole('button', { name: 'Start event' }))
     await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/events/7' && c.init?.method === 'PATCH')).toBe(true))
   })
@@ -245,19 +249,19 @@ describe('EntryTab', () => {
     fakeFetch(() => ({ json: {} }))
     mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Mateo Rivera')
-    await pick(user, 'Lakeside competitor', 'Olivia Kim')
+    await pick(user, 'First competitor', 'Mateo Rivera')
+    await pick(user, 'Second competitor', 'Olivia Kim')
     // A tied 0-0 score leaves no auto-derived winner, which disables Save and
     // removes it from the tab order (disabled buttons are never tabbable), so
     // give the score a real winner to keep Save reachable at the end.
-    await user.type(screen.getByLabelText('Ridgeline points'), '5')
-    await user.type(screen.getByLabelText('Lakeside points'), '2')
+    await user.type(screen.getByLabelText('First competitor points'), '5')
+    await user.type(screen.getByLabelText('Second competitor points'), '2')
 
     const order = [
-      screen.getByRole('combobox', { name: 'Ridgeline competitor' }),
-      screen.getByRole('combobox', { name: 'Lakeside competitor' }),
-      screen.getByLabelText('Ridgeline points'),
-      screen.getByLabelText('Lakeside points'),
+      screen.getByRole('combobox', { name: 'First competitor' }),
+      screen.getByRole('combobox', { name: 'Second competitor' }),
+      screen.getByLabelText('First competitor points'),
+      screen.getByLabelText('Second competitor points'),
       screen.getByRole('button', { name: 'Mateo Rivera wins' }),
       screen.getByRole('button', { name: 'Olivia Kim wins' }),
       screen.getByRole('button', { name: 'On points' }),
@@ -277,19 +281,19 @@ describe('EntryTab', () => {
     const f = fakeFetch(() => ({ status: 201, json: { match: { id: 9 }, version: 1 } }))
     mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Mateo Rivera')
-    await pick(user, 'Lakeside competitor', 'Olivia Kim')
+    await pick(user, 'First competitor', 'Mateo Rivera')
+    await pick(user, 'Second competitor', 'Olivia Kim')
 
     // A digit typed anywhere outside a field starts the Ridgeline well and moves
     // focus into it, so the operator never hunts for the first box.
     screen.getByRole('button', { name: 'By decision' }).focus()
     await user.keyboard('7')
-    expect(screen.getByLabelText('Ridgeline points')).toHaveValue('7')
-    expect(document.activeElement).toBe(screen.getByLabelText('Ridgeline points'))
+    expect(screen.getByLabelText('First competitor points')).toHaveValue('7')
+    expect(document.activeElement).toBe(screen.getByLabelText('First competitor points'))
 
     // Letters are read inside the wells too, which take digits only.
     await user.keyboard('1b')
-    expect(screen.getByLabelText('Ridgeline points')).toHaveValue('71')
+    expect(screen.getByLabelText('First competitor points')).toHaveValue('71')
     expect(screen.getByRole('button', { name: 'Olivia Kim wins' })).toHaveAttribute('aria-pressed', 'true')
     await user.keyboard('s')
     expect(screen.getByRole('button', { name: 'By submission' })).toHaveAttribute('aria-pressed', 'true')
@@ -305,9 +309,9 @@ describe('EntryTab', () => {
       : { status: 201, json: { match: { id: 9 }, version: 3 } })
     mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '6')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '6')
     await user.click(saveButton())
 
     await screen.findByText('The server had a problem')
@@ -321,9 +325,9 @@ describe('EntryTab', () => {
     expect(f.body(1).entryId).toBe(first)
     // Cleared only on a 2xx, so the next fill mints the next id.
     await vi.waitFor(() => expect(sessionStorage.getItem('duels:entry:7')).toBeNull())
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Olivia Kim')
-    await user.type(screen.getByLabelText('Ridgeline points'), '3')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Olivia Kim')
+    await user.type(screen.getByLabelText('First competitor points'), '3')
     await user.click(saveButton())
     await vi.waitFor(() => expect(f.calls.length).toBe(3))
     expect(f.body(2).entryId).not.toBe(first)
@@ -333,9 +337,9 @@ describe('EntryTab', () => {
     const f = fakeFetch(() => ({ status: 500, json: { error: { code: 'internal', message: 'boom' } } }))
     const view = mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '4')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '4')
     await user.click(saveButton())
     await screen.findByText('The server had a problem')
     // Every terminal outcome re-enables Save, including failure: a disabled Save
@@ -346,7 +350,7 @@ describe('EntryTab', () => {
     view.unmount()
     mount()
     expect(screen.getByText('This entry never sent')).toBeInTheDocument()
-    expect(screen.getByLabelText('Ridgeline points')).toHaveValue('4')
+    expect(screen.getByLabelText('First competitor points')).toHaveValue('4')
     await user.click(saveButton())
     await vi.waitFor(() => expect(f.calls.length).toBe(2))
     expect(f.body(1).entryId).toBe(first)
@@ -359,9 +363,9 @@ describe('EntryTab', () => {
     fakeFetch(() => new Promise<never>(() => {}))
     mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '5')
 
     vi.useFakeTimers()
     try {
@@ -392,9 +396,9 @@ describe('EntryTab', () => {
     })
     mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '5')
 
     vi.useFakeTimers()
     try {
@@ -430,9 +434,9 @@ describe('EntryTab', () => {
     })
     mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '5')
 
     vi.useFakeTimers()
     try {
@@ -456,9 +460,9 @@ describe('EntryTab', () => {
     })
     mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '5')
 
     vi.useFakeTimers()
     try {
@@ -481,14 +485,14 @@ describe('EntryTab', () => {
     const f = fakeFetch(async () => { throw new TypeError('Failed to fetch') })
     mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '5')
     await user.click(saveButton())
     await vi.waitFor(() => expect(f.calls.length).toBe(1))
 
-    await user.clear(screen.getByLabelText('Ridgeline points'))
-    await user.type(screen.getByLabelText('Ridgeline points'), '7')
+    await user.clear(screen.getByLabelText('First competitor points'))
+    await user.type(screen.getByLabelText('First competitor points'), '7')
 
     vi.useFakeTimers()
     try {
@@ -508,10 +512,10 @@ describe('EntryTab', () => {
     const f = fakeFetch(() => ({ status: 201, json: { match: { id: 9 }, version: 1 } }))
     mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '5')
-    await user.type(screen.getByLabelText('Lakeside points'), '2')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '5')
+    await user.type(screen.getByLabelText('Second competitor points'), '2')
     expect(screen.getByRole('button', { name: 'On points' })).toHaveAttribute('data-pressed')
     expect(screen.queryByText(FEWER_POINTS_LINE)).not.toBeInTheDocument()
 
@@ -529,9 +533,9 @@ describe('EntryTab', () => {
     fakeFetch(() => ({ status: 201, json: { match: { id: 9 }, version: 1 } }))
     mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '5')
     await user.click(screen.getByRole('button', { name: /Noah Tran wins/ }))
     expect(screen.getByText(FEWER_POINTS_LINE)).toBeInTheDocument()
 
@@ -543,13 +547,13 @@ describe('EntryTab', () => {
     fakeFetch(() => ({ status: 201, json: { match: { id: 9 }, version: 1 } }))
     mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '5')
     await user.click(screen.getByRole('button', { name: /Noah Tran wins/ }))
     expect(screen.getByText(FEWER_POINTS_LINE)).toBeInTheDocument()
 
-    await user.type(screen.getByLabelText('Lakeside points'), '7')
+    await user.type(screen.getByLabelText('Second competitor points'), '7')
     expect(screen.queryByText(FEWER_POINTS_LINE)).not.toBeInTheDocument()
   })
 
@@ -557,9 +561,9 @@ describe('EntryTab', () => {
     fakeFetch(() => ({ status: 201, json: { match: { id: 9 }, version: 1 } }))
     mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '5')
     await user.click(screen.getByRole('button', { name: /Ava Park wins/ }))
     expect(screen.queryByText(FEWER_POINTS_LINE)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'On points' })).toHaveAttribute('data-pressed')
@@ -609,15 +613,15 @@ describe('EntryTab', () => {
     const f = fakeFetch(() => ({ status: 201, json: { match: { id: 9 }, version: 1 } }))
     mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '5')
     await user.click(saveButton())
     await vi.waitFor(() => expect(f.calls.length).toBe(1))
 
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '2')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '2')
     await user.click(saveButton())
     expect(await screen.findByText('These two were just entered')).toBeInTheDocument()
     expect(f.calls.length).toBe(1)
@@ -631,15 +635,15 @@ describe('EntryTab', () => {
     const f = fakeFetch(() => ({ status: 201, json: { match: { id: 9 }, version: 1 } }))
     mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '5')
     await user.click(saveButton())
     await vi.waitFor(() => expect(f.calls.length).toBe(1))
 
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Olivia Kim')
-    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Olivia Kim')
+    await user.type(screen.getByLabelText('First competitor points'), '5')
     await user.click(saveButton())
     await vi.waitFor(() => expect(f.calls.length).toBe(2))
     expect(screen.queryByText('These two were just entered')).not.toBeInTheDocument()
@@ -686,16 +690,16 @@ describe('EntryTab', () => {
     const f = fakeFetch(() => ({ status: 500, json: { error: { code: 'internal', message: 'boom' } } }))
     mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '6')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '6')
     await user.click(saveButton())
     await screen.findByText('The server had a problem')
     const unsent = f.body(0).entryId as string
     expect(draft()).toMatchObject({ entryId: unsent, aId: '101', bId: '201', pointsA: '6', editingId: null })
 
     await user.click(screen.getByRole('button', { name: 'Edit Mateo Rivera over Olivia Kim' }))
-    expect(screen.getByLabelText('Ridgeline points')).toHaveValue('4')
+    expect(screen.getByLabelText('First competitor points')).toHaveValue('4')
     expect(draft()).toMatchObject({ entryId: unsent })
 
     await user.click(screen.getByRole('button', { name: 'Cancel edit' }))
@@ -704,7 +708,7 @@ describe('EntryTab', () => {
     // And it comes back on screen with its banner, rather than staying stored where
     // nobody can see it.
     expect(screen.getByText('This entry never sent')).toBeInTheDocument()
-    expect(screen.getByLabelText('Ridgeline points')).toHaveValue('6')
+    expect(screen.getByLabelText('First competitor points')).toHaveValue('6')
   })
 
   it('keeps an unsent entry through a correction that saves', async () => {
@@ -714,9 +718,9 @@ describe('EntryTab', () => {
       : { json: { match: { id: 1 }, version: 2 } })
     mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '6')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '6')
     await user.click(saveButton())
     await screen.findByText('The server had a problem')
     const unsent = f.body(0).entryId as string
@@ -729,7 +733,7 @@ describe('EntryTab', () => {
     await vi.waitFor(() => expect(screen.getByText('This entry never sent')).toBeInTheDocument())
     expect(draft()).toMatchObject({ entryId: unsent, aId: '101', bId: '201', pointsA: '6' })
     expect(correctionDraft(1)).toBeNull()
-    expect(screen.getByLabelText('Ridgeline points')).toHaveValue('6')
+    expect(screen.getByLabelText('First competitor points')).toHaveValue('6')
   })
 
   // R5: opening a different correction, instead of pressing Cancel edit, used to
@@ -753,8 +757,8 @@ describe('EntryTab', () => {
     // Open the correction on match 4, edit it, and let Save fail: this writes
     // match 4's own slot.
     await user.click(screen.getByRole('button', { name: 'Edit Mateo Rivera over Olivia Kim' }))
-    await user.clear(screen.getByLabelText('Ridgeline points'))
-    await user.type(screen.getByLabelText('Ridgeline points'), '9')
+    await user.clear(screen.getByLabelText('First competitor points'))
+    await user.type(screen.getByLabelText('First competitor points'), '9')
     await user.click(screen.getByRole('button', { name: 'Save correction' }))
     await screen.findByText('The server had a problem')
     expect(correctionDraft(4)).not.toBeNull()
@@ -785,8 +789,8 @@ describe('EntryTab', () => {
     const user = userEvent.setup()
 
     await user.click(screen.getByRole('button', { name: 'Edit Mateo Rivera over Olivia Kim' }))
-    await user.clear(screen.getByLabelText('Ridgeline points'))
-    await user.type(screen.getByLabelText('Ridgeline points'), '9')
+    await user.clear(screen.getByLabelText('First competitor points'))
+    await user.type(screen.getByLabelText('First competitor points'), '9')
     await user.click(screen.getByRole('button', { name: 'Save correction' }))
     await screen.findByText('The server had a problem')
     expect(correctionDraft(4)).not.toBeNull()
@@ -817,9 +821,9 @@ describe('EntryTab', () => {
     const f = fakeFetch(() => ({ status: 201, json: { match: { id: 9 }, version: 1 } }))
     mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '5')
     await user.click(saveButton())
     await vi.waitFor(() => expect(f.calls.length).toBe(1))
     await vi.waitFor(() => expect(sessionStorage.getItem('duels:entry:7')).toBeNull())
@@ -848,7 +852,7 @@ describe('EntryTab', () => {
   // 24px up, because pure white halates at display size. The well is t8, 44px.
   it('sets the points wells in the near white, not pure white', () => {
     mount()
-    for (const label of ['Ridgeline points', 'Lakeside points']) {
+    for (const label of ['First competitor points', 'Second competitor points']) {
       expect(screen.getByLabelText(label)).toHaveClass('text-gray-12')
       expect(screen.getByLabelText(label)).not.toHaveClass('text-white')
     }
@@ -859,8 +863,8 @@ describe('EntryTab', () => {
   it('hints the digit shortcut on the one field it writes to', () => {
     mount()
     expect(screen.getAllByText('0 to 9')).toHaveLength(1)
-    expect(screen.getByLabelText('Ridgeline points')).toHaveAttribute('aria-keyshortcuts', '0 1 2 3 4 5 6 7 8 9')
-    expect(screen.getByLabelText('Lakeside points')).not.toHaveAttribute('aria-keyshortcuts')
+    expect(screen.getByLabelText('First competitor points')).toHaveAttribute('aria-keyshortcuts', '0 1 2 3 4 5 6 7 8 9')
+    expect(screen.getByLabelText('Second competitor points')).not.toHaveAttribute('aria-keyshortcuts')
   })
 
   /**
@@ -883,6 +887,25 @@ describe('EntryTab', () => {
    * indistinguishable and picking the wrong one writes a win to the wrong child. 7.1's
    * meta line disambiguates, in the field order the whole product uses.
    */
+  // A match pairs two of up to eight teams, so neither field belongs to one of them and
+  // picking a competitor takes that whole team out of the other field.
+  it('keeps the second field to the teams the first one is not on', async () => {
+    fakeFetch(() => ({ json: {} }))
+    mount({
+      ...detail,
+      teams: [...detail.teams, { id: 3, eventId: 7, name: 'Fernwood', color: 'teal', position: 2 }],
+      athletes: [...detail.athletes, kid(301, 3, 'Iris', 'Nolan')],
+      matches: [],
+    })
+    const user = userEvent.setup()
+    await pick(user, 'First competitor', 'Ava Park')
+    await user.click(screen.getByRole('combobox', { name: 'Second competitor' }))
+    const names = (await screen.findAllByRole('option')).map(o => o.textContent ?? '')
+    expect(names.some(n => n.includes('Noah Tran'))).toBe(true)
+    expect(names.some(n => n.includes('Iris Nolan'))).toBe(true)
+    expect(names.some(n => n.includes('Mateo Rivera'))).toBe(false)
+  })
+
   it('appends the belt, age and weight to every competitor option', async () => {
     fakeFetch(() => ({ json: {} }))
     mount({
@@ -894,7 +917,7 @@ describe('EntryTab', () => {
       ],
       matches: [],
     })
-    await userEvent.setup().click(screen.getByRole('combobox', { name: 'Ridgeline competitor' }))
+    await userEvent.setup().click(screen.getByRole('combobox', { name: 'First competitor' }))
     const options = await screen.findAllByRole('option')
     expect(options[0]).toHaveTextContent('Ava Park')
     expect(options[0]).toHaveTextContent('Grey · 8 · 60 lb')
@@ -906,9 +929,9 @@ describe('EntryTab', () => {
     fakeFetch(() => ({ json: {} }))
     mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    expect(screen.getByRole('combobox', { name: 'Ridgeline competitor' })).toHaveTextContent('Ava Park')
-    expect(screen.getByRole('combobox', { name: 'Ridgeline competitor' })).not.toHaveTextContent('lb')
+    await pick(user, 'First competitor', 'Ava Park')
+    expect(screen.getByRole('combobox', { name: 'First competitor' })).toHaveTextContent('Ava Park')
+    expect(screen.getByRole('combobox', { name: 'First competitor' })).not.toHaveTextContent('lb')
   })
 
   // 2.7: one set of tracks, so a score sits in the same register on every screen.
@@ -1003,8 +1026,8 @@ describe('EntryTab', () => {
       mount(finishedDetail)
       expect(screen.getByText(FINISHED_LINE)).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: /^Sav/ })).not.toBeInTheDocument()
-      expect(screen.queryByLabelText('Ridgeline points')).not.toBeInTheDocument()
-      expect(screen.queryByRole('combobox', { name: 'Ridgeline competitor' })).not.toBeInTheDocument()
+      expect(screen.queryByLabelText('First competitor points')).not.toBeInTheDocument()
+      expect(screen.queryByRole('combobox', { name: 'First competitor' })).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Finish event' })).not.toBeInTheDocument()
       // The record itself stays.
       const results = screen.getByRole('region', { name: 'Results' })
@@ -1019,6 +1042,8 @@ describe('EntryTab', () => {
       await user.click(screen.getByRole('button', { name: /^Edit / }))
       const dialog = await screen.findByRole('dialog')
       expect(dialog).toHaveTextContent('Edit result')
+      // The correction dialog names each side by the team that competitor is on, because
+      // a stored result knows both.
       expect(within(dialog).getByLabelText('Ridgeline points')).toBeInTheDocument()
     })
 
@@ -1043,9 +1068,9 @@ describe('EntryTab', () => {
       const f = fakeFetch(() => ({ status: 409, json: { error: { code: 'match_state', message: 'event is done' } } }))
       mount()
       const user = userEvent.setup()
-      await pick(user, 'Ridgeline competitor', 'Ava Park')
-      await pick(user, 'Lakeside competitor', 'Noah Tran')
-      await user.type(screen.getByLabelText('Ridgeline points'), '5')
+      await pick(user, 'First competitor', 'Ava Park')
+      await pick(user, 'Second competitor', 'Noah Tran')
+      await user.type(screen.getByLabelText('First competitor points'), '5')
       await user.click(saveButton())
       await vi.waitFor(() => expect(f.calls.length).toBe(1))
       expect(await screen.findByText('This event is finished')).toBeInTheDocument()
@@ -1057,9 +1082,9 @@ describe('EntryTab', () => {
       const f = fakeFetch(() => ({ status: 409, json: { error: { code: 'match_state', message: 'event is certified' } } }))
       mount()
       const user = userEvent.setup()
-      await pick(user, 'Ridgeline competitor', 'Ava Park')
-      await pick(user, 'Lakeside competitor', 'Noah Tran')
-      await user.type(screen.getByLabelText('Ridgeline points'), '5')
+      await pick(user, 'First competitor', 'Ava Park')
+      await pick(user, 'Second competitor', 'Noah Tran')
+      await user.type(screen.getByLabelText('First competitor points'), '5')
       await user.click(saveButton())
       await vi.waitFor(() => expect(f.calls.length).toBe(1))
       expect(await screen.findByText(CERTIFIED_REFUSAL_TITLE)).toBeInTheDocument()
@@ -1127,16 +1152,16 @@ describe('EntryTab', () => {
       : { status: 201, json: { match: { id: 9 }, version: 3 } })
     mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '6')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '6')
     await user.click(saveButton())
     await screen.findByText('That result cannot be saved')
     const first = f.body(0).entryId as string
 
     broken = false
-    await user.clear(screen.getByLabelText('Ridgeline points'))
-    await user.type(screen.getByLabelText('Ridgeline points'), '8')
+    await user.clear(screen.getByLabelText('First competitor points'))
+    await user.type(screen.getByLabelText('First competitor points'), '8')
     await user.click(saveButton())
     await vi.waitFor(() => expect(f.calls.length).toBe(2))
     expect(f.body(1)).toMatchObject({ pointsA: 8 })
@@ -1154,9 +1179,9 @@ describe('EntryTab', () => {
       : { status: 200, json: { match: { id: 9 }, version: 3 } })
     mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '6')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '6')
 
     vi.useFakeTimers()
     try {
@@ -1170,8 +1195,8 @@ describe('EntryTab', () => {
     const first = f.body(0).entryId as string
 
     hang = false
-    await user.clear(screen.getByLabelText('Ridgeline points'))
-    await user.type(screen.getByLabelText('Ridgeline points'), '8')
+    await user.clear(screen.getByLabelText('First competitor points'))
+    await user.type(screen.getByLabelText('First competitor points'), '8')
     await user.click(saveButton())
     await vi.waitFor(() => expect(f.calls.length).toBe(2))
     expect(f.body(1)).toMatchObject({ pointsA: 8 })
@@ -1193,9 +1218,9 @@ describe('EntryTab', () => {
     }
     mount(recent)
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '5')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '5')
     await user.click(saveButton())
     expect(await screen.findByText('These two were just entered')).toBeInTheDocument()
     expect(f.calls.filter(c => c.url === '/api/events/7/entries')).toHaveLength(0)
@@ -1210,9 +1235,9 @@ describe('EntryTab', () => {
       : { status: 201, json: { match: { id: 9 }, version: 3 } })
     mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '6')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '6')
     await user.click(saveButton())
     await screen.findByText('The server had a problem')
     const first = f.body(0).entryId as string
@@ -1233,8 +1258,8 @@ describe('EntryTab', () => {
     mount()
     const user = userEvent.setup()
     expect(screen.getByText('This entry never sent')).toBeInTheDocument()
-    await user.clear(screen.getByLabelText('Ridgeline points'))
-    await user.type(screen.getByLabelText('Ridgeline points'), '9')
+    await user.clear(screen.getByLabelText('First competitor points'))
+    await user.type(screen.getByLabelText('First competitor points'), '9')
     await user.click(saveButton())
     await vi.waitFor(() => expect(f.calls.length).toBe(1))
     expect(f.body(0).entryId).toBe('e-restored-0001')
@@ -1255,10 +1280,10 @@ describe('EntryTab', () => {
     }))
     mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '5')
-    await user.type(screen.getByLabelText('Lakeside points'), '2')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '5')
+    await user.type(screen.getByLabelText('Second competitor points'), '2')
     await user.click(saveButton())
     await vi.waitFor(() => expect(f.calls.length).toBe(1))
     expect(await screen.findByText('Saved. Ava Park beat Noah Tran on points, 5 to 2.')).toBeInTheDocument()
@@ -1281,10 +1306,10 @@ describe('EntryTab', () => {
     }))
     mount()
     const user = userEvent.setup()
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '5')
-    await user.type(screen.getByLabelText('Lakeside points'), '2')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '5')
+    await user.type(screen.getByLabelText('Second competitor points'), '2')
     await user.click(saveButton())
     await vi.waitFor(() => expect(f.calls.length).toBe(1))
     expect(await screen.findByText('This entry was already saved')).toBeInTheDocument()
@@ -1318,10 +1343,10 @@ describe('EntryTab', () => {
     mountLive()
     const user = userEvent.setup()
     await screen.findByRole('region', { name: 'Results' })
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '5')
-    await user.type(screen.getByLabelText('Lakeside points'), '2')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '5')
+    await user.type(screen.getByLabelText('Second competitor points'), '2')
 
     vi.useFakeTimers()
     try {
@@ -1385,14 +1410,14 @@ describe('EntryTab', () => {
     mountLive()
     const user = userEvent.setup()
     await screen.findByRole('region', { name: 'Results' })
-    await pick(user, 'Ridgeline competitor', 'Ava Park')
-    await pick(user, 'Lakeside competitor', 'Noah Tran')
-    await user.type(screen.getByLabelText('Ridgeline points'), '5')
-    await user.type(screen.getByLabelText('Lakeside points'), '2{Enter}')
+    await pick(user, 'First competitor', 'Ava Park')
+    await pick(user, 'Second competitor', 'Noah Tran')
+    await user.type(screen.getByLabelText('First competitor points'), '5')
+    await user.type(screen.getByLabelText('Second competitor points'), '2{Enter}')
     await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/events/7/entries')).toBe(true))
 
     // Where the app itself put focus, and the operator has touched nothing since.
-    await vi.waitFor(() => expect(screen.getByRole('combobox', { name: 'Ridgeline competitor' })).toHaveFocus())
+    await vi.waitFor(() => expect(screen.getByRole('combobox', { name: 'First competitor' })).toHaveFocus())
     const results = screen.getByRole('region', { name: 'Results' })
     await vi.waitFor(() => expect(within(results).getByRole('button', { name: 'Edit Ava Park over Noah Tran' })).toBeInTheDocument())
     const score = screen.getByRole('region', { name: 'Running team score' })

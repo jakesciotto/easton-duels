@@ -104,7 +104,27 @@ describe('LiveTab', () => {
     expect(await screen.findByRole('img', { name: 'QR code' })).toHaveAttribute('src', expect.stringContaining('data:image/svg+xml'))
     const one = await panel(1)
     expect(within(one).getByText('Mateo Rivera')).toBeInTheDocument()
-    expect(screen.getAllByRole('region').map(r => r.getAttribute('aria-label'))).toEqual(['Mat 1', 'Mat 2'])
+    // The leaderboard heads the tab, and the mat rack keeps its own order below it.
+    expect(screen.getAllByRole('region').map(r => r.getAttribute('aria-label'))).toEqual(['Leaderboard', 'Mat 1', 'Mat 2'])
+  })
+
+  // Spec 5 and 6: wins, then points, then position, with teams level on both sharing a
+  // numeral and the ranks they used up skipped.
+  it('heads the tab with the leaderboard, ties sharing a rank', async () => {
+    const feed = snapshotFeed(sampleSnapshot({
+      now: SERVER_NOW,
+      teams: [
+        { id: 1, name: 'Ridgeline', color: 'red', position: 0, wins: 2, points: 11 },
+        { id: 2, name: 'Lakeside', color: 'blue', position: 1, wins: 3, points: 9 },
+        { id: 3, name: 'Fernwood', color: 'teal', position: 2, wins: 2, points: 11 },
+      ],
+      mats: [{ id: 1, number: 1, current: null, onDeck: [], bound: true }],
+      matches: [],
+    }))
+    mount(url => feed.handle(url) ?? connectOnly(url))
+    const board = await screen.findByRole('region', { name: 'Leaderboard' })
+    const rows = within(board).getAllByRole('generic').filter(el => el.getAttribute('data-slot') === 'field-row')
+    expect(rows.map(r => r.textContent)).toEqual(['1LAKLakeside39', '2RIDRidgeline211', '2FERFernwood211'])
   })
 
   it('keeps a mat in its place when it goes quiet', async () => {
@@ -127,7 +147,7 @@ describe('LiveTab', () => {
       matches: [scored()],
     }))
     await vi.waitFor(() => expect(within(screen.getByRole('region', { name: 'Mat 2' })).getByText('Mateo Rivera')).toBeInTheDocument(), { timeout: 3000 })
-    expect(screen.getAllByRole('region').map(r => r.getAttribute('aria-label'))).toEqual(['Mat 1', 'Mat 2'])
+    expect(screen.getAllByRole('region').map(r => r.getAttribute('aria-label'))).toEqual(['Leaderboard', 'Mat 1', 'Mat 2'])
     expect(within(screen.getByRole('region', { name: 'Mat 1' })).getByText('No match on this mat')).toBeInTheDocument()
   })
 

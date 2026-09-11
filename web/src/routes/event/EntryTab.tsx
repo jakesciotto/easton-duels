@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { History, PencilLine } from 'lucide-react'
-import { CORRECTION_REASON_MAX, teamCode, type WinType } from '@shared/types'
+import { CORRECTION_REASON_MAX, type WinType } from '@shared/types'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import { focusWithoutEngaging } from '@/lib/operatorEngaged'
 import { sortDoneMatches } from '@/lib/matchOrder'
+import { rankTeams } from '@/lib/leaderboard'
 import { CERTIFIED_ENTRY_LINE, FINISHED_LINE, MAT_NOTE, isFinished, modeOf, statusOf } from '@/lib/eventMode'
 import { useSnapshot } from '@/lib/useSnapshot'
 import { newEventId } from '@/lib/ids'
@@ -17,7 +18,7 @@ import {
   CUE_MS, DRAFT_VERSION, LEDGER_LIMIT, RESTORED_NEW_ENTRY, RETRY_INTERVAL_MS, SAVED_LABEL_MS, SAVE_TIMEOUT_MS,
   clearDraft, clockLabel, duplicateCopy, entryShape, isRepeatPair, ledgerTime, loadDraft, outcomeMatches,
   pairKey, restoreDraft, restoredBannerCopy, retriesItself, saveDraft, saveErrorCopy, seedPairLog, serverRefused,
-  storedOutcome, teamWins,
+  storedOutcome, teamPoints, teamWins,
   type EntryDraft, type EntryMatch, type SaveErrorCopy,
 } from './entry-state'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -113,9 +114,12 @@ interface Attempt {
   request: { kind: 'create'; body: NewEntryBody } | { kind: 'correct'; id: number; body: CorrectionBody }
 }
 
+// The standing of every team, on the tracks the Live tab's own table uses, so a score
+// sits in the same register wherever the console prints one.
+const STANDING_COLS = 'grid grid-cols-[var(--col-num-s)_minmax(0,1fr)_62.4px] items-center gap-x-6'
+
 export function EntryTab({ detail }: { detail: EventDetail }) {
   const eventId = detail.event.id
-  const [teamA, teamB] = detail.teams
   // One fact, one source: the stream the event body already polls, with the stored value
   // as the fallback until the first snapshot lands. The newest snapshot rather than a
   // frozen one, because this is a statement about the room and not about a picture.
@@ -187,11 +191,12 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   }, [])
 
   const byId = useMemo(() => new Map(detail.athletes.map(a => [a.id, a])), [detail.athletes])
-  const kidsOf = (teamId: number) => detail.athletes
-    .filter(a => a.teamId === teamId)
-    .sort((x, y) => x.lastName.localeCompare(y.lastName) || x.firstName.localeCompare(y.firstName))
-  const kidsA = kidsOf(teamA.id)
-  const kidsB = kidsOf(teamB.id)
+  const teamById = useMemo(() => new Map(detail.teams.map(t => [t.id, t])), [detail.teams])
+  // A match pairs two different teams out of up to eight, so neither field belongs to one
+  // of them: each offers everybody on a team the other field is not already holding.
+  const placeable = useMemo(() => detail.athletes
+    .filter(a => a.teamId !== null)
+    .sort((x, y) => x.lastName.localeCompare(y.lastName) || x.firstName.localeCompare(y.firstName)), [detail.athletes])
 
   const pA = f.pointsA === '' ? 0 : Number(f.pointsA)
   const pB = f.pointsB === '' ? 0 : Number(f.pointsB)
@@ -200,6 +205,8 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   const winType = f.touched ? f.winType : auto.winType
   const a = f.aId ? byId.get(Number(f.aId)) : undefined
   const b = f.bId ? byId.get(Number(f.bId)) : undefined
+  const otherThan = (kid: AthleteRow | undefined) => placeable.filter(k => kid === undefined || k.teamId !== kid.teamId)
+  const teamOf = (kid: AthleteRow | undefined) => (kid?.teamId === null || kid?.teamId === undefined ? undefined : teamById.get(kid.teamId))
 
   // 7.12's deadline and 6.6's confirmation both belong to the POST. The refetch that
   // repaints the ledger runs behind them, so a slow one can no longer spend the desk's
@@ -224,9 +231,11 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   // press. It stands until the desk names a win type, which is the answer it asks for.
   const wonWithFewerPoints = !!a && !!b && winner !== null && !winTypeChecked
     && (winner === 'a' ? pA < pB : pB < pA)
-  const wins = useMemo(() => teamWins(detail.matches, detail.athletes), [detail.matches, detail.athletes])
-  const winsA = wins.get(teamA.id) ?? 0
-  const winsB = wins.get(teamB.id) ?? 0
+  const standings = useMemo(() => {
+    const wins = teamWins(detail.matches, detail.athletes)
+    const points = teamPoints(detail.matches, detail.athletes)
+    return rankTeams(detail.teams.map(t => ({ id: t.id, wins: wins.get(t.id) ?? 0, points: points.get(t.id) ?? 0, position: t.position })))
+  }, [detail.matches, detail.athletes, detail.teams])
 
   // A points edit alone never resets touched: auto-derivation from points only
   // drives the suggestion until the organizer picks a winner or a win type (or
@@ -237,9 +246,14 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   // they mean: the next Save is the one that says so.
   const edit = (update: (s: Form) => Form) => { stopRetry(); setF(update) }
   const setPoints = (key: 'pointsA' | 'pointsB') => (v: string) => edit(s => ({ ...s, [key]: v.replace(/\D/g, '').slice(0, 2) }))
+  // Picking a competitor on the other field's team would leave a pairing the server
+  // refuses, so the other field lets go rather than sitting there illegal.
   const pickKid = (key: 'aId' | 'bId') => (v: string) => {
     setPairPrompt(null)
-    edit(s => ({ ...s, [key]: v }))
+    const other = key === 'aId' ? b : a
+    const next = byId.get(Number(v))
+    const clash = next !== undefined && other !== undefined && next.teamId === other.teamId
+    edit(s => ({ ...s, [key]: v, ...(clash ? { [key === 'aId' ? 'bId' : 'aId']: '' } : {}) }))
   }
   // A winner with fewer points cannot have won on points, so the pick takes the win type
   // with it rather than leaving the derived "Points" standing over a result it contradicts.
@@ -506,8 +520,8 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   const name = (id: number) => { const k = byId.get(id); return k ? athleteName(k) : 'Unknown' }
   const matNumberOf = (m: MatchRow) => detail.mats.find(mat => mat.id === m.matId)?.number ?? null
   // Read off the competitor rather than off the column, because the plate is a colour and
-  // a wrong one is worse than none: nothing guarantees athlete A is on team A.
-  const teamOfAthlete = (id: number) => detail.teams.find(t => t.id === byId.get(id)?.teamId) ?? teamA
+  // a wrong one is worse than none: nothing guarantees athlete A is on the first team.
+  const teamOfAthlete = (id: number) => teamOf(byId.get(id))
   const startError = start.error
   // 6.9: a finished event stops taking results, so the form and every path back into it
   // go rather than sit there disabled. Nothing left on the screen says it can be scored.
@@ -526,16 +540,24 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
     <div className="grid gap-6">
       <p aria-live="polite" className="sr-only">{announce}</p>
 
-      <section aria-label="Running team score" className="grid grid-cols-[1fr_auto_1fr] items-center gap-8 rounded-lg bg-gray-1 px-6 py-4">
-        <div className="flex min-w-0 items-center gap-4">
-          <TeamPlate color={teamA.color} name={teamA.name} />
-          <Figure value={winsA} lead={winsA >= winsB} />
+      {/* Spec 6: every team, in leaderboard order. One composition whatever the count,
+          so a three team event is not a different screen from a two team one. */}
+      <section aria-label="Running team score" className="grid gap-2 rounded-lg bg-gray-1 px-6 py-4">
+        <div className={cn(STANDING_COLS, 'h-6')}>
+          <span className="sr-only">Rank</span>
+          <span className="t1 text-gray-10 uppercase">Team</span>
+          <span className="tick t1 text-right text-gray-10 uppercase">Match wins</span>
         </div>
-        <span className="t1 whitespace-nowrap text-gray-10 uppercase">Match wins</span>
-        <div className="flex min-w-0 items-center justify-end gap-4">
-          <Figure value={winsB} lead={winsB >= winsA} />
-          <TeamPlate color={teamB.color} name={teamB.name} />
-        </div>
+        {standings.map(row => {
+          const team = teamById.get(row.teamId)
+          return (
+            <div key={row.teamId} className={cn(STANDING_COLS, 'h-10')}>
+              <span className="fig t2 text-gray-10">{row.rank}</span>
+              {team && <TeamPlate color={team.color} name={team.name} />}
+              <Figure value={row.wins} lead={row.rank === 1} />
+            </div>
+          )
+        })}
       </section>
 
       <div className="flex flex-wrap items-center gap-3 rounded-lg bg-gray-1 px-4 py-3">
@@ -577,19 +599,21 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
             */}
             <div className="grid grid-cols-1 items-end gap-x-4 gap-y-3 sm:grid-cols-[1fr_auto_1fr]">
               <KidField
-                id="entry-a-competitor" team={teamA} kids={kidsA} value={f.aId} onChange={pickKid('aId')}
+                id="entry-a-competitor" label="First competitor" kids={otherThan(b)} teamOf={teamOf}
+                value={f.aId} onChange={pickKid('aId')}
                 className="sm:col-start-1 sm:row-start-1"
               />
               <KidField
-                id="entry-b-competitor" team={teamB} kids={kidsB} value={f.bId} onChange={pickKid('bId')}
+                id="entry-b-competitor" label="Second competitor" kids={otherThan(a)} teamOf={teamOf}
+                value={f.bId} onChange={pickKid('bId')}
                 align="right" className="sm:col-start-3 sm:row-start-1"
               />
               <span aria-hidden className="t1 hidden text-gray-9 uppercase sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:block sm:self-center">vs</span>
-              <PointsField id="entry-a-points" team={teamA} value={f.pointsA} onChange={setPoints('pointsA')} digitKey className="sm:col-start-1 sm:row-start-2" />
-              <PointsField id="entry-b-points" team={teamB} value={f.pointsB} onChange={setPoints('pointsB')} align="right" className="sm:col-start-3 sm:row-start-2" />
+              <PointsField id="entry-a-points" label="First competitor points" value={f.pointsA} onChange={setPoints('pointsA')} digitKey className="sm:col-start-1 sm:row-start-2" />
+              <PointsField id="entry-b-points" label="Second competitor points" value={f.pointsB} onChange={setPoints('pointsB')} align="right" className="sm:col-start-3 sm:row-start-2" />
 
-              <WinnerToggle kid={a} team={teamA} hint="A" pressed={winner === 'a'} onPress={() => pickWinner('a')} className="sm:col-start-1 sm:row-start-3" />
-              <WinnerToggle kid={b} team={teamB} hint="B" pressed={winner === 'b'} onPress={() => pickWinner('b')} className="sm:col-start-3 sm:row-start-3" />
+              <WinnerToggle kid={a} empty="Pick the first competitor" hint="A" pressed={winner === 'a'} onPress={() => pickWinner('a')} className="sm:col-start-1 sm:row-start-3" />
+              <WinnerToggle kid={b} empty="Pick the second competitor" hint="B" pressed={winner === 'b'} onPress={() => pickWinner('b')} className="sm:col-start-3 sm:row-start-3" />
             </div>
 
             <div className="mt-4 grid gap-2 sm:grid-cols-3">
@@ -704,13 +728,13 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
             </span>
           </div>
           <div className={cn(LEDGER_COLS, 'h-8 bg-gray-1')}>
-            {/* The full name truncates to five letters here, and the code is the short
-                form the plates already use everywhere else. */}
-            <span className="truncate font-sans t1 text-gray-10" title={teamA.name}>{teamCode(teamA.name)}</span>
+            {/* No column belongs to a team any more, so each side is headed by what it
+                holds and the row's own plates say which team that competitor is on. */}
+            <span className="truncate font-sans t1 text-gray-10 uppercase">Competitor</span>
             <span className="tick text-right font-sans t1 text-gray-10 uppercase">Pts</span>
             <span className="text-center font-sans t1 text-gray-10 uppercase">Win by</span>
             <span className="tick text-right font-sans t1 text-gray-10 uppercase">Pts</span>
-            <span className="truncate text-right font-sans t1 text-gray-10" title={teamB.name}>{teamCode(teamB.name)}</span>
+            <span className="truncate text-right font-sans t1 text-gray-10 uppercase">Competitor</span>
             <span className="text-right font-sans t1 text-gray-10 uppercase">At</span>
             <span className="sr-only">History</span>
             <span className="sr-only">Edit</span>
@@ -756,9 +780,10 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   )
 }
 
-// 7.5: the whole numeral crossfades, 100ms, and never moves. The resting colour
-// is the leading or trailing figure token, which is the only thing separating
-// the two numbers.
+// The resting colour is the leading or trailing figure token, which is the only thing
+// separating the numbers from each other.
+// 7.5: the whole numeral crossfades, 100ms, and never moves. It sits at t5 rather than
+// t7 because the header carries up to eight of them now, one per team.
 function Figure({ value, lead }: { value: number; lead: boolean }) {
   const [shown, setShown] = useState(value)
   const [fading, setFading] = useState(false)
@@ -771,7 +796,7 @@ function Figure({ value, lead }: { value: number; lead: boolean }) {
   return (
     <span
       className={cn(
-        'fig fig-2 inline-block t7 text-center transition-opacity duration-100 ease-out',
+        'fig fig-2 inline-block t5 text-right transition-opacity duration-100 ease-out',
         lead ? 'text-fig-lead' : 'text-fig-trail',
         fading ? 'opacity-0' : 'opacity-100',
       )}
@@ -793,10 +818,11 @@ function Hint({ children, tone = 'on-dark' }: { children: ReactNode; tone?: 'on-
   return <span aria-hidden className={cn('font-mono t2', tone === 'on-white' ? 'text-gray-7' : 'text-gray-10')}>{children}</span>
 }
 
-function KidField({ id, team, kids, value, onChange, align = 'left', className }: {
+function KidField({ id, label, kids, teamOf, value, onChange, align = 'left', className }: {
   id: string
-  team: TeamRow
+  label: string
   kids: AthleteRow[]
+  teamOf: (kid: AthleteRow) => TeamRow | undefined
   value: string
   onChange: (v: string) => void
   align?: 'left' | 'right'
@@ -807,16 +833,22 @@ function KidField({ id, team, kids, value, onChange, align = 'left', className }
   const items = kids.map(k => ({ value: String(k.id), label: athleteName(k) }))
   return (
     <div className={cn('grid gap-1.5', className)}>
-      <Label htmlFor={id} className={cn(align === 'right' && 'justify-end')}>{team.name} competitor</Label>
+      <Label htmlFor={id} className={cn(align === 'right' && 'justify-end')}>{label}</Label>
       <Select value={value} onValueChange={v => onChange(String(v ?? ''))} items={items}>
         <SelectTrigger id={id}><SelectValue placeholder="Pick a competitor" /></SelectTrigger>
         <SelectContent>
-          {kids.map(k => (
-            <SelectItem key={k.id} value={String(k.id)}>
-              <span className="truncate">{athleteName(k)}</span>
-              <span className="ml-auto shrink-0 t2 text-gray-10">{kidMeta(k)}</span>
-            </SelectItem>
-          ))}
+          {kids.map(k => {
+            const team = teamOf(k)
+            return (
+              <SelectItem key={k.id} value={String(k.id)}>
+                <span className="flex min-w-0 items-center gap-2">
+                  {team && <TeamPlate color={team.color} name={team.name} size="inline" showName={false} />}
+                  <span className="truncate">{athleteName(k)}</span>
+                </span>
+                <span className="ml-auto shrink-0 t2 text-gray-10">{kidMeta(k)}</span>
+              </SelectItem>
+            )
+          })}
         </SelectContent>
       </Select>
     </div>
@@ -832,9 +864,9 @@ function KidField({ id, team, kids, value, onChange, align = 'left', className }
 // The digit key only ever fills this side, so only this side carries the hint. A
 // digit typed while focus is in the other well is the browser's own typing, not
 // the shortcut, and needs no hint to explain it.
-function PointsField({ id, team, value, onChange, digitKey = false, align = 'left', className }: {
+function PointsField({ id, label, value, onChange, digitKey = false, align = 'left', className }: {
   id: string
-  team: TeamRow
+  label: string
   value: string
   onChange: (v: string) => void
   digitKey?: boolean
@@ -844,7 +876,7 @@ function PointsField({ id, team, value, onChange, digitKey = false, align = 'lef
   return (
     <div className={cn('grid gap-1.5', className)}>
       <div className={cn('flex items-center gap-2', align === 'right' && 'flex-row-reverse')}>
-        <Label htmlFor={id}>{team.name} points</Label>
+        <Label htmlFor={id}>{label}</Label>
         {digitKey && <Hint>0 to 9</Hint>}
       </div>
       <div className="grid h-[88px] place-items-center border border-gray-7 bg-background focus-within:shadow-focus">
@@ -864,9 +896,10 @@ function PointsField({ id, team, value, onChange, digitKey = false, align = 'lef
   )
 }
 
-function WinnerToggle({ kid, team, hint, pressed, onPress, className }: {
+function WinnerToggle({ kid, empty, hint, pressed, onPress, className }: {
   kid: AthleteRow | undefined
-  team: TeamRow
+  /** What the control says while its slot is still empty. */
+  empty: string
   hint: string
   pressed: boolean
   onPress: () => void
@@ -880,7 +913,7 @@ function WinnerToggle({ kid, team, hint, pressed, onPress, className }: {
       aria-keyshortcuts={hint}
       className={cn('w-full', className)}
     >
-      <span className="truncate">{kid ? `${athleteName(kid)} wins` : `Pick a ${team.name} competitor first`}</span>
+      <span className="truncate">{kid ? `${athleteName(kid)} wins` : empty}</span>
       <Hint>{hint}</Hint>
     </Toggle>
   )
@@ -896,8 +929,8 @@ function LedgerRow({ match, nameA, nameB, teamOfA, teamOfB, at, cued, cueing, on
   /** 6.6: plate, name, score, mark, win type, score, name, plate. The head's two codes
       say which column is whose; the row's plates say which team each competitor is on,
       which is the fact a desk scanning two hundred rows is actually looking for. */
-  teamOfA: TeamRow
-  teamOfB: TeamRow
+  teamOfA: TeamRow | undefined
+  teamOfB: TeamRow | undefined
   at: Date | null
   cued: boolean
   cueing: boolean
@@ -918,7 +951,7 @@ function LedgerRow({ match, nameA, nameB, teamOfA, teamOfB, at, cued, cueing, on
       )}
     >
       <span data-side="a" data-outcome={aWon ? 'win' : 'loss'} className={cn('flex min-w-0 items-center gap-2 font-sans t3', aWon ? 'font-medium text-white' : 'text-gray-10')}>
-        <TeamPlate color={teamOfA.color} name={teamOfA.name} size="inline" showName={false} />
+        {teamOfA && <TeamPlate color={teamOfA.color} name={teamOfA.name} size="inline" showName={false} />}
         {aWon && <Mark side="left" />}
         <span className="truncate">{nameA}</span>
       </span>
@@ -928,7 +961,7 @@ function LedgerRow({ match, nameA, nameB, teamOfA, teamOfB, at, cued, cueing, on
       <span data-side="b" data-outcome={aWon ? 'loss' : 'win'} className={cn('flex min-w-0 items-center justify-end gap-2 font-sans t3', aWon ? 'text-gray-10' : 'font-medium text-white')}>
         <span className="truncate">{nameB}</span>
         {!aWon && <Mark side="right" />}
-        <TeamPlate color={teamOfB.color} name={teamOfB.name} size="inline" showName={false} />
+        {teamOfB && <TeamPlate color={teamOfB.color} name={teamOfB.name} size="inline" showName={false} />}
       </span>
       <span className="text-right t1 text-gray-10">{at === null ? '' : clockLabel(at)}</span>
       {/*

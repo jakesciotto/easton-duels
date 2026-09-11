@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
-import type { EventMode, EventStatus, MatView, MatchSide, MatchView, Snapshot } from '@shared/types'
+import type { EventMode, EventStatus, MatView, MatchSide, MatchView, Snapshot, TeamView } from '@shared/types'
 import { CORRECTION_REASON_MAX } from '@shared/types'
 import { formatClock, remainingMs } from '@shared/clock'
 import { ApiError } from '@/lib/api'
@@ -11,6 +11,7 @@ import { DESK_NOTE, DESK_NOTE_DETAIL, FINISHED_LINE, isFinished, modeOf, statusO
 import { useClock } from '@/lib/useClock'
 import { pollIntervalForSnapshot } from '@/lib/pollInterval'
 import { teamStyle, timeOfDay } from '@/lib/format'
+import { rankTeams } from '@/lib/leaderboard'
 import { cn } from '@/lib/utils'
 import type { EventDetail } from '@/lib/types'
 import { Clock } from '@/components/Clock'
@@ -66,6 +67,14 @@ const WORD: Record<PanelTone, string> = { live: 'text-live', attend: 'text-atten
 // resolves narrower than the 32px two digit score it exists to hold. The name cell takes
 // its own family and size back.
 const NOW_COLS = 'grid grid-cols-[var(--col-state)_minmax(0,1fr)_var(--col-num-s)] items-stretch gap-x-3 gap-y-1 font-mono t7'
+
+/**
+ * The standing of every team, on a shared literal-px track rather than a relative one.
+ * `ch` resolves only against the element it is declared on, so the head at 11px and a row
+ * at t5 would otherwise size three different columns out of one declaration: 2ch at t7 is
+ * 62.4px and 3ch at t5 is 60px (2.7's own resolved-widths table).
+ */
+const STANDING_COLS = 'grid grid-cols-[var(--col-num-s)_minmax(0,1fr)_62.4px_60px] items-center gap-x-6'
 const NEXT_COLS = 'grid grid-cols-[var(--col-state)_minmax(0,1fr)] items-stretch gap-x-3 gap-y-1'
 
 export function LiveTab({ detail }: { detail: EventDetail }) {
@@ -284,6 +293,11 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
           <AlertDescription>{writeErrorMessage(error)}</AlertDescription>
         </Alert>
       )}
+
+      {/* Spec 6: while the event is running the header carries the leaderboard. Once it
+          is done the final result below carries the same table, so this one stands down
+          rather than printing the standing twice. */}
+      {!done && view !== null && view.teams.length > 0 && <Leaderboard teams={view.teams} />}
 
       {done ? (
         // The record is never a paused picture, so it reads the live snapshot even if the
@@ -667,6 +681,37 @@ function MatPanel({ mat, view, mode, paused, lastSuccessAt, pollIntervalMs, busy
           </Button>
         </div>
       )}
+    </section>
+  )
+}
+
+/**
+ * Wins, then points, then position, with tied teams sharing a numeral. One composition
+ * whatever the team count, which is what the board shows the room at the same moment.
+ */
+function Leaderboard({ teams }: { teams: TeamView[] }) {
+  const byId = new Map(teams.map(t => [t.id, t]))
+  return (
+    <section aria-label="Leaderboard">
+      <FieldSet>
+        <FieldHead className={STANDING_COLS}>
+          <span className="font-sans">Rank</span>
+          <span className="font-sans">Team</span>
+          <span className="tick text-right font-sans">Wins</span>
+          <span className="tick text-right font-sans">Points</span>
+        </FieldHead>
+        {rankTeams(teams).map(row => {
+          const team = byId.get(row.teamId)
+          return (
+            <FieldRow key={row.teamId} className={cn(STANDING_COLS, 'h-12')}>
+              <span className="fig fig-2 t5 text-gray-10">{row.rank}</span>
+              {team && <TeamPlate color={team.color} name={team.name} />}
+              <span className="fig fig-2 t5 text-right text-fig-lead">{row.wins}</span>
+              <span className="fig fig-3 t5 text-right text-gray-11">{row.points}</span>
+            </FieldRow>
+          )
+        })}
+      </FieldSet>
     </section>
   )
 }
