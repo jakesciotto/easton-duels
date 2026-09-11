@@ -11,24 +11,16 @@ import { cn } from '@/lib/utils'
  * The Ledger Grid at the two-line rung (2.7). The tracks are declared here and on
  * the column head, and both elements carry the mono face, because `ch` resolves
  * against the element's own font and the sans zero is a different width.
+ *
+ * The Link cell is a fixed 56px rather than `auto` on purpose. The head is a separate grid
+ * from the rows, so an intrinsic track resolves to 0 on the head and to the button's width
+ * on the rows, and the numeric columns under it would then stop lining up with their
+ * labels. It is reserved on every row because spec 4 offers Link on every unlinked row:
+ * the pool is a subset now, so what the last sync cached says nothing about who the
+ * picker can reach.
  */
 export const ROSTER_COLS =
-  'grid grid-cols-[var(--col-select)_var(--col-state)_minmax(0,1fr)_var(--col-num-s)_var(--col-num-m)_var(--col-act)_var(--col-act)] gap-x-3 px-3'
-
-/**
- * The same tracks plus one fixed 56px cell for the Link control, which an event with a
- * WellnessLiving pool carries on every row and on the head.
- *
- * The width is fixed rather than `auto` on purpose. The head is a separate grid from the
- * rows, so an intrinsic track resolves to 0 on the head and to the button's width on the
- * rows, and the numeric columns under it would then stop lining up with their labels.
- */
-const ROSTER_COLS_LINK =
   'grid grid-cols-[var(--col-select)_var(--col-state)_minmax(0,1fr)_var(--col-num-s)_var(--col-num-m)_56px_var(--col-act)_var(--col-act)] gap-x-3 px-3'
-
-export function rosterCols(withLink: boolean): string {
-  return withLink ? ROSTER_COLS_LINK : ROSTER_COLS
-}
 
 const CELL = 'fig t2 h-6 w-full rounded-md px-1.5 text-right transition-colors duration-120 ease-out'
 
@@ -124,14 +116,12 @@ export function looksLikeLine(candidate: { firstName: string; lastName: string; 
   return `Looks like ${athleteName(candidate)}, ${candidate.wlLocation}`
 }
 
-export function RosterRow({ kid, selected, fault, inMatch, candidateCount, suggestion, onSelect, onPatch, onRemove, onLink, onConfirm, onDismiss, onProfile, onDragStart }: {
+export function RosterRow({ kid, selected, fault, inMatch, suggestion, onSelect, onPatch, onRemove, onLink, onConfirm, onDismiss, onProfile, onDragStart }: {
   kid: AthleteRow
   selected: boolean
   fault: boolean
   /** The server refuses a delete for anyone sitting in a match, so the row refuses first. */
   inMatch: boolean
-  /** The pool this row could be linked to. With none there is nothing to say and nothing to press. */
-  candidateCount: number
   /**
    * The candidate `suggestedWlUid` names, once the pool has been read. The row can act on
    * the stored uid without it, so the controls stand from the first render and only the
@@ -147,9 +137,11 @@ export function RosterRow({ kid, selected, fault, inMatch, candidateCount, sugge
   onProfile: () => void
   onDragStart: (e: ReactPointerEvent, id: number) => void
 }) {
-  const withLink = candidateCount > 0
   const suggested = kid.suggestedWlUid
-  const unlinked = withLink && kid.wlUid === null && suggested === null
+  const unlinked = kid.wlUid === null && suggested === null
+  // Spec 4. The word is what a sync came back with, not a guess: only a row a sync has
+  // looked up is known to be missing from WellnessLiving.
+  const missing = unlinked && kid.syncedAt !== null
   const name = athleteName(kid)
   const range = useRef(false)
   const state = fault ? 'fault' : kid.age === null || kid.weightLbs === null ? 'attend' : 'ok'
@@ -160,7 +152,7 @@ export function RosterRow({ kid, selected, fault, inMatch, candidateCount, sugge
     genderLabel(kid.gender),
     kid.erp === null ? 'unrated' : `ERP ${kid.erp.toFixed(1)}`,
     inMatch ? 'In a match' : null,
-    unlinked ? NOT_IN_WL : null,
+    missing ? NOT_IN_WL : null,
   ]
     .filter(Boolean)
     .join(' · ')
@@ -178,7 +170,7 @@ export function RosterRow({ kid, selected, fault, inMatch, candidateCount, sugge
         onDragStart(e, kid.id)
       }}
       className={cn(
-        rosterCols(withLink),
+        ROSTER_COLS,
         'group/row touch-pan-y py-2 font-mono t2 focus-within:bg-accent',
         // A row waiting on a person carries a control line of its own. Two sm buttons need
         // about 168px, and the three-up column at 1280 has 394px against 246px of fixed
@@ -220,9 +212,9 @@ export function RosterRow({ kid, selected, fault, inMatch, candidateCount, sugge
         source={kid.weightSource}
         onSave={weightLbs => onPatch({ weightLbs })}
       />
-      {withLink && (unlinked
+      {unlinked
         ? <Button variant="ghost" size="sm" aria-label={`Link ${name}`} onClick={onLink} className="w-full px-0 font-sans">Link</Button>
-        : <span />)}
+        : <span />}
       <Button
         variant="ghost"
         size="icon"

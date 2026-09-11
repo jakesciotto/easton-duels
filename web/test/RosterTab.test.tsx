@@ -78,8 +78,8 @@ describe('RosterTab', () => {
     mount()
     const pool = screen.getByRole('region', { name: 'Unassigned' })
     const row = rowOf(pool, 'Zoe Kid')
-    // Two action tracks: the profile every row carries, then the remove.
-    expect(row.className).toContain('grid-cols-[var(--col-select)_var(--col-state)_minmax(0,1fr)_var(--col-num-s)_var(--col-num-m)_var(--col-act)_var(--col-act)]')
+    // The Link track, then two action tracks: the profile every row carries, then the remove.
+    expect(row.className).toContain('grid-cols-[var(--col-select)_var(--col-state)_minmax(0,1fr)_var(--col-num-s)_var(--col-num-m)_56px_var(--col-act)_var(--col-act)]')
     expect(row.className).toContain('h-14')
     expect(within(row).getByText('Zoe Kid')).toHaveAttribute('title', 'Zoe Kid')
     expect(within(row).getByText('Grey · M · ERP 5.2')).toBeInTheDocument()
@@ -629,20 +629,37 @@ describe('RosterTab, the WellnessLiving link', () => {
     })
   })
 
-  it('marks only the unlinked rows, and only while there is a pool to link to', () => {
+  // Spec 4. The pool is the subset the last sync found, so an empty one no longer means
+  // there is nobody to link to: the picker asks WellnessLiving by name either way.
+  it('offers Link on every unlinked row with no suggestion, whatever the pool holds', () => {
     fakeFetch(() => ({ json: [] }))
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const { rerender } = render(<QueryClientProvider client={qc}><RosterTab detail={pooled} /></QueryClientProvider>)
     const teamA = screen.getByRole('region', { name: 'Ridgeline' })
     const teamB = screen.getByRole('region', { name: 'Lakeside' })
-    expect(within(teamA).queryByText(/Not in WellnessLiving/)).not.toBeInTheDocument()
     expect(within(teamA).queryByRole('button', { name: 'Link Mateo Kid' })).not.toBeInTheDocument()
-    expect(within(teamB).getByText(/Not in WellnessLiving/)).toBeInTheDocument()
     expect(within(teamB).getByRole('button', { name: 'Link Olivia Kid' })).toBeInTheDocument()
 
     rerender(<QueryClientProvider client={qc}><RosterTab detail={{ ...pooled, candidateCount: 0 }} /></QueryClientProvider>)
+    expect(screen.getByRole('button', { name: 'Link Olivia Kid' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Link Noah Kid' })).toBeInTheDocument()
+  })
+
+  // A sync stamps every row it considered, so the word is an answer rather than a guess
+  // about a roster nothing has looked up yet.
+  it('says a row is not in WellnessLiving only once a sync has looked', () => {
+    fakeFetch(() => ({ json: [] }))
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const { rerender } = render(<QueryClientProvider client={qc}><RosterTab detail={pooled} /></QueryClientProvider>)
     expect(screen.queryByText(/Not in WellnessLiving/)).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Link Olivia Kid' })).not.toBeInTheDocument()
+
+    const looked = { ...pooled, athletes: pooled.athletes.map(a => ({ ...a, syncedAt: '2026-10-03T16:00:00.000Z' })) }
+    rerender(<QueryClientProvider client={qc}><RosterTab detail={looked} /></QueryClientProvider>)
+    const teamA = screen.getByRole('region', { name: 'Ridgeline' })
+    const teamB = screen.getByRole('region', { name: 'Lakeside' })
+    // Mateo is linked, so the sync found him.
+    expect(within(teamA).queryByText(/Not in WellnessLiving/)).not.toBeInTheDocument()
+    expect(within(teamB).getByText(/Not in WellnessLiving/)).toBeInTheDocument()
   })
 
   // Spec 4. The pool is the subset the last sync found, so the picker asks WellnessLiving

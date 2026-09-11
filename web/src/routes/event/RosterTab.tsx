@@ -285,7 +285,6 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
             selected={selected}
             faults={faults}
             inMatch={inMatch}
-            candidateCount={detail.candidateCount}
             suggestions={suggestions}
             firstGroup={i === 0}
             dragging={drag.dragging}

@@ -6,7 +6,7 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { FieldHead, FieldSet } from '@/components/ui/field-set'
 import { cn } from '@/lib/utils'
 import { DROP_ATTR, dropZoneValue } from './roster-drag'
-import { RosterRow, rosterCols } from './roster-row'
+import { ROSTER_COLS, RosterRow } from './roster-row'
 
 /**
  * The app shell's header is sticky at the same stacking level and is painted first, so
@@ -20,7 +20,7 @@ import { RosterRow, rosterCols } from './roster-row'
 const SUBHEAD_STICKY = 'sticky top-[var(--app-header-h,57px)] z-1'
 
 export function RosterGroup({
-  title, color, teamId, kids, selected, faults, inMatch, candidateCount, suggestions, firstGroup, dragging, over,
+  title, color, teamId, kids, selected, faults, inMatch, suggestions, firstGroup, dragging, over,
   onSelect, onPatch, onRemove, onLink, onConfirm, onDismiss, onProfile, onDragStart, onAdd,
 }: {
   title: string
@@ -30,11 +30,6 @@ export function RosterGroup({
   selected: Set<number>
   faults: Set<number>
   inMatch: Set<number>
-  /**
-   * An event level fact, so the three groups reserve the Link track together and their
-   * numeric columns stay on one line across the whole roster.
-   */
-  candidateCount: number
   /** The pool read by uid, so a row can name the candidate its suggestion points at. */
   suggestions: Map<string, RosterCandidate>
   firstGroup: boolean
@@ -50,7 +45,6 @@ export function RosterGroup({
   onDragStart: (e: ReactPointerEvent, id: number) => void
   onAdd?: () => void
 }) {
-  const withLink = candidateCount > 0
   return (
     <section aria-label={title} className="min-w-0" {...{ [DROP_ATTR]: dropZoneValue(teamId) }}>
       {/* Below 1280 the three columns are one field, so the group head pins itself
@@ -70,13 +64,13 @@ export function RosterGroup({
           over && 'bg-gray-3 shadow-[inset_0_0_0_2px_var(--white)]',
         )}
       >
-        <FieldHead className={cn(rosterCols(withLink), 'font-mono t2', !firstGroup && 'hidden xl:grid')}>
+        <FieldHead className={cn(ROSTER_COLS, 'font-mono t2', !firstGroup && 'hidden xl:grid')}>
           <span />
           <span />
           <span className="t1 font-sans">Competitor</span>
           <span className="tick t1 font-sans text-right">Age</span>
           <span className="tick t1 font-sans text-right">lb</span>
-          {withLink && <span />}
+          <span />
           <span />
           <span />
         </FieldHead>
@@ -98,7 +92,6 @@ export function RosterGroup({
                   selected={selected.has(k.id)}
                   fault={faults.has(k.id)}
                   inMatch={inMatch.has(k.id)}
-                  candidateCount={candidateCount}
                   suggestion={k.suggestedWlUid === null ? undefined : suggestions.get(k.suggestedWlUid)}
                   onSelect={(v, range) => onSelect(k.id, v, range)}
                   onPatch={body => onPatch(k.id, body)}
