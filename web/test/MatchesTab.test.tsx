@@ -53,8 +53,12 @@ const view = (id: number, over: Partial<MatchView> = {}): MatchView =>
 // The tab polls the snapshot the moment it mounts, so a test that does not care about the
 // stream still has to answer that request. `{ version: 0 }` with no payload is what the
 // server sends before anything has happened, and it leaves the rows coming from the detail.
+// The Proposals panel mounts with the tab and reads its own list, so every fixture here
+// answers that request with an empty one unless the test is about proposals.
 const noStream = (url: string): Reply | undefined =>
-  /\/snapshot(\?|$)/.test(url) ? { json: { version: 0 } } : undefined
+  /\/snapshot(\?|$)/.test(url) ? { json: { version: 0 } }
+    : url === '/api/events/7/proposals' ? { json: [] }
+      : undefined
 
 function mount(d: EventDetail = detail, handler: (url: string, init?: RequestInit) => Reply = () => ({ json: {} })) {
   const f = fakeFetch((url, init) => noStream(url) ?? handler(url, init))
@@ -65,7 +69,7 @@ function mount(d: EventDetail = detail, handler: (url: string, init?: RequestIni
 
 function mountStreaming(snapshot: Snapshot, d: EventDetail = detail) {
   const feed = snapshotFeed(snapshot)
-  const f = fakeFetch(url => feed.handle(url) ?? { json: {} })
+  const f = fakeFetch(url => feed.handle(url) ?? (url === '/api/events/7/proposals' ? { json: [] } : { json: {} }))
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(<QueryClientProvider client={qc}><MatchesTab detail={d} /></QueryClientProvider>)
   return { f, feed }
@@ -80,8 +84,8 @@ const M1 = 'match 1, Mateo Rivera versus Olivia Kim'
 const M2 = 'match 2, Ava Park versus Noah Tran'
 
 describe('MatchesTab', () => {
-  it('splits the queue from the history, keeps the why chip, and generates after confirming', async () => {
-    const f = mount(detail, () => ({ json: { created: 2, unpairedA: [], unpairedB: [202] } }))
+  it('splits the queue from the history and keeps the why chip', async () => {
+    mount()
     const user = userEvent.setup()
 
     const rows = pendingRows()
@@ -100,66 +104,6 @@ describe('MatchesTab', () => {
     expect(within(settled[0]).getByText('on points')).toBeInTheDocument()
 
     expect(screen.getByRole('region', { name: 'Unpaired' })).toHaveTextContent('Kai Wong')
-
-    await user.click(screen.getByRole('button', { name: 'Regenerate' }))
-    const dialog = await screen.findByRole('dialog')
-    expect(f.calls.some(c => c.url === '/api/events/7/matches/generate')).toBe(false)
-    await user.click(within(dialog).getByRole('button', { name: 'Regenerate' }))
-    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/events/7/matches/generate')).toBe(true))
-    expect(await screen.findByText(/2 matches created/)).toBeInTheDocument()
-  })
-
-  it('states the figure Regenerate is about to discard, hand ordered rows included', async () => {
-    const f = mount()
-    const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: 'Regenerate' }))
-    let dialog = await screen.findByRole('dialog')
-    expect(within(dialog).getByText('2 pending matches will be replaced.')).toBeInTheDocument()
-    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
-
-    await user.click(within(pendingRows()[0]).getByRole('button', { name: `Move ${M1} down` }))
-    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/events/7/matches/reorder')).toBe(true))
-    await user.click(screen.getByRole('button', { name: 'Regenerate' }))
-    dialog = await screen.findByRole('dialog')
-    expect(within(dialog).getByText('2 pending matches will be replaced. 1 of them you reordered by hand.')).toBeInTheDocument()
-  })
-
-  it('confirms before regenerating over existing pending matches, and cancel sends no request', async () => {
-    const f = mount(detail, () => ({ json: { created: 0, unpairedA: [], unpairedB: [] } }))
-    const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: 'Regenerate' }))
-    const dialog = await screen.findByRole('dialog')
-    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(f.calls.some(c => c.url === '/api/events/7/matches/generate')).toBe(false)
-  })
-
-  it('generates immediately with no confirm dialog when there are no pending matches', async () => {
-    const noPending: EventDetail = {
-      ...detail,
-      matches: detail.matches.map(m => ({ ...m, status: 'done', winnerAthleteId: m.athleteAId, winType: 'points' })),
-    }
-    const f = mount(noPending, () => ({ json: { created: 3, unpairedA: [], unpairedB: [] } }))
-    const user = userEvent.setup()
-    expect(within(pendingField()).getByText('No matches yet.')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Generate' }))
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/events/7/matches/generate')).toBe(true))
-    expect(await screen.findByText(/3 matches created/)).toBeInTheDocument()
-  })
-
-  it('cancelling the confirm dialog clears a failed generate error from both the dialog and the banner', async () => {
-    mount(detail, () => ({ status: 500, json: { error: { code: 'internal', message: 'internal error' } } }))
-    const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: 'Regenerate' }))
-    const dialog = await screen.findByRole('dialog')
-    await user.click(within(dialog).getByRole('button', { name: 'Regenerate' }))
-    expect(await within(dialog).findByRole('alert')).toHaveTextContent('internal error')
-    // Only the dialog's own alert is present while it's open, not a second copy in the outer banner.
-    expect(screen.getAllByRole('alert')).toHaveLength(1)
-    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('swaps a competitor through the picker and moves a pending row down, past the other pending row', async () => {
@@ -229,10 +173,6 @@ describe('MatchesTab', () => {
     await vi.waitFor(() => expect(pendingRows()).toHaveLength(1))
     expect(within(pendingRows()[0]).getByText('Next on mat 2')).toBeInTheDocument()
 
-    // Regenerate would delete the queue a running mat is about to call, so it refuses
-    // rather than asking.
-    expect(screen.getByRole('button', { name: 'Regenerate' })).toBeDisabled()
-    expect(screen.getAllByText('Live on mat 1').length).toBeGreaterThan(1)
   })
 
   it('keeps a skipped match in the queue with the reason printed', async () => {
@@ -339,7 +279,7 @@ describe('MatchesTab', () => {
   })
 
   // React writes a defaultValue once at mount and never again, so a length changed by a
-  // second organizer or by a Regenerate never reached this cell and the operator set a
+  // second organizer never reached this cell and the operator set a
   // mat clock from a stale number.
   it('follows the served length when it changes after mount', () => {
     fakeFetch((url: string) => noStream(url) ?? { json: {} })
@@ -414,11 +354,10 @@ describe('MatchesTab in desk mode', () => {
     expect(within(pendingRows()[0]).getByLabelText(`Length for ${M1}`)).toBeInTheDocument()
   })
 
-  it('drops the live strip, and Regenerate is free because nothing is live', async () => {
+  it('drops the live strip, because nothing on a desk event is live', async () => {
     mountStreaming(deskSnapshot(), entryDetail)
     await vi.waitFor(() => expect(pendingRows().length).toBeGreaterThan(0))
     expect(screen.queryByRole('region', { name: 'Live now' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Regenerate' })).not.toBeDisabled()
     expect(screen.queryByText(/^Live on mat/)).not.toBeInTheDocument()
   })
 
@@ -495,16 +434,18 @@ describe('MatchesTab on a certified event', () => {
     return mountStreaming(snapshot, { ...detail, event: { ...detail.event, status: 'certified' } })
   }
 
-  it('kills the toolbar pair and prints the reason once', async () => {
+  // Two fields, two clusters of dead controls, so the reason is printed beside each one
+  // rather than once at the top of a screen an organizer has to scroll.
+  it('kills the toolbar and the panel, and prints the reason beside each', async () => {
     mountCertified()
-    expect(await screen.findByText(CERTIFIED_REFUSAL)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Regenerate' })).toBeDisabled()
+    await vi.waitFor(() => expect(screen.getAllByText(CERTIFIED_REFUSAL)).toHaveLength(2))
     expect(screen.getByRole('button', { name: 'Add match' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Propose matches' })).toBeDisabled()
   })
 
   it('kills every control on a pending row, the reorder handle included', async () => {
     mountCertified()
-    await screen.findByText(CERTIFIED_REFUSAL)
+    await vi.waitFor(() => expect(screen.getAllByText(CERTIFIED_REFUSAL).length).toBeGreaterThan(0))
     const row = within(pendingRows()[0])
     for (const name of [`Reorder ${M1}`, `Move ${M1} up`, `Move ${M1} down`, `Delete ${M1}`]) {
       expect(row.getByRole('button', { name }), name).toBeDisabled()
@@ -521,7 +462,7 @@ describe('MatchesTab on a certified event', () => {
   // handle and the empty sensor list, and this asserts the outcome rather than either.
   it('cannot start a drag, and sends no new order', async () => {
     const { f } = mountCertified()
-    await screen.findByText(CERTIFIED_REFUSAL)
+    await vi.waitFor(() => expect(screen.getAllByText(CERTIFIED_REFUSAL).length).toBeGreaterThan(0))
     const grip = within(pendingRows()[0]).getByRole('button', { name: `Reorder ${M1}` })
     const down = createEvent.pointerDown(grip, { button: 0, clientX: 0, clientY: 0 })
     Object.defineProperty(down, 'isPrimary', { value: true })

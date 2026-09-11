@@ -9,6 +9,7 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { FieldHead, FieldSet } from '@/components/ui/field-set'
 import { Input } from '@/components/ui/input'
 import { Toggle } from '@/components/ui/toggle'
+import { TeamPlate } from '@/components/TeamPlate'
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 // 6.14's shared ledger row, rendered by the one Toggle primitive: the row that is
@@ -24,22 +25,31 @@ function Cell({ value, missing = false, slot }: { value: number | null; missing?
   )
 }
 
-export function KidPickerDialog({ detail, teamId, matchId, open, onOpenChange, onPick }: {
-  detail: EventDetail; teamId: number | null; matchId: number | null; open: boolean
-  onOpenChange: (o: boolean) => void; onPick: (athleteId: number) => void
+/**
+ * The one picker behind every swap, on a proposal and on a pending match alike.
+ *
+ * A match pairs two different teams, so the slot is not "somebody on team B" any more:
+ * it is anybody on the event who is not on the team the other side already holds.
+ * `exclude` is that team, and every row carries its own plate because the list now spans
+ * the whole event rather than one column of it.
+ */
+export function KidPickerDialog({ detail, exclude, held, matchId, open, onOpenChange, onPick }: {
+  detail: EventDetail
+  /** The team the competitor staying in the pairing is on. Null offers the whole event. */
+  exclude: number | null
+  /** Who holds the slot now, so the picker states what it replaces. */
+  held: number | null
+  /** The match being changed, which is not itself a double booking. Absent for a proposal. */
+  matchId?: number | null
+  open: boolean
+  onOpenChange: (o: boolean) => void
+  onPick: (athleteId: number) => void
 }) {
   const [search, setSearch] = useState('')
-  const team = detail.teams.find(t => t.id === teamId)
+  const teams = new Map(detail.teams.map(t => [t.id, t]))
   const kids = detail.athletes
-    .filter(a => a.teamId === teamId && athleteName(a).toLowerCase().includes(search.toLowerCase()))
+    .filter(a => a.teamId !== null && a.teamId !== exclude && athleteName(a).toLowerCase().includes(search.toLowerCase()))
     .sort((x, y) => x.lastName.localeCompare(y.lastName))
-
-  // Which competitor this slot holds now. The caller names the match and the team, so
-  // the incumbent is whichever side of that match belongs to this team.
-  const match = detail.matches.find(m => m.id === matchId)
-  const held = match
-    ? [match.athleteAId, match.athleteBId].find(id => detail.athletes.find(a => a.id === id)?.teamId === teamId) ?? null
-    : null
 
   const close = () => {
     onOpenChange(false)
@@ -48,6 +58,7 @@ export function KidPickerDialog({ detail, teamId, matchId, open, onOpenChange, o
 
   const row = (k: AthleteRow) => {
     const booked = isDoubleBooked(k.id, detail.matches, matchId ?? undefined)
+    const team = k.teamId === null ? undefined : teams.get(k.teamId)
     return (
       <Toggle
         key={k.id}
@@ -58,6 +69,7 @@ export function KidPickerDialog({ detail, teamId, matchId, open, onOpenChange, o
       >
         <span aria-hidden className={cn('h-6 w-[var(--col-state)]', booked && 'bg-attend')} />
         <span className="flex min-w-0 items-center gap-2 font-sans">
+          {team && <TeamPlate color={team.color} name={team.name} size="inline" showName={false} />}
           <span className="truncate t3 text-gray-12">{athleteName(k)}</span>
           <span className="truncate t2 text-gray-10">{beltLabel(k.belt)}</span>
           {booked && <span className="shrink-0 t2 text-attend">double-booked</span>}
@@ -74,7 +86,7 @@ export function KidPickerDialog({ detail, teamId, matchId, open, onOpenChange, o
   return (
     <Dialog open={open} onOpenChange={o => { onOpenChange(o); if (!o) setSearch('') }}>
       <DialogContent className={dialogSurface(512)}>
-        <DialogHeader><DialogTitle>Pick a {team?.name ?? ''} competitor</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>Pick a competitor</DialogTitle></DialogHeader>
         <DialogBody className={cn(dialogBody, 'gap-4')}>
           <Input aria-label="Search competitors" autoFocus value={search} onChange={e => setSearch(e.target.value)} />
           <FieldSet className="max-h-[320px] overflow-y-auto rounded-none">

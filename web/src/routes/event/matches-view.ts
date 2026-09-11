@@ -90,24 +90,6 @@ export function readyNote(line: MatchLine): string | null {
   return line.matNumber === null ? null : `Next on mat ${line.matNumber}`
 }
 
-export function regenerateBlockedReason(live: MatchLine[]): string | null {
-  if (live.length === 0) return null
-  const mats = live.map(l => l.matNumber).filter((n): n is number => n !== null).sort((a, b) => a - b)
-  if (mats.length === 0) return 'A match is live'
-  if (mats.length === 1) return `Live on mat ${mats[0]}`
-  return `Live on mats ${mats.slice(0, -1).join(', ')} and ${mats[mats.length - 1]}`
-}
-
-/**
- * Regenerate deletes every pending row, hand ordering included, so the dialog states the
- * figure it is about to discard. The hand-ordered count is what this browser has moved:
- * the server stores an order, not who chose it, so a reload honestly reports none.
- */
-export function regenerateWarning(pendingCount: number, handOrderedCount: number): string {
-  const replaced = `${pendingCount} pending ${pendingCount === 1 ? 'match' : 'matches'} will be replaced.`
-  return handOrderedCount === 0 ? replaced : `${replaced} ${handOrderedCount} of them you reordered by hand.`
-}
-
 export function endedLabel(endedAt: string | null): string {
   if (!endedAt) return ''
   const at = new Date(endedAt)

@@ -7,7 +7,7 @@ import { SetupMatchesStep } from '@/routes/event/SetupMatchesStep'
 import { SnapshotStreamContext } from '@/lib/useSnapshot'
 import { setAdminToken } from '@/lib/auth'
 import type { AthleteRow, EventDetail, MatchRow } from '@/lib/types'
-import { fakeFetch, sampleMatch, sampleSnapshot, type Reply } from './fakes'
+import { fakeFetch, sampleSnapshot, type Reply } from './fakes'
 
 beforeEach(() => { localStorage.clear(); setAdminToken('tok') })
 afterEach(() => vi.unstubAllGlobals())
@@ -22,12 +22,6 @@ const ROSTER = [
   kid(100, 1, 'Mateo', 'Alvarez'), kid(101, 1, 'Kai', 'Castellano'),
   kid(200, 2, 'Olivia', 'Brandt'), kid(201, 2, 'Ava', 'Delgado'),
 ]
-
-const match = (id: number, orderIndex: number, a: number, b: number, status: MatchRow['status'] = 'pending'): MatchRow => ({
-  id, eventId: 7, matId: 1, orderIndex, rulesetId: 1, lengthSec: 300, athleteAId: a, athleteBId: b, status,
-  winnerAthleteId: null, winType: null, pointsA: 0, pointsB: 0, clockElapsedMs: 0, clockStartedAt: null,
-  pendingTerminalAthleteId: null, pendingTerminalKey: null, lastSeq: 0, why: null, source: 'designed',
-})
 
 function detailWith(matches: MatchRow[]): EventDetail {
   return {
@@ -56,7 +50,8 @@ function stream(snapshot: Snapshot) {
 }
 
 function mount(detail: EventDetail, opts: { snapshot?: Snapshot; onClose?: () => void; reply?: (url: string, init?: RequestInit) => Reply | undefined } = {}) {
-  const f = fakeFetch((url, init) => opts.reply?.(url, init) ?? { json: { created: 0, unpairedA: [], unpairedB: [] } })
+  const f = fakeFetch((url, init) => opts.reply?.(url, init)
+    ?? (url === '/api/events/7/proposals' ? { json: [] } : { json: {} }))
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={qc}>
@@ -68,79 +63,40 @@ function mount(detail: EventDetail, opts: { snapshot?: Snapshot; onClose?: () =>
   return { f }
 }
 
-const generated = (f: { calls: { url: string; init?: RequestInit }[] }) =>
-  f.calls.filter(c => c.url === '/api/events/7/matches/generate' && c.init?.method === 'POST').length
+const posted = (f: { calls: { url: string; init?: RequestInit }[] }, url: string) =>
+  f.calls.filter(c => c.url === url && c.init?.method === 'POST').length
 
 describe('SetupMatchesStep', () => {
-  it('states what the matchmaker has to work with, and marks itself step three', async () => {
+  it('states what the proposer has to work with, and marks itself step three', async () => {
     mount(detailWith([]))
     await screen.findByText('Assign the matches')
-    expect(screen.getByText(/competitors across/)).toHaveTextContent('4 competitors across 2 mats.')
+    expect(screen.getByText(/competitors across/)).toHaveTextContent('4 competitors across 2 teams.')
     expect(screen.getByText('3 Matches')).toHaveAttribute('aria-current', 'step')
   })
 
-  it('runs the generate the Matches tab runs, and prints what it made', async () => {
+  // The step carries the panel the Matches tab carries, so an organizer learns the one
+  // control they will use all afternoon rather than a button that exists only here.
+  it('proposes from the panel the Matches tab carries', async () => {
     const { f } = mount(detailWith([]), {
-      reply: (url, init) => (url === '/api/events/7/matches/generate' && init?.method === 'POST'
-        ? { json: { created: 2, unpairedA: [102], unpairedB: [] } }
-        : undefined),
+      reply: (url, init) => (url === '/api/events/7/proposals' && init?.method === 'POST' ? { json: [] } : undefined),
     })
     const user = userEvent.setup()
     await screen.findByText('Assign the matches')
-    await user.click(screen.getByRole('button', { name: 'Generate matchups' }))
-    expect(await screen.findByText('2 matches created, 1 unpaired')).toBeInTheDocument()
-    expect(generated(f)).toBe(1)
+    expect(await screen.findByText('No proposals yet.')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Propose matches' }))
+    await vi.waitFor(() => expect(posted(f, '/api/events/7/proposals')).toBe(1))
+    expect(await screen.findByText('Nothing left to pair.')).toBeInTheDocument()
   })
 
-  // Regenerate is the one control that silently discards hand ordering, so a queue that
-  // already exists is not replaced without the figure being stated.
-  it('asks before replacing a queue that already exists', async () => {
-    const { f } = mount(detailWith([match(1, 0, 100, 200), match(2, 1, 101, 201)]))
-    const user = userEvent.setup()
-    await screen.findByText('Assign the matches')
-    await user.click(screen.getByRole('button', { name: 'Generate matchups' }))
-    expect(await screen.findByText('Replace 2 pending matches?')).toBeInTheDocument()
-    expect(screen.getByText('2 pending matches will be replaced.')).toBeInTheDocument()
-    expect(generated(f)).toBe(0)
-
-    await user.click(screen.getByRole('button', { name: 'Regenerate' }))
-    await vi.waitFor(() => expect(generated(f)).toBe(1))
-    expect(await screen.findByText('Assign the matches')).toBeInTheDocument()
-  })
-
-  it('leaves the queue alone when the confirm is cancelled', async () => {
-    const { f } = mount(detailWith([match(1, 0, 100, 200)]))
-    const user = userEvent.setup()
-    await screen.findByText('Assign the matches')
-    await user.click(screen.getByRole('button', { name: 'Generate matchups' }))
-    await screen.findByText('Replace 1 pending match?')
-    await user.click(screen.getByRole('button', { name: 'Cancel' }))
-    expect(await screen.findByText('Assign the matches')).toBeInTheDocument()
-    expect(generated(f)).toBe(0)
-  })
-
-  // 6.8: a control whose target is live is refused with the reason printed, never enabled
-  // and then rejected with a 409.
-  it('refuses to generate while a mat is live, and names the mat', async () => {
-    const live = sampleMatch({ id: 1, status: 'live' })
-    const { f } = mount(detailWith([match(1, 0, 100, 200, 'live')]), {
-      snapshot: sampleSnapshot({ mats: [{ id: 1, number: 1, current: live, onDeck: [], bound: true }], matches: [live] }),
-    })
-    await screen.findByText('Assign the matches')
-    expect(screen.getByRole('button', { name: 'Generate matchups' })).toBeDisabled()
-    expect(screen.getByText('Live on mat 1')).toBeInTheDocument()
-    expect(generated(f)).toBe(0)
-  })
-
-  it('reports a refused generate in the step, in the server sentence', async () => {
+  it('reports a refused propose in the step, in the server sentence', async () => {
     mount(detailWith([]), {
-      reply: (url, init) => (url === '/api/events/7/matches/generate' && init?.method === 'POST'
+      reply: (url, init) => (url === '/api/events/7/proposals' && init?.method === 'POST'
         ? { status: 422, json: { error: { code: 'validation', message: 'no competitors to pair' } } }
         : undefined),
     })
     const user = userEvent.setup()
     await screen.findByText('Assign the matches')
-    await user.click(screen.getByRole('button', { name: 'Generate matchups' }))
+    await user.click(await screen.findByRole('button', { name: 'Propose matches' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('no competitors to pair')
   })
 

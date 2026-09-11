@@ -19,10 +19,9 @@ import { MatchHistorySheet } from './MatchHistorySheet'
 import { matchHistorySource, type HistorySource } from './match-history'
 import { ResultDialog } from './ResultDialog'
 import { AddMatchDialog } from './AddMatchDialog'
-import { RegenerateConfirmDialog } from './RegenerateConfirmDialog'
+import { ProposalsPanel } from './ProposalsPanel'
 import {
-  endedLabel, liveReason, matchLabel, matchLines, readyNote, regenerateBlockedReason,
-  skipNote, type MatchLine,
+  endedLabel, liveReason, matchLabel, matchLines, readyNote, skipNote, type MatchLine,
 } from './matches-view'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -34,7 +33,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Clock } from '@/components/Clock'
 import { TeamPlate } from '@/components/TeamPlate'
 
-interface Pick { matchId: number; side: 'a' | 'b'; teamId: number }
+// Which slot a swap is filling: the team the competitor staying in is on, so the picker
+// can offer everybody else, and who holds the slot now.
+interface Pick { matchId: number; side: 'a' | 'b'; exclude: number; held: number }
 
 // 4.4 names 2000ms for this tab. The suspension that keeps an arriving snapshot off the
 // screen while the operator is dragging, typing or picking lives in useSnapshot.
@@ -143,7 +144,7 @@ function LiveStrip({ line, teamA, teamB, nameA, nameB, serverNow, lastSuccessAt,
 
 /**
  * Controlled, because React writes a `defaultValue` once at mount and never again: a
- * length another operator or a Regenerate changed never reached this cell, and the
+ * length another operator changed never reached this cell, and the
  * operator set a mat clock from a number the model had already replaced. The draft is
  * dropped whenever the served value moves and whenever a write is refused, so a value
  * on screen is either the served one or one the operator is still typing.
@@ -259,12 +260,12 @@ function PendingRow({ line, teams, name, matItems, rulesetItems, index, count, d
           <CompetitorLine
             team={teamA} name={nameA} disabled={certified} title={certified ? CERTIFIED_REFUSAL : undefined}
             onHover={on => onHover(on ? m.athleteAId : null)}
-            onPick={() => onPick({ matchId: m.id, side: 'a', teamId: teamA.id })}
+            onPick={() => onPick({ matchId: m.id, side: 'a', exclude: teamB.id, held: m.athleteAId })}
           />
           <CompetitorLine
             team={teamB} name={nameB} disabled={certified} title={certified ? CERTIFIED_REFUSAL : undefined}
             onHover={on => onHover(on ? m.athleteBId : null)}
-            onPick={() => onPick({ matchId: m.id, side: 'b', teamId: teamB.id })}
+            onPick={() => onPick({ matchId: m.id, side: 'b', exclude: teamA.id, held: m.athleteBId })}
           />
         </div>
       </TableCell>
@@ -399,16 +400,11 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
   const certified = statusOf(liveSnapshot, detail.event.status) === 'certified'
   const [pick, setPick] = useState<Pick | null>(null)
   const [addOpen, setAddOpen] = useState(false)
-  const [confirmOpen, setConfirmOpen] = useState(false)
-  const [summary, setSummary] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
   const [hovered, setHovered] = useState<number | null>(null)
   const [showSettled, setShowSettled] = useState(false)
   const [history, setHistory] = useState<HistorySource | null>(null)
   const [editing, setEditing] = useState<MatchView | null>(null)
-  // Which pending matches this browser has moved by hand, so Regenerate can state what it
-  // is about to discard. The server stores an order, not who chose it.
-  const [handOrdered, setHandOrdered] = useState<number[]>([])
   // A certified event has no sensor at all, so a drag cannot start. Disabling the handle
   // alone would still let a pointer press land on the row and begin one.
   const pointer = useSensor(PointerSensor, { activationConstraint: { distance: 4 } })
@@ -427,50 +423,20 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
     [lines],
   )
 
-  const generate = useAdminMutation(eventId, () => adminApi<{ created: number; unpairedA: number[]; unpairedB: number[] }>(`/api/events/${eventId}/matches/generate`, { method: 'POST' }))
   const patch = useAdminMutation(eventId, (v: { id: number; body: Partial<MatchRow> }) => adminApi(`/api/matches/${v.id}`, { method: 'PATCH', body: v.body }))
   const del = useAdminMutation(eventId, (id: number) => adminApi(`/api/matches/${id}`, { method: 'DELETE' }))
   const reorder = useAdminMutation(eventId, (next: number[]) => adminApi(`/api/events/${eventId}/matches/reorder`, { method: 'POST', body: { ids: next } }))
 
   // Only the most recently started action's error stays visible: reset the other
-  // three mutations before starting a new one, so a stale failure from an earlier
+  // two mutations before starting a new one, so a stale failure from an earlier
   // action never lingers behind a later, unrelated success.
-  const resetExcept = (keep: 'generate' | 'patch' | 'del' | 'reorder') => {
-    if (keep !== 'generate') generate.reset()
+  const resetExcept = (keep: 'patch' | 'del' | 'reorder') => {
     if (keep !== 'patch') patch.reset()
     if (keep !== 'del') del.reset()
     if (keep !== 'reorder') reorder.reset()
   }
 
   const pendingCount = pendingIds.length
-  const hasPending = pendingCount > 0
-  const handCount = handOrdered.filter(id => pendingIds.includes(id)).length
-  // Refuse rather than ask: Regenerate deletes the whole pending queue, including the
-  // rows a running mat is about to call, so it is disabled with the reason printed.
-  const blocked = regenerateBlockedReason(live)
-
-  // Every path that closes the confirm dialog (Cancel, backdrop/Escape via
-  // onOpenChange, and a successful regenerate) routes through here, so a failed
-  // generate's error never outlives the dialog it was shown in.
-  const closeConfirm = () => {
-    setConfirmOpen(false)
-    generate.reset()
-  }
-  const runGenerate = () => {
-    resetExcept('generate')
-    generate.mutate(undefined, {
-      onSuccess: r => {
-        setSummary(`${r.created} matches created. ${r.unpairedA.length + r.unpairedB.length} competitors unpaired.`)
-        setHandOrdered([])
-        closeConfirm()
-      },
-    })
-  }
-  const onGenerateClick = () => {
-    if (blocked) return
-    if (hasPending) { setConfirmOpen(true); return }
-    runGenerate()
-  }
 
   // Moves a pending row within the pending-only subsequence, then rebuilds the full
   // id order for the server with every other row's id back in its original slot.
@@ -479,12 +445,10 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
     let cursor = 0
     return lines.map(l => (l.lane === 'pending' ? movedPending[cursor++] : l.row.id))
   }
-  const markHandOrdered = (id: number) => setHandOrdered(s => (s.includes(id) ? s : [...s, id]))
   const onMovePending = (pendingIndex: number, dir: -1 | 1) => {
     const to = pendingIndex + dir
     if (to < 0 || to >= pendingIds.length) return
     resetExcept('reorder')
-    markHandOrdered(pendingIds[pendingIndex])
     reorder.mutate(reorderPending(pendingIndex, to))
   }
   const onDragEnd = (e: DragEndEvent) => {
@@ -494,7 +458,6 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
     const to = pendingIds.indexOf(Number(e.over.id))
     if (from === -1 || to === -1) return
     resetExcept('reorder')
-    markHandOrdered(Number(e.active.id))
     reorder.mutate(reorderPending(from, to))
   }
   const onPicked = (athleteId: number) => {
@@ -530,30 +493,20 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
   const holds = (line: MatchLine) => hovered !== null && (line.row.athleteAId === hovered || line.row.athleteBId === hovered)
   const viewOf = (line: MatchLine) => matchViewOf(line.row, detail, snapshot)
 
-  // While the confirm dialog is open, a failed generate is shown inside the
-  // dialog only; the outer banner picks it back up once the dialog is closed
-  // (closeConfirm resets it, so a successful or cancelled close leaves nothing).
-  const generateError = confirmOpen ? null : generate.error
-  const failure = generateError ? { title: 'The matchups did not generate', error: generateError }
-    : patch.error ? { title: 'The change did not save', error: patch.error }
-      : del.error ? { title: 'The match was not deleted', error: del.error }
-        : reorder.error ? { title: 'The new order did not save', error: reorder.error }
-          : null
+  const failure = patch.error ? { title: 'The change did not save', error: patch.error }
+    : del.error ? { title: 'The match was not deleted', error: del.error }
+      : reorder.error ? { title: 'The new order did not save', error: reorder.error }
+        : null
 
   return (
     // 4.4: the drag contract operatorEngaged() reads. An arriving snapshot is held, not
     // committed, while this is set.
     <div className="grid gap-6" data-dragging={dragging ? 'true' : undefined}>
       <div className="flex flex-wrap items-center gap-3">
-        <Button size="sm" onClick={onGenerateClick} disabled={certified || generate.isPending || blocked !== null}>
-          {hasPending ? 'Regenerate' : 'Generate'}
-        </Button>
         <Button size="sm" variant="secondary" disabled={certified} onClick={() => setAddOpen(true)}>Add match</Button>
         {/* 6.8: the reason a control is dead is printed once, beside the controls it kills,
             rather than waiting for somebody to press one and read a banner. */}
-        {certified ? <span className="t2 text-gray-10">{CERTIFIED_REFUSAL}</span> : blocked && <span className="t2 text-gray-10">{blocked}</span>}
-        {/* 7.12: one polite region per screen, in the DOM and empty from the first render. */}
-        <span aria-live="polite" className="t2 text-gray-10">{summary ?? ''}</span>
+        {certified && <span className="t2 text-gray-10">{CERTIFIED_REFUSAL}</span>}
       </div>
 
       {failure && (
@@ -579,21 +532,24 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
         </section>
       )}
 
-      <RegenerateConfirmDialog
-        open={confirmOpen}
-        pendingCount={pendingCount}
-        handCount={handCount}
-        pending={generate.isPending}
-        error={generate.error}
-        onOpenChange={o => { if (o) setConfirmOpen(true); else closeConfirm() }}
-        onConfirm={runGenerate}
+      <KidPickerDialog
+        detail={detail}
+        exclude={pick?.exclude ?? null}
+        held={pick?.held ?? null}
+        matchId={pick?.matchId ?? null}
+        open={pick !== null}
+        onOpenChange={o => { if (!o) setPick(null) }}
+        onPick={onPicked}
       />
-      <KidPickerDialog detail={detail} teamId={pick?.teamId ?? null} matchId={pick?.matchId ?? null} open={pick !== null} onOpenChange={o => { if (!o) setPick(null) }} onPick={onPicked} />
       <AddMatchDialog detail={detail} open={addOpen} onOpenChange={setAddOpen} />
       {/* The one correction dialog, reached from the settled field as well as from the
           Live tab's panel overflow and the Entry tab's ledger. */}
       <ResultDialog detail={detail} match={editing} open={editing !== null} onOpenChange={o => { if (!o) setEditing(null) }} />
       <MatchHistorySheet source={history} open={history !== null} onOpenChange={o => { if (!o) setHistory(null) }} />
+
+      {/* Spec 6: the drafts sit above the running order, because confirming one is what
+          puts a row into it. */}
+      <ProposalsPanel detail={detail} certified={certified} />
 
       <section aria-label="Pending matches" className="grid gap-3">
         <div className="flex flex-wrap items-baseline gap-3">
@@ -627,7 +583,7 @@ export function MatchesTab({ detail }: { detail: EventDetail }) {
                     <TableCell colSpan={pendingColumns(entryMode)} className="p-0">
                       <EmptyState
                         message="No matches yet."
-                        action={<Button size="sm" variant="ghost" disabled={certified || blocked !== null || generate.isPending} onClick={onGenerateClick}>Generate matchups</Button>}
+                        action={<Button size="sm" variant="ghost" disabled={certified} onClick={() => setAddOpen(true)}>Add match</Button>}
                       />
                     </TableCell>
                   </TableRow>

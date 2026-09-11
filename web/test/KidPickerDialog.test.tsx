@@ -18,13 +18,22 @@ const match: MatchRow = {
 
 const detail: EventDetail = {
   event: { id: 7, name: 'Fall Duels', date: '2026-10-03', matCount: 1, matCode: '0420', mode: 'live', status: 'setup', sameGender: false, createdAt: 'x' },
-  teams: [{ id: 1, eventId: 7, name: 'Ridgeline', color: 'red', position: 0 }],
-  athletes: [kid(100, 'Mateo', 'Rivera', { erp: 6.1 }), kid(101, 'Liam', 'Cruz', { age: null })],
+  teams: [
+    { id: 1, eventId: 7, name: 'Ridgeline', color: 'red', position: 0 },
+    { id: 2, eventId: 7, name: 'Lakeside', color: 'blue', position: 1 },
+  ],
+  athletes: [
+    kid(100, 'Mateo', 'Rivera', { erp: 6.1 }),
+    kid(101, 'Liam', 'Cruz', { age: null }),
+    kid(200, 'Olivia', 'Kim', { teamId: 2 }),
+    kid(300, 'Iris', 'Nolan', { teamId: null }),
+  ],
   rulesets: [], mats: [], matches: [match], candidateCount: 0,
 }
 
+// Olivia stays in the pairing, so nobody on Lakeside may take the other side.
 function mount(onPick = vi.fn()) {
-  render(<KidPickerDialog detail={detail} teamId={1} matchId={1} open onOpenChange={() => {}} onPick={onPick} />)
+  render(<KidPickerDialog detail={detail} exclude={2} held={100} matchId={1} open onOpenChange={() => {}} onPick={onPick} />)
   return onPick
 }
 
@@ -47,6 +56,13 @@ describe('KidPickerDialog', () => {
     mount()
     const row = await screen.findByRole('button', { name: 'Liam Cruz' })
     expect(row).toHaveTextContent('--')
+  })
+
+  it('leaves out the team staying in the pairing, and anybody with no team at all', async () => {
+    mount()
+    await screen.findByRole('dialog')
+    expect(screen.queryByRole('button', { name: 'Olivia Kim' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Iris Nolan' })).not.toBeInTheDocument()
   })
 
   it('offers a way out of an empty search', async () => {
