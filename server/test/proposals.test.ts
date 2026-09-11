@@ -169,6 +169,25 @@ describe('swapping a kid into a draft', () => {
     expect([row?.athleteAId, row?.athleteBId]).toEqual([id('Ines'), id('Bruno')])
   })
 
+  it('does not treat a kid already in the draft as one coming in', async () => {
+    const { app, db, adminToken, s, id } = await pool([
+      { name: 'Ines', team: 'A' },
+      { name: 'Bruno', team: 'B' },
+      { name: 'Kai', team: 'C' },
+      { name: 'Dalia', team: 'B' },
+    ])
+    const made = await call(app, 'POST', `/api/events/${s.eventId}/proposals`, undefined, adminToken)
+    expect(made.body.map((p: any) => [p.a.firstName, p.b.firstName])).toEqual([['Ines', 'Bruno'], ['Dalia', 'Kai']])
+    await pending(db, s.eventId, s.rulesetId, id('Ines'), id('Kai'))
+
+    // The console sends both sides back. Ines has a match now, but she is not the kid
+    // coming in, so the swap stands.
+    const swapped = await call(app, 'PATCH', `/api/proposals/${made.body[0].id}`, { athleteAId: id('Ines'), athleteBId: id('Dalia') }, adminToken)
+    expect(swapped.status).toBe(200)
+    expect([swapped.body.proposal.a.athleteId, swapped.body.proposal.b.athleteId]).toEqual([id('Ines'), id('Dalia')])
+    expect(swapped.body.removed).toEqual([made.body[1].id])
+  })
+
   it('swaps the other side, and puts the lower team first whichever side moved', async () => {
     const { app, adminToken, s, id } = await pool(THREE)
     const made = await call(app, 'POST', `/api/events/${s.eventId}/proposals`, undefined, adminToken)

@@ -16,12 +16,12 @@ const ERP_WEIGHT = 0.1
 
 // A pair further apart than this is not offered at all. Past two classes the organizer
 // has to ask for the match by hand, and the Add match dialog warns when they do.
-export const MAX_CLASS_GAP = 2
+const MAX_CLASS_GAP = 2
 
 // What a hand-designed pair is warned about. Neither ever blocks a write.
-export const WARN_CLASS_GAP = 2
-export const WARN_AGE_GAP = 3
-export const ALREADY_MET = 'Already met'
+const WARN_CLASS_GAP = 2
+const WARN_AGE_GAP = 3
+const ALREADY_MET = 'Already met'
 
 export interface PairSide {
   id: number
@@ -87,7 +87,7 @@ export async function pairWarnings(
   return out
 }
 
-export function proposalSide(a: AthleteRow): ProposalSide {
+function proposalSide(a: AthleteRow): ProposalSide {
   return {
     athleteId: a.id,
     firstName: a.firstName,

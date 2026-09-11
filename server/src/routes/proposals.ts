@@ -83,15 +83,18 @@ proposalRoutes.patch('/proposals/:proposalId', requireAdmin, validate('json', sw
   if (!row) return errorJson(c, 404, 'not_found', 'proposal not found')
   await assertNotCertified(db, row.eventId)
   const body = c.req.valid('json')
-  const incoming = [body.athleteAId, body.athleteBId].filter((id): id is number => id !== undefined)
-  // Only the kid coming in has to be free: the one staying was already in this draft, and
+  // Only a kid coming in has to be free. The ones already in this draft are not new, and
   // refusing on their account would strand a draft the organizer is trying to fix.
-  const busy = await db.select({ id: matches.id }).from(matches).where(and(
-    eq(matches.eventId, row.eventId),
-    eq(matches.status, 'pending'),
-    or(inArray(matches.athleteAId, incoming), inArray(matches.athleteBId, incoming)),
-  )).get()
-  if (busy) return errorJson(c, 409, 'match_state', 'already has a match')
+  const incoming = [body.athleteAId, body.athleteBId]
+    .filter((id): id is number => id !== undefined && id !== row.athleteAId && id !== row.athleteBId)
+  if (incoming.length > 0) {
+    const busy = await db.select({ id: matches.id }).from(matches).where(and(
+      eq(matches.eventId, row.eventId),
+      eq(matches.status, 'pending'),
+      or(inArray(matches.athleteAId, incoming), inArray(matches.athleteBId, incoming)),
+    )).get()
+    if (busy) return errorJson(c, 409, 'match_state', 'already has a match')
+  }
 
   const pair = await resolvePair(db, row.eventId, body.athleteAId ?? row.athleteAId, body.athleteBId ?? row.athleteBId)
   if (typeof pair === 'string') return errorJson(c, 422, 'validation', pair)
@@ -100,7 +103,9 @@ proposalRoutes.patch('/proposals/:proposalId', requireAdmin, validate('json', sw
   const a = sides.find(k => k.id === pair.a)!
   const b = sides.find(k => k.id === pair.b)!
 
-  const clash = await db.select({ id: proposals.id }).from(proposals).where(and(
+  // The kid coming in can only be in one draft, so the one they are leaving goes, and the
+  // console is told which row vanished from under it.
+  const clash = incoming.length === 0 ? [] : await db.select({ id: proposals.id }).from(proposals).where(and(
     eq(proposals.eventId, row.eventId),
     ne(proposals.id, row.id),
     or(inArray(proposals.athleteAId, incoming), inArray(proposals.athleteBId, incoming)),

@@ -179,6 +179,10 @@ export interface Snapshot {
 // board has already reserved room for.
 export const ON_DECK_DEPTH = 5
 
+// An event is a duel between at least two teams and at most the eight colours below.
+export const MIN_TEAMS = 2
+export const MAX_TEAMS = 8
+
 // Eight hues at one lightness and one chroma, oklch(0.70 0.14 h), spread 45 degrees
 // apart. The previous values were the Tailwind v3 500 ramp, whose lightness spread
 // meant a team could be visibly quieter than its opponent on the same wall. Holding
@@ -188,10 +192,6 @@ export const ON_DECK_DEPTH = 5
 // migration. Two of them can no longer match their hue, because eight evenly spread
 // hues leave room for only two warm ones. TEAM_COLOR_LABELS is what a person sees,
 // so the name always agrees with the swatch.
-// An event is a duel between at least two teams and at most the eight colours below.
-export const MIN_TEAMS = 2
-export const MAX_TEAMS = 8
-
 export const TEAM_COLORS = {
   red: '#e97871',
   blue: '#53a3f2',
