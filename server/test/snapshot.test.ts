@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { freshDb, seedEvent } from './fixtures.js'
-import { buildSnapshot } from '../src/live/snapshot.js'
+import { buildSnapshot, rankTeams } from '../src/live/snapshot.js'
 import { appendMatchEvent, endMatch, bumpVersion } from '../src/match/events.js'
 import { advanceMat, reopenMatch } from '../src/match/mats.js'
-import { mats } from '../src/db/schema.js'
+import { mats, matches } from '../src/db/schema.js'
 import { ON_DECK_DEPTH } from '../src/shared/types.js'
 
 const opts = { names: 'full' as const, nowMs: Date.parse('2026-08-27T18:00:00.000Z') }
@@ -41,6 +41,46 @@ describe('buildSnapshot', () => {
     snap = await buildSnapshot(db, s.eventId, opts)
     expect(snap.teams.map(t => [t.wins, t.points])).toEqual([[1, 4], [0, 5]])
     expect(snap.matches[0].result).toEqual({ winnerAthleteId: s.a1, winType: 'points' })
+  })
+
+  it('ranks the teams, and ties share a rank', async () => {
+    const db = await freshDb()
+    const s = await seedEvent(db, { matCount: 1, live: true, thirdTeam: true })
+    const flat = await buildSnapshot(db, s.eventId, opts)
+    // Nothing has been fought, so every team is tied at the top.
+    expect(flat.leaderboard).toEqual([
+      { teamId: s.teamA, rank: 1, wins: 0, points: 0 },
+      { teamId: s.teamB, rank: 1, wins: 0, points: 0 },
+      { teamId: s.teamC, rank: 1, wins: 0, points: 0 },
+    ])
+
+    await appendMatchEvent(db, { id: 'e1', matchId: s.matchIds[0], type: 'score', athleteId: s.b1, actionKey: 'mount', lastSeq: 0 })
+    await endMatch(db, { id: 'end1', matchId: s.matchIds[0], lastSeq: 1 })
+    const won = await buildSnapshot(db, s.eventId, opts)
+    expect(won.leaderboard).toEqual([
+      { teamId: s.teamB, rank: 1, wins: 1, points: 4 },
+      { teamId: s.teamA, rank: 2, wins: 0, points: 0 },
+      { teamId: s.teamC, rank: 2, wins: 0, points: 0 },
+    ])
+    // The tie above pushes the third team to 3, not to 2.
+    expect(rankTeams([
+      { id: 10, wins: 2, points: 9, position: 1 },
+      { id: 11, wins: 2, points: 9, position: 0 },
+      { id: 12, wins: 2, points: 4, position: 2 },
+    ])).toEqual([
+      { teamId: 11, rank: 1, wins: 2, points: 9 },
+      { teamId: 10, rank: 1, wins: 2, points: 9 },
+      { teamId: 12, rank: 3, wins: 2, points: 4 },
+    ])
+    expect(rankTeams([])).toEqual([])
+  })
+
+  it('says where each match came from', async () => {
+    const db = await freshDb()
+    const s = await seedEvent(db, { matCount: 1 })
+    await db.update(matches).set({ source: 'proposed' }).where(eq(matches.id, s.matchIds[0])).run()
+    const snap = await buildSnapshot(db, s.eventId, opts)
+    expect(snap.matches.map(m => m.source)).toEqual(['proposed', 'designed'])
   })
 
   it('lists on-deck matches per mat without the current one', async () => {

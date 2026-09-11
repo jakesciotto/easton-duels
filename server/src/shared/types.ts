@@ -47,7 +47,7 @@ export type AuditAction =
   | 'bind' | 'takeover' | 'unbind' | 'advance'
   | 'create' | 'event_edit' | 'mode' | 'contact' | 'mat_count' | 'far' | 'start' | 'finish' | 'delete'
   | 'certify' | 'uncertify'
-  | 'team_edit'
+  | 'team_edit' | 'team_add' | 'team_remove'
   | 'roster_add' | 'roster_edit' | 'roster_assign' | 'roster_remove' | 'roster_sync' | 'roster_link'
   | 'match_create' | 'match_edit' | 'match_delete' | 'reorder'
   // The proposer replaced the two-team generator in 0.12.0. Nothing writes 'generate' any
@@ -137,6 +137,7 @@ export interface MatchView {
   rulesetId: number
   lengthSec: number
   why: string | null
+  source: MatchSource
   a: MatchSide
   b: MatchSide
   clock: ClockState
@@ -147,6 +148,13 @@ export interface MatchView {
 }
 
 export interface TeamView { id: number; name: string; color: TeamColor; position: number; wins: number; points: number }
+
+/**
+ * One line of the board's hero. Teams are ranked by wins, then points, then the order
+ * they were added in; two teams level on both share a rank, and the next team down takes
+ * the rank its position in the list gives it (1, 1, 3).
+ */
+export interface LeaderboardRow { teamId: number; rank: number; wins: number; points: number }
 export interface RulesetView { id: number; name: string; defaultLengthSec: number; actions: RulesetAction[]; terminals: RulesetTerminal[] }
 export interface MatView { id: number; number: number; current: MatchView | null; onDeck: MatchView[]; bound: boolean }
 
@@ -159,6 +167,7 @@ export interface Snapshot {
   now: string
   event: { id: number; name: string; date: string; status: EventStatus; mode: EventMode; matCount: number; contact: EventContact | null; certifiedAt: string | null; far: number | null }
   teams: TeamView[]
+  leaderboard: LeaderboardRow[]
   rulesets: RulesetView[]
   mats: MatView[]
   matches: MatchView[]
@@ -179,6 +188,10 @@ export const ON_DECK_DEPTH = 5
 // migration. Two of them can no longer match their hue, because eight evenly spread
 // hues leave room for only two warm ones. TEAM_COLOR_LABELS is what a person sees,
 // so the name always agrees with the swatch.
+// An event is a duel between at least two teams and at most the eight colours below.
+export const MIN_TEAMS = 2
+export const MAX_TEAMS = 8
+
 export const TEAM_COLORS = {
   red: '#e97871',
   blue: '#53a3f2',

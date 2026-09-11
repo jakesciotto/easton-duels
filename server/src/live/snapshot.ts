@@ -1,7 +1,7 @@
 import { asc, eq } from 'drizzle-orm'
 import type { DbLike } from '../db/client.js'
 import { events, teams, athletes, rulesets, mats, matches, type MatchRow, type AthleteRow, type EventRow } from '../db/schema.js'
-import { ON_DECK_DEPTH, type Snapshot, type MatchView, type MatchSide, type MatView, type TeamView, type TeamColor, type EventContact } from '../shared/types.js'
+import { ON_DECK_DEPTH, type Snapshot, type MatchView, type MatchSide, type MatView, type TeamView, type TeamColor, type EventContact, type LeaderboardRow } from '../shared/types.js'
 import { MatchStateError, endedAtByMatch } from '../match/events.js'
 import { effectiveLengthMs } from '../match/derive.js'
 import type { TokenPayload } from '../auth/tokens.js'
@@ -57,6 +57,7 @@ export function toMatchView(m: MatchRow, athleteById: Map<number, AthleteRow>, e
     rulesetId: m.rulesetId,
     lengthSec: Math.round(lengthMs / 1000),
     why: m.why,
+    source: m.source,
     a: side(m.athleteAId, m.pointsA),
     b: side(m.athleteBId, m.pointsB),
     clock: { elapsedMs: m.clockElapsedMs, startedAt: m.clockStartedAt, lengthMs },
@@ -67,6 +68,21 @@ export function toMatchView(m: MatchRow, athleteById: Map<number, AthleteRow>, e
     endedAt,
     lastSeq: m.lastSeq,
   }
+}
+
+/**
+ * Wins first, then points, then the order the teams were added in. Teams level on wins and
+ * points share a rank, so a three-team board can read 1, 1, 3.
+ */
+export function rankTeams(teams: { id: number; wins: number; points: number; position: number }[]): LeaderboardRow[] {
+  const sorted = [...teams].sort((a, b) => b.wins - a.wins || b.points - a.points || a.position - b.position)
+  let rank = 0
+  let above: { wins: number; points: number } | null = null
+  return sorted.map((t, i) => {
+    if (above === null || above.wins !== t.wins || above.points !== t.points) rank = i + 1
+    above = t
+    return { teamId: t.id, rank, wins: t.wins, points: t.points }
+  })
 }
 
 export async function buildSnapshot(db: DbLike, eventId: number, opts: SnapshotOptions): Promise<Snapshot> {
@@ -110,6 +126,7 @@ export async function buildSnapshot(db: DbLike, eventId: number, opts: SnapshotO
     now: new Date(opts.nowMs).toISOString(),
     event: { id: ev.id, name: ev.name, date: ev.date, status: ev.status, mode: ev.mode, matCount: ev.matCount, contact: eventContact(ev), certifiedAt: ev.certifiedAt, far: ev.far },
     teams: teamViews,
+    leaderboard: rankTeams(teamViews),
     rulesets: rulesetRows.map(r => ({ id: r.id, name: r.name, defaultLengthSec: r.defaultLengthSec, actions: r.actions, terminals: r.terminals })),
     mats: matViews,
     matches: views,

@@ -4,6 +4,7 @@ import { createTestApp, call, TEST_PIN } from './helpers.js'
 import { seedEvent } from './fixtures.js'
 import { enterResult } from '../src/match/entry.js'
 import { auditLog, athletes, events, mats, matches, rosterCandidates } from '../src/db/schema.js'
+import { TEAM_COLOR_KEYS } from '../src/shared/types.js'
 
 const body = { name: 'Fall Duels', date: '2026-10-03', matCount: 2, teams: [{ name: 'Ridgeline', color: 'red' }, { name: 'Lakeside', color: 'blue' }] }
 
@@ -147,6 +148,60 @@ describe('events', () => {
     expect((await call(app, 'POST', '/api/events', { ...body, teams: [{ name: 'A', color: 'mauve' }, body.teams[1]] }, adminToken)).status).toBe(422)
   })
 
+  it('takes two to eight teams, each with its own colour', async () => {
+    const { app, adminToken } = await createTestApp()
+    const team = (i: number) => ({ name: `Team ${i}`, color: TEAM_COLOR_KEYS[i] })
+    const eight = await call(app, 'POST', '/api/events', { ...body, teams: TEAM_COLOR_KEYS.map((_, i) => team(i)) }, adminToken)
+    expect(eight.status).toBe(201)
+    expect(eight.body.teams.map((t: any) => t.position)).toEqual([0, 1, 2, 3, 4, 5, 6, 7])
+
+    expect((await call(app, 'POST', '/api/events', { ...body, teams: [team(0)] }, adminToken)).status).toBe(422)
+    const nine = [...TEAM_COLOR_KEYS.map((_, i) => team(i)), { name: 'Team 8', color: 'red' }]
+    expect((await call(app, 'POST', '/api/events', { ...body, teams: nine }, adminToken)).status).toBe(422)
+    const twin = await call(app, 'POST', '/api/events', { ...body, teams: [team(0), { name: 'Team 1', color: TEAM_COLOR_KEYS[0] }] }, adminToken)
+    expect(twin.status).toBe(422)
+    expect(twin.body.error.message).toMatch(/colour/)
+  })
+
+  it('adds a team up to eight, refusing a colour another team holds', async () => {
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db)
+    const added = await call(app, 'POST', `/api/events/${s.eventId}/teams`, { name: 'Hillcrest', color: 'green' }, adminToken)
+    expect(added.status).toBe(201)
+    expect(added.body).toMatchObject({ eventId: s.eventId, name: 'Hillcrest', color: 'green', position: 2 })
+    expect((await call(app, 'GET', `/api/events/${s.eventId}`, undefined, adminToken)).body.teams).toHaveLength(3)
+
+    const taken = await call(app, 'POST', `/api/events/${s.eventId}/teams`, { name: 'Copycat', color: 'red' }, adminToken)
+    expect(taken.status).toBe(422)
+    expect(taken.body.error.code).toBe('validation')
+    for (const color of TEAM_COLOR_KEYS.slice(3)) {
+      expect((await call(app, 'POST', `/api/events/${s.eventId}/teams`, { name: color, color }, adminToken)).status).toBe(201)
+    }
+    const ninth = await call(app, 'POST', `/api/events/${s.eventId}/teams`, { name: 'One too many', color: 'red' }, adminToken)
+    expect(ninth.status).toBe(422)
+    expect((await call(app, 'POST', '/api/events/9999/teams', { name: 'Nowhere', color: 'red' }, adminToken)).status).toBe(404)
+    expect((await call(app, 'POST', `/api/events/${s.eventId}/teams`, { name: 'No token', color: 'pink' })).status).toBe(401)
+  })
+
+  it('removes an empty team, keeps two, and refuses one with competitors on it', async () => {
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db, { thirdTeam: true })
+    const used = await call(app, 'DELETE', `/api/events/${s.eventId}/teams/${s.teamA}`, undefined, adminToken)
+    expect(used.status).toBe(409)
+    expect(used.body.error.code).toBe('team_in_use')
+
+    expect((await call(app, 'DELETE', `/api/events/${s.eventId}/teams/${s.teamC}`, undefined, adminToken)).status).toBe(204)
+    expect((await call(app, 'GET', `/api/events/${s.eventId}`, undefined, adminToken)).body.teams).toHaveLength(2)
+
+    // Two left is the floor: an empty team cannot be removed once it is one of them.
+    await db.delete(matches).where(eq(matches.eventId, s.eventId)).run()
+    await db.delete(athletes).where(eq(athletes.eventId, s.eventId)).run()
+    const last = await call(app, 'DELETE', `/api/events/${s.eventId}/teams/${s.teamB}`, undefined, adminToken)
+    expect(last.status).toBe(422)
+    expect(last.body.error.message).toMatch(/two teams/)
+    expect((await call(app, 'DELETE', `/api/events/${s.eventId}/teams/9999`, undefined, adminToken)).status).toBe(404)
+  })
+
   it('goes live through PATCH and loads the first match on each mat', async () => {
     const { app, db, adminToken } = await createTestApp()
     const s = await seedEvent(db, { matCount: 2 })
@@ -178,6 +233,11 @@ describe('events', () => {
     const s = await seedEvent(db)
     const t = await call(app, 'PATCH', `/api/events/${s.eventId}/teams/${s.teamA}`, { name: 'Ridgeline Bears', color: 'teal' }, adminToken)
     expect(t.body.teams[0]).toMatchObject({ name: 'Ridgeline Bears', color: 'teal' })
+    const clash = await call(app, 'PATCH', `/api/events/${s.eventId}/teams/${s.teamA}`, { color: 'blue' }, adminToken)
+    expect(clash.status).toBe(422)
+    expect(clash.body.error.message).toMatch(/colour/)
+    // Its own colour is not a clash with itself.
+    expect((await call(app, 'PATCH', `/api/events/${s.eventId}/teams/${s.teamA}`, { color: 'teal' }, adminToken)).status).toBe(200)
     const c = await call(app, 'GET', `/api/events/${s.eventId}/connect`, undefined, adminToken)
     expect(c.body.matCode).toBe('0420')
     expect(c.body.url).toMatch(/^http:\/\/[\d.]+:\d+$/)

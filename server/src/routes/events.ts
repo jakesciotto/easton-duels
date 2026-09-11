@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { z } from 'zod'
-import { and, asc, count, desc, eq, isNull } from 'drizzle-orm'
+import { and, asc, count, desc, eq, isNull, ne } from 'drizzle-orm'
 import type { Env } from '../context.js'
 import type { DbLike } from '../db/client.js'
 import { auditLog, events, teams, athletes, rulesets, mats, matches, rosterCandidates } from '../db/schema.js'
@@ -15,10 +15,13 @@ import { MatchStateError, bumpVersion, endedAtByMatch } from '../match/events.js
 import { recordAudit, HISTORY_LIMIT } from '../audit/log.js'
 import { assertNotCertified } from '../audit/certify.js'
 import { eventContact } from '../live/snapshot.js'
-import { CORRECTION_REASON_MAX, DEFAULT_ACTIONS, DEFAULT_TERMINALS, DEFAULT_LENGTH_SEC, FAR_MIN, FAR_MAX, TEAM_COLOR_KEYS, type AuditAction, type AuditEntry, type TeamColor } from '../shared/types.js'
+import { CORRECTION_REASON_MAX, DEFAULT_ACTIONS, DEFAULT_TERMINALS, DEFAULT_LENGTH_SEC, FAR_MIN, FAR_MAX, MIN_TEAMS, MAX_TEAMS, TEAM_COLOR_KEYS, type AuditAction, type AuditEntry, type TeamColor } from '../shared/types.js'
 
 const colorSchema = z.enum(TEAM_COLOR_KEYS as [TeamColor, ...TeamColor[]])
 export const teamSchema = z.object({ name: z.string().trim().min(1).max(40), color: colorSchema })
+// A team is read off the board by its colour, so two teams on one event cannot share one.
+const DUPLICATE_COLOUR = 'each team needs its own colour'
+const distinctColours = (list: { color: TeamColor }[]) => new Set(list.map(t => t.color)).size === list.length
 // Empty clears the field. A contact with only one half reads as absent everywhere, so
 // there is nothing to gain from refusing a half-filled pair at the edge.
 const contactName = z.string().trim().max(60)
@@ -32,7 +35,7 @@ const createEventSchema = z.object({
   mode: z.enum(['live', 'entry']).optional(),
   contactName: contactName.optional(),
   contactPhone: contactPhone.optional(),
-  teams: z.tuple([teamSchema, teamSchema]),
+  teams: z.array(teamSchema).min(MIN_TEAMS).max(MAX_TEAMS).refine(distinctColours, { message: DUPLICATE_COLOUR }),
   sameGender: sameGender.optional(),
 })
 
@@ -209,6 +212,49 @@ eventRoutes.delete('/events/:eventId', requireAdmin, validate('json', deleteEven
   return c.body(null, 204)
 })
 
+eventRoutes.post('/events/:eventId/teams', requireAdmin, validate('json', teamSchema), async c => {
+  const { db } = c.get('ctx')
+  const eventId = Number(c.req.param('eventId'))
+  if (!await db.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get()) return errorJson(c, 404, 'not_found', 'event not found')
+  await assertNotCertified(db, eventId)
+  const body = c.req.valid('json')
+  const rows = await db.select().from(teams).where(eq(teams.eventId, eventId)).orderBy(asc(teams.position)).all()
+  if (rows.length >= MAX_TEAMS) return errorJson(c, 422, 'validation', 'an event holds at most eight teams')
+  if (rows.some(t => t.color === body.color)) return errorJson(c, 422, 'validation', DUPLICATE_COLOUR)
+  // The next slot rather than the count, so a team added after another was removed cannot
+  // land on a position a remaining team already holds.
+  const position = rows.reduce((max, t) => Math.max(max, t.position), -1) + 1
+  const team = await db.transaction(async tx => {
+    const inserted = await tx.insert(teams).values({ eventId, name: body.name, color: body.color, position }).returning().get()
+    await recordAudit(tx, { eventId, actor: 'admin', action: 'team_add', detail: { teamId: inserted.id, name: inserted.name, color: inserted.color } })
+    await bumpVersion(tx, eventId)
+    return inserted
+  })
+  return c.json(team, 201)
+})
+
+eventRoutes.delete('/events/:eventId/teams/:teamId', requireAdmin, async c => {
+  const { db } = c.get('ctx')
+  const eventId = Number(c.req.param('eventId'))
+  const teamId = Number(c.req.param('teamId'))
+  const team = await db.select().from(teams).where(eq(teams.id, teamId)).get()
+  if (!team || team.eventId !== eventId) return errorJson(c, 404, 'not_found', 'team not found')
+  await assertNotCertified(db, eventId)
+  const rows = await db.select({ id: teams.id }).from(teams).where(eq(teams.eventId, eventId)).all()
+  if (rows.length <= MIN_TEAMS) return errorJson(c, 422, 'validation', 'an event needs at least two teams')
+  // A kid on the team is the only way a match can name it, so one check covers both. The
+  // roster is where they are moved, because that is where the person can see who they are.
+  if (await db.select({ id: athletes.id }).from(athletes).where(eq(athletes.teamId, teamId)).get()) {
+    return errorJson(c, 409, 'team_in_use', 'the team has competitors on it; move them first')
+  }
+  await db.transaction(async tx => {
+    await tx.delete(teams).where(eq(teams.id, teamId)).run()
+    await recordAudit(tx, { eventId, actor: 'admin', action: 'team_remove', detail: { teamId, name: team.name, color: team.color } })
+    await bumpVersion(tx, eventId)
+  })
+  return c.body(null, 204)
+})
+
 eventRoutes.patch('/events/:eventId/teams/:teamId', requireAdmin, validate('json', teamSchema.partial()), async c => {
   const { db } = c.get('ctx')
   const eventId = Number(c.req.param('eventId'))
@@ -217,6 +263,11 @@ eventRoutes.patch('/events/:eventId/teams/:teamId', requireAdmin, validate('json
   if (!team || team.eventId !== eventId) return errorJson(c, 404, 'not_found', 'team not found')
   await assertNotCertified(db, eventId)
   const fields = c.req.valid('json')
+  if (fields.color !== undefined) {
+    const taken = await db.select({ id: teams.id }).from(teams)
+      .where(and(eq(teams.eventId, eventId), eq(teams.color, fields.color), ne(teams.id, teamId))).get()
+    if (taken) return errorJson(c, 422, 'validation', DUPLICATE_COLOUR)
+  }
   await db.transaction(async tx => {
     if (Object.keys(fields).length > 0) await tx.update(teams).set(fields).where(eq(teams.id, teamId)).run()
     await recordAudit(tx, {
