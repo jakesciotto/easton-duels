@@ -645,12 +645,16 @@ describe('RosterTab, the WellnessLiving link', () => {
     expect(screen.queryByRole('button', { name: 'Link Olivia Kid' })).not.toBeInTheDocument()
   })
 
-  it('lists the pool nearest the name first, drops whoever is already linked, and posts the pick', async () => {
-    const f = fakeFetch((url, init) => {
-      if (url === '/api/events/7/candidates') return { json: POOL }
-      if (url === '/api/athletes/200/link' && init?.method === 'POST') return { json: {} }
-      return { json: [] }
-    })
+  // Spec 4. The pool is the subset the last sync found, so the picker asks WellnessLiving
+  // for the row's own last name and shows what comes back, in the order it comes back.
+  const searching = (init?: RequestInit) => (url: string) => {
+    if (url.startsWith('/api/events/7/wl-search')) return { json: [POOL[2], POOL[0], POOL[1]] }
+    if (url === '/api/athletes/200/link' && init?.method === 'POST') return { json: {} }
+    return { json: [] }
+  }
+
+  it('opens on the row last name, keeps the answer order, drops whoever is linked, and posts the pick', async () => {
+    const f = fakeFetch((url, init) => searching(init)(url))
     mount(pooled)
     const user = userEvent.setup()
     const teamB = screen.getByRole('region', { name: 'Lakeside' })
@@ -658,17 +662,16 @@ describe('RosterTab, the WellnessLiving link', () => {
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByText('Link to WellnessLiving')).toBeInTheDocument()
     expect(within(dialog).getByText('Olivia Kid, Grey, 8, 60 lb')).toBeInTheDocument()
-    // The search field opens on the last name, which is the one word a pool of hundreds
-    // can be cut down by without typing.
+    // The field opens on the last name, which is the one word that needs no typing.
     expect(within(dialog).getByLabelText('Search')).toHaveValue('Kid')
 
-    await user.clear(within(dialog).getByLabelText('Search'))
     // Mateo Kidd is w1, which Mateo Kid already carries, so the picker never offers him.
     const rows = await vi.waitFor(() => {
       const found = within(dialog).getAllByRole('button', { name: /Link .* to Olivia Kid/ })
       expect(found).toHaveLength(2)
       return found
     })
+    expect(f.calls.filter(c => c.url.includes('/wl-search')).at(-1)?.url).toBe('/api/events/7/wl-search?q=Kid')
     expect(rows.map(r => r.getAttribute('aria-label'))).toEqual(['Link Olive Kidd to Olivia Kid', 'Link Priya Shah to Olivia Kid'])
 
     await user.click(rows[0])
@@ -677,9 +680,26 @@ describe('RosterTab, the WellnessLiving link', () => {
     await vi.waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
+  it('asks for two letters once the field is cleared', async () => {
+    const f = fakeFetch((url, init) => searching(init)(url))
+    mount(pooled)
+    const user = userEvent.setup()
+    const teamB = screen.getByRole('region', { name: 'Lakeside' })
+    await user.click(within(teamB).getByRole('button', { name: 'Link Olivia Kid' }))
+    const dialog = await screen.findByRole('dialog')
+    await within(dialog).findByRole('button', { name: 'Link Olive Kidd to Olivia Kid' })
+
+    const before = f.calls.filter(c => c.url.includes('/wl-search')).length
+    await user.clear(within(dialog).getByLabelText('Search'))
+    expect(await within(dialog).findByText('Type at least two letters.')).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: /Link .* to Olivia Kid/ })).not.toBeInTheDocument()
+    await new Promise(resolve => setTimeout(resolve, 400))
+    expect(f.calls.filter(c => c.url.includes('/wl-search')).length).toBe(before)
+  })
+
   it('reads a refused link inside the dialog', async () => {
     fakeFetch((url, init) => {
-      if (url === '/api/events/7/candidates') return { json: POOL }
+      if (url.startsWith('/api/events/7/wl-search')) return { json: POOL }
       if (url === '/api/athletes/200/link' && init?.method === 'POST') {
         return { status: 409, json: { error: { code: 'duplicate', message: 'Olive Kidd is already on the roster' } } }
       }
@@ -693,5 +713,21 @@ describe('RosterTab, the WellnessLiving link', () => {
     await user.click(await within(dialog).findByRole('button', { name: 'Link Olive Kidd to Olivia Kid' }))
     expect(await within(dialog).findByRole('alert')).toHaveTextContent('Olive Kidd is already on the roster')
     expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+
+  it('reports a 503 from the search inside the dialog', async () => {
+    fakeFetch(url => {
+      if (url.startsWith('/api/events/7/wl-search')) {
+        return { status: 503, json: { error: { code: 'wl_not_configured', message: 'WellnessLiving credentials are not set' } } }
+      }
+      return { json: [] }
+    })
+    mount(pooled)
+    const teamB = screen.getByRole('region', { name: 'Lakeside' })
+    await userEvent.setup().click(within(teamB).getByRole('button', { name: 'Link Olivia Kid' }))
+    const dialog = await screen.findByRole('dialog')
+    const alert = await within(dialog).findByRole('alert')
+    expect(alert.querySelector('[data-slot="alert-title"]')).toHaveTextContent('WellnessLiving did not answer')
+    expect(alert.querySelector('[data-slot="alert-description"]')).toHaveTextContent('credentials are not set')
   })
 })

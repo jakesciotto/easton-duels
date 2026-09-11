@@ -234,7 +234,7 @@ export function RosterTab({ detail }: { detail: EventDetail }) {
           </AlertDescription>
         </Alert>
       )}
-      <AddKidDialog detail={detail} open={addOpen} onOpenChange={setAddOpen} onRefresh={() => setSyncOpen(true)} />
+      <AddKidDialog detail={detail} open={addOpen} onOpenChange={setAddOpen} />
       <PasteRosterDialog detail={detail} open={pasteOpen} onOpenChange={setPasteOpen} />
       <SyncRosterDialog detail={detail} open={syncOpen} onOpenChange={setSyncOpen} onReport={setReport} />
       <LinkCandidateDialog

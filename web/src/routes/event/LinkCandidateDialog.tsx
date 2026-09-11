@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import { writeErrorMessage } from '@/lib/eventMode'
 import { adminApi, useAdminMutation } from '@/lib/queries'
-import { ApiError } from '@/lib/api'
-import { dice } from '@shared/similarity'
 import { athleteName, beltLabel } from '@/lib/format'
 import type { AthleteRow, EventDetail, RosterCandidate } from '@/lib/types'
 import { cn } from '@/lib/utils'
+import { SEARCH_TOO_SHORT, useWlSearch } from './useWlSearch'
 import { dialogBody, dialogFooter, dialogSurface } from '@/components/dialog-frame'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -30,12 +29,12 @@ export function linkedRowLine(kid: AthleteRow): string {
 const candidateName = (c: RosterCandidate): string => `${c.firstName} ${c.lastName}`
 
 /**
- * Spec 5.3. The match links a name it finds exactly once. Everything else is a person's
- * decision, so this is the screen that decision is made on: the whole pool, ordered
- * nearest the typed name first, with the location and the rating that tell two children
- * of one name apart.
+ * Spec 5.3. The sync links a name it finds exactly once. Everything else is a person's
+ * decision, so this is the screen that decision is made on: WellnessLiving asked for the
+ * row's own last name, nearest that name first, with the location and the rating that tell
+ * two children of one name apart.
  *
- * The similarity only ORDERS the list. Nothing here links on a score.
+ * The route only ORDERS the answer. Nothing here links on a score.
  */
 export function LinkCandidateDialog({ detail, kid, open, onOpenChange }: {
   detail: EventDetail
@@ -44,40 +43,24 @@ export function LinkCandidateDialog({ detail, kid, open, onOpenChange }: {
   onOpenChange: (o: boolean) => void
 }) {
   const eventId = detail.event.id
-  const [pool, setPool] = useState<RosterCandidate[] | null>(null)
-  const [poolError, setPoolError] = useState<string | null>(null)
-  const [search, setSearch] = useState('')
+  const search = useWlSearch(eventId)
+  const setQ = search.setQ
   const link = useAdminMutation(eventId, (v: { athleteId: number; wlUid: string }) =>
     adminApi(`/api/athletes/${v.athleteId}/link`, { method: 'POST', body: { wlUid: v.wlUid } }))
 
   const lastName = kid?.lastName ?? ''
   useEffect(() => {
     if (!open) return
-    let ignore = false
-    setPool(null)
-    setPoolError(null)
-    setSearch(lastName)
+    setQ(lastName)
     link.reset()
-    adminApi<RosterCandidate[]>(`/api/events/${eventId}/candidates`)
-      .then(rows => { if (!ignore) setPool(rows) })
-      .catch(e => { if (!ignore) setPoolError(e instanceof ApiError ? e.message : 'Could not reach the server') })
-    return () => { ignore = true }
-  }, [open, eventId, lastName])
+  }, [open, eventId, lastName, setQ])
 
   const onRoster = useMemo(
     () => new Set(detail.athletes.map(a => a.wlUid).filter((uid): uid is string => uid !== null)),
     [detail.athletes],
   )
   const name = kid === null ? '' : athleteName(kid)
-  const ordered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    return (pool ?? [])
-      .filter(c => !onRoster.has(c.wlUid))
-      .filter(c => q === '' || candidateName(c).toLowerCase().includes(q))
-      .map(c => ({ c, score: dice(name, candidateName(c)) }))
-      .sort((x, y) => y.score - x.score || candidateName(x.c).localeCompare(candidateName(y.c)))
-      .map(r => r.c)
-  }, [pool, onRoster, search, name])
+  const offered = useMemo(() => search.results.filter(c => !onRoster.has(c.wlUid)), [search.results, onRoster])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -85,24 +68,22 @@ export function LinkCandidateDialog({ detail, kid, open, onOpenChange }: {
         <DialogHeader><DialogTitle>{LINK_TITLE}</DialogTitle></DialogHeader>
         <DialogBody className={dialogBody}>
           {kid && <p className="t2 text-gray-11">{linkedRowLine(kid)}</p>}
-          {poolError && (
-            <Alert>
-              <AlertTitle>The pool did not load</AlertTitle>
-              <AlertDescription>{poolError}</AlertDescription>
-            </Alert>
-          )}
           <div className="flex flex-wrap items-center gap-3">
             <Label htmlFor="link-search">Search</Label>
-            <Input id="link-search" value={search} onChange={e => setSearch(e.target.value)} className="max-w-xs" />
+            <Input id="link-search" autoComplete="off" value={search.q} onChange={e => setQ(e.target.value)} className="max-w-xs" />
           </div>
-          {pool !== null && (
+          {search.error === SEARCH_TOO_SHORT && <p className="t2 text-gray-10">{search.error}</p>}
+          {search.error !== null && search.error !== SEARCH_TOO_SHORT && (
+            <Alert>
+              <AlertTitle>WellnessLiving did not answer</AlertTitle>
+              <AlertDescription>{search.error}</AlertDescription>
+            </Alert>
+          )}
+          {search.error === null && (
             <List className="max-h-80 overflow-y-auto">
-              {ordered.length === 0
-                ? <EmptyState
-                    message="No competitors match. Clear the search."
-                    action={<Button size="sm" variant="ghost" onClick={() => setSearch('')}>Clear search</Button>}
-                  />
-                : ordered.map(c => (
+              {offered.length === 0
+                ? <EmptyState message={search.pending ? 'Searching WellnessLiving.' : 'No competitors match that name.'} />
+                : offered.map(c => (
                   <ListRow key={c.wlUid} className="p-0">
                     <button
                       type="button"

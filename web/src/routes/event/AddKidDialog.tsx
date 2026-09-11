@@ -1,11 +1,11 @@
-import { memo, useEffect, useMemo, useRef, useState, type FormEvent, type UIEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent, type UIEvent } from 'react'
 import { KIDS_BELTS } from '@shared/types'
 import { writeErrorMessage } from '@/lib/eventMode'
 import { adminApi, useAdminMutation } from '@/lib/queries'
-import { ApiError } from '@/lib/api'
 import type { EventDetail, ManualKid, RosterCandidate } from '@/lib/types'
 import { beltLabel } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { SEARCH_TOO_SHORT, useWlSearch } from './useWlSearch'
 import { dialogBody, dialogFooter, dialogSurface } from '@/components/dialog-frame'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -13,7 +13,6 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { FieldSet } from '@/components/ui/field-set'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -23,19 +22,13 @@ const BELT_ITEMS = [{ value: null as string | null, label: 'No belt' }, ...KIDS_
 const GENDER_ITEMS = [{ value: null as string | null, label: 'Not set' }, { value: 'M', label: 'M' }, { value: 'F', label: 'F' }]
 const MANUAL_FORM_ID = 'add-competitor-manual-form'
 
-// 6.10: the pool is virtualized past 50 rows so a large WellnessLiving import does not
-// mount hundreds of rows into a 320px well. CandidateRow renders at the `default` rung
-// (2.7), a fixed 40px, so a window can be computed from scroll position without a
-// measurement library.
-const POOL_ROW_H = 40
-const POOL_OVERSCAN = 8
-const POOL_VIRTUALIZE_AT = 50
-const POOL_DEFAULT_ROWS = Math.ceil(320 / POOL_ROW_H) + POOL_OVERSCAN
-
-// CandidateRow is a plain presentational component (no hooks of its own), so wrapping
-// it here is enough to skip a row whose props did not change -- which only pays off if
-// the row also gets a stable onCheckedChange, below.
-const MemoCandidateRow = memo(CandidateRow)
+// 6.10: the results are virtualized past 50 rows, because a two token query can match a
+// whole belt at a whole gym. CandidateRow renders at the `default` rung (2.7), a fixed
+// 40px, so a window can be computed from scroll position without a measurement library.
+const RESULT_ROW_H = 40
+const RESULT_OVERSCAN = 8
+const RESULT_VIRTUALIZE_AT = 50
+const RESULT_DEFAULT_ROWS = Math.ceil(320 / RESULT_ROW_H) + RESULT_OVERSCAN
 
 interface FormState {
   firstName: string
@@ -48,97 +41,71 @@ interface FormState {
 }
 const emptyForm: FormState = { firstName: '', lastName: '', age: '', weightLbs: '', belt: null, gender: null, teamId: null }
 
-export function AddKidDialog({ detail, open, onOpenChange, onRefresh }: {
-  detail: EventDetail; open: boolean; onOpenChange: (o: boolean) => void; onRefresh: () => void
+export function AddKidDialog({ detail, open, onOpenChange }: {
+  detail: EventDetail; open: boolean; onOpenChange: (o: boolean) => void
 }) {
   const eventId = detail.event.id
   const teamItems = [{ value: null as number | null, label: 'Unassigned' }, ...detail.teams.map(t => ({ value: t.id as number | null, label: t.name }))]
 
-  const [tab, setTab] = useState<'pool' | 'manual'>(detail.candidateCount > 0 ? 'pool' : 'manual')
+  // A pool the last sync found is the only evidence this screen holds that WellnessLiving
+  // answers for this gym at all, so it decides which tab opens. The other tab is one press
+  // away either way, and the search reports a 503 itself.
+  const [tab, setTab] = useState<'wl' | 'manual'>(detail.candidateCount > 0 ? 'wl' : 'manual')
   const [f, setF] = useState(emptyForm)
   const addManual = useAdminMutation(eventId, (manual: ManualKid) => adminApi(`/api/events/${eventId}/athletes`, { method: 'POST', body: { manual } }))
 
-  const [pool, setPool] = useState<RosterCandidate[] | null>(null)
-  const [poolError, setPoolError] = useState<string | null>(null)
-  const [search, setSearch] = useState('')
-  const [showUnrated, setShowUnrated] = useState(false)
-  const [poolTeamId, setPoolTeamId] = useState<number | null>(null)
-  const [picked, setPicked] = useState<Set<string>>(new Set())
-  // Also flagged: below the virtualization threshold the pool still re-rendered every
-  // row on each keystroke, because a fresh `v => toggle(...)` closure per row per
-  // render defeats MemoCandidateRow's shallow prop comparison. One stable handler per
-  // uid, created once and reused, is what lets an unaffected row skip re-rendering.
-  const toggleHandlers = useRef(new Map<string, (v: boolean) => void>())
-  const [poolWindow, setPoolWindow] = useState<[number, number]>([0, POOL_DEFAULT_ROWS])
+  const search = useWlSearch(eventId)
+  const [teamId, setTeamId] = useState<number | null>(null)
+  // Keyed by uid and holding the candidate itself, so a pick made under one query survives
+  // the next one: the decision is about a person, not about the words that found them.
+  const [picked, setPicked] = useState<Map<string, RosterCandidate>>(new Map())
+  const [resultWindow, setResultWindow] = useState<[number, number]>([0, RESULT_DEFAULT_ROWS])
   const addCandidates = useAdminMutation(eventId, (v: { candidates: RosterCandidate[]; teamId: number | null }) =>
     adminApi(`/api/events/${eventId}/athletes`, { method: 'POST', body: v.teamId === null ? { candidates: v.candidates } : { candidates: v.candidates, teamId: v.teamId } }))
 
-  // Every open starts a fresh session for both tabs: the manual form clears, the pool
-  // refetches, and a stale response from a closed-then-reopened dialog is dropped.
+  // Every open starts a fresh session for both tabs: the manual form clears and the search
+  // opens empty rather than on whoever the last visit was looking for.
   useEffect(() => {
     if (!open) return
-    let ignore = false
-    setTab(detail.candidateCount > 0 ? 'pool' : 'manual')
+    setTab(detail.candidateCount > 0 ? 'wl' : 'manual')
     setF(emptyForm)
     addManual.reset()
-    setPool(null)
-    setPoolError(null)
-    setSearch('')
-    setShowUnrated(false)
-    setPoolTeamId(null)
-    setPicked(new Set())
-    setPoolWindow([0, POOL_DEFAULT_ROWS])
-    toggleHandlers.current.clear()
+    search.setQ('')
+    setTeamId(null)
+    setPicked(new Map())
+    setResultWindow([0, RESULT_DEFAULT_ROWS])
     addCandidates.reset()
-    adminApi<RosterCandidate[]>(`/api/events/${eventId}/candidates`)
-      .then(rows => { if (!ignore) setPool(rows) })
-      .catch(e => { if (!ignore) setPoolError(e instanceof ApiError ? e.message : 'Could not reach the server') })
-    return () => { ignore = true }
   }, [open, eventId])
 
   const onRoster = useMemo(() => new Set(detail.athletes.map(a => a.wlUid).filter((uid): uid is string => uid !== null)), [detail.athletes])
-  const available = useMemo(() => (pool ?? []).filter(c => !onRoster.has(c.wlUid)), [pool, onRoster])
-  const searched = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    return q === '' ? available : available.filter(c => `${c.firstName} ${c.lastName}`.toLowerCase().includes(q))
-  }, [available, search])
-  const rated = useMemo(() => [...searched].filter(c => c.erp !== null).sort((a, b) => (b.erp as number) - (a.erp as number)), [searched])
-  const unrated = useMemo(() => [...searched].filter(c => c.erp === null).sort((a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName)), [searched])
-  const visible = showUnrated ? [...rated, ...unrated] : rated
+  // The route orders by how well the name matches, which is the order to keep.
+  const visible = useMemo(() => search.results.filter(c => !onRoster.has(c.wlUid)), [search.results, onRoster])
 
-  const toggle = (uid: string, v: boolean) => setPicked(s => {
-    const n = new Set(s)
-    if (v) n.add(uid)
-    else n.delete(uid)
+  const toggle = (candidate: RosterCandidate, v: boolean) => setPicked(p => {
+    const n = new Map(p)
+    if (v) n.set(candidate.wlUid, candidate)
+    else n.delete(candidate.wlUid)
     return n
   })
-  const getToggle = (uid: string) => {
-    let fn = toggleHandlers.current.get(uid)
-    if (!fn) {
-      fn = v => toggle(uid, v)
-      toggleHandlers.current.set(uid, fn)
-    }
-    return fn
-  }
 
-  const poolVirtual = visible.length > POOL_VIRTUALIZE_AT
-  const poolRef = useRef<HTMLDivElement | null>(null)
-  // A new search or filter is a new list from the top. Resetting the window alone is not
-  // enough: the scrollport keeps its offset, so a filter applied halfway down a 300 row
-  // pool leaves the reader looking at the spacer below the rows that now exist.
+  const virtual = visible.length > RESULT_VIRTUALIZE_AT
+  const listRef = useRef<HTMLDivElement | null>(null)
+  // A new answer is a new list from the top. Resetting the window alone is not enough: the
+  // scrollport keeps its offset, so a second query leaves the reader looking at the spacer
+  // below the rows that now exist.
   useEffect(() => {
-    setPoolWindow([0, POOL_DEFAULT_ROWS])
-    if (poolRef.current) poolRef.current.scrollTop = 0
-  }, [search, showUnrated])
-  const onPoolScroll = (e: UIEvent<HTMLDivElement>) => {
-    if (!poolVirtual) return
+    setResultWindow([0, RESULT_DEFAULT_ROWS])
+    if (listRef.current) listRef.current.scrollTop = 0
+  }, [visible])
+  const onListScroll = (e: UIEvent<HTMLDivElement>) => {
+    if (!virtual) return
     const el = e.currentTarget
-    const first = Math.max(0, Math.floor(el.scrollTop / POOL_ROW_H) - POOL_OVERSCAN)
-    const rows = Math.ceil((el.clientHeight || 320) / POOL_ROW_H) + POOL_OVERSCAN * 2
-    setPoolWindow([first, first + rows])
+    const first = Math.max(0, Math.floor(el.scrollTop / RESULT_ROW_H) - RESULT_OVERSCAN)
+    const rows = Math.ceil((el.clientHeight || 320) / RESULT_ROW_H) + RESULT_OVERSCAN * 2
+    setResultWindow([first, first + rows])
   }
-  const [poolStart, poolEnd] = poolVirtual ? poolWindow : [0, visible.length]
-  const poolRows = poolVirtual ? visible.slice(poolStart, poolEnd) : visible
+  const [start, end] = virtual ? resultWindow : [0, visible.length]
+  const rows = virtual ? visible.slice(start, end) : visible
 
   const submitManual = (e: FormEvent) => {
     e.preventDefault()
@@ -154,11 +121,10 @@ export function AddKidDialog({ detail, open, onOpenChange, onRefresh }: {
     })
   }
 
-  const submitPool = () => {
-    const chosen = (pool ?? []).filter(c => picked.has(c.wlUid))
-    addCandidates.mutate({ candidates: chosen, teamId: poolTeamId }, {
+  const submitPicked = () => {
+    addCandidates.mutate({ candidates: [...picked.values()], teamId }, {
       onSuccess: () => {
-        setPicked(new Set())
+        setPicked(new Map())
         onOpenChange(false)
       },
     })
@@ -168,68 +134,47 @@ export function AddKidDialog({ detail, open, onOpenChange, onRefresh }: {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className={dialogSurface(576)}>
         <DialogHeader><DialogTitle>Add competitor</DialogTitle></DialogHeader>
-        <Tabs value={tab} onValueChange={v => setTab(v as 'pool' | 'manual')} className="min-h-0 gap-0">
+        <Tabs value={tab} onValueChange={v => setTab(v as 'wl' | 'manual')} className="min-h-0 gap-0">
           <TabsList className="px-5">
-            <TabsTrigger value="pool">From pool</TabsTrigger>
+            <TabsTrigger value="wl">From WellnessLiving</TabsTrigger>
             <TabsTrigger value="manual">Manual</TabsTrigger>
           </TabsList>
           <DialogBody className={cn(dialogBody, 'flex-1 gap-4')}>
-            <TabsContent value="pool" className="grid gap-4">
-              {poolError && (
+            <TabsContent value="wl" className="grid gap-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <Label htmlFor="wl-search">Search</Label>
+                <Input id="wl-search" autoComplete="off" value={search.q} onChange={e => search.setQ(e.target.value)} className="max-w-xs" />
+                <Label htmlFor="wl-team">Team</Label>
+                <Select value={teamId} onValueChange={setTeamId} items={teamItems}>
+                  <SelectTrigger id="wl-team" className="w-40"><SelectValue placeholder="Unassigned" /></SelectTrigger>
+                  <SelectContent>
+                    {teamItems.map(i => <SelectItem key={String(i.value)} value={i.value}>{i.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              {search.error === SEARCH_TOO_SHORT && <p className="t2 text-gray-10">{search.error}</p>}
+              {search.error !== null && search.error !== SEARCH_TOO_SHORT && (
                 <Alert>
-                  <AlertTitle>The pool did not load</AlertTitle>
-                  <AlertDescription>{poolError}</AlertDescription>
+                  <AlertTitle>WellnessLiving did not answer</AlertTitle>
+                  <AlertDescription>{search.error}</AlertDescription>
                 </Alert>
               )}
-              {pool !== null && pool.length === 0 ? (
-                <FieldSet className="rounded-none">
-                  <EmptyState
-                    message="No pool yet. Import one from WellnessLiving."
-                    action={<Button size="sm" variant="ghost" onClick={onRefresh}>Sync from WellnessLiving</Button>}
-                  />
+              {search.error === null && (
+                /* 2.6: inner = max(0, 12 - 16) = 0, so the list is flush inside the padded body. */
+                <FieldSet ref={listRef} className="max-h-[320px] overflow-y-auto rounded-none" onScroll={onListScroll}>
+                  <CandidateHead valueLabel="ERP" />
+                  {visible.length === 0
+                    ? <EmptyState message={search.pending ? 'Searching WellnessLiving.' : 'No competitors match that name.'} />
+                    : (
+                      <>
+                        {start > 0 && <div aria-hidden style={{ height: start * RESULT_ROW_H }} />}
+                        {rows.map(c => (
+                          <CandidateRow key={c.wlUid} candidate={c} checked={picked.has(c.wlUid)} onCheckedChange={v => toggle(c, v)} />
+                        ))}
+                        {end < visible.length && <div aria-hidden style={{ height: (visible.length - end) * RESULT_ROW_H }} />}
+                      </>
+                    )}
                 </FieldSet>
-              ) : pool !== null && (
-                <>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <Label htmlFor="pool-search">Search</Label>
-                    <Input id="pool-search" value={search} onChange={e => setSearch(e.target.value)} className="max-w-xs" />
-                    <Label htmlFor="pool-team">Team</Label>
-                    <Select value={poolTeamId} onValueChange={setPoolTeamId} items={teamItems}>
-                      <SelectTrigger id="pool-team" className="w-40"><SelectValue placeholder="Unassigned" /></SelectTrigger>
-                      <SelectContent>
-                        {teamItems.map(i => <SelectItem key={String(i.value)} value={i.value}>{i.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <span className="t2 text-gray-10">
-                      <span className="fig text-gray-11">{visible.length}</span> of <span className="fig text-gray-11">{available.length}</span> shown, rated first
-                    </span>
-                    <span className="ml-auto flex items-center gap-2 t2 text-gray-11">
-                      <Checkbox aria-label="Show unrated competitors" checked={showUnrated} onCheckedChange={setShowUnrated} />
-                      Show unrated
-                    </span>
-                    <Button size="sm" variant="ghost" onClick={onRefresh}>Refresh from WellnessLiving</Button>
-                  </div>
-                  {/* 2.6: inner = max(0, 12 - 16) = 0, so the list is flush inside the padded body. */}
-                  <FieldSet ref={poolRef} className="max-h-[320px] overflow-y-auto rounded-none" onScroll={onPoolScroll}>
-                    <CandidateHead valueLabel="ERP" />
-                    {visible.length === 0
-                      ? <EmptyState
-                          message="No competitors match. Clear the search."
-                          action={<Button size="sm" variant="ghost" onClick={() => setSearch('')}>Clear search</Button>}
-                        />
-                      : (
-                        <>
-                          {poolStart > 0 && <div aria-hidden style={{ height: poolStart * POOL_ROW_H }} />}
-                          {poolRows.map(c => (
-                            <MemoCandidateRow key={c.wlUid} candidate={c} checked={picked.has(c.wlUid)} onCheckedChange={getToggle(c.wlUid)} />
-                          ))}
-                          {poolEnd < visible.length && <div aria-hidden style={{ height: (visible.length - poolEnd) * POOL_ROW_H }} />}
-                        </>
-                      )}
-                  </FieldSet>
-                </>
               )}
               {addCandidates.error && (
                 <Alert>
@@ -290,7 +235,7 @@ export function AddKidDialog({ detail, open, onOpenChange, onRefresh }: {
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="k-team">Team</Label>
-                  <Select value={f.teamId} onValueChange={teamId => setF({ ...f, teamId })} items={teamItems}>
+                  <Select value={f.teamId} onValueChange={t => setF({ ...f, teamId: t })} items={teamItems}>
                     <SelectTrigger id="k-team"><SelectValue placeholder="Unassigned" /></SelectTrigger>
                     <SelectContent>
                       {teamItems.map(i => <SelectItem key={String(i.value)} value={i.value}>{i.label}</SelectItem>)}
@@ -309,8 +254,8 @@ export function AddKidDialog({ detail, open, onOpenChange, onRefresh }: {
         </Tabs>
         <DialogFooter className={dialogFooter}>
           <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>Cancel</Button>
-          {tab === 'pool'
-            ? <Button type="button" onClick={submitPool} disabled={picked.size === 0 || addCandidates.isPending}>Add {picked.size} {picked.size === 1 ? 'competitor' : 'competitors'}</Button>
+          {tab === 'wl'
+            ? <Button type="button" onClick={submitPicked} disabled={picked.size === 0 || addCandidates.isPending}>Add {picked.size} {picked.size === 1 ? 'competitor' : 'competitors'}</Button>
             : <Button type="submit" form={MANUAL_FORM_ID} disabled={addManual.isPending}>Add competitor</Button>}
         </DialogFooter>
       </DialogContent>
