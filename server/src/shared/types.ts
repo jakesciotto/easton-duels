@@ -50,6 +50,7 @@ export type AuditAction =
   | 'team_edit'
   | 'roster_add' | 'roster_edit' | 'roster_assign' | 'roster_remove' | 'roster_sync' | 'roster_link'
   | 'match_create' | 'match_edit' | 'match_delete' | 'generate' | 'reorder'
+  | 'propose'
   | 'ruleset_create' | 'ruleset_edit' | 'ruleset_delete'
   // Backfilled rows carry the match event's own type, and two of those are not verbs any
   // live write records: a desk entry's absolute score, and the pre-0007 admin event kind.
@@ -89,6 +90,33 @@ export interface SyncReport {
 export interface ClockState { elapsedMs: number; startedAt: string | null; lengthMs: number }
 export interface MatchResult { winnerAthleteId: number; winType: WinType }
 export interface PendingTerminal { athleteId: number; actionKey: string }
+
+/**
+ * One kid as a draft pairing carries them. The class is the label the registration
+ * prints, so the console shows the band rather than doing the arithmetic itself. Age and
+ * weight are nullable because a swap can put any kid on the event into a proposal.
+ */
+export interface ProposalSide {
+  athleteId: number
+  firstName: string
+  lastName: string
+  teamId: number
+  age: number | null
+  weightLbs: number | null
+  weightClass: string | null
+  belt: string | null
+  erp: number | null
+}
+
+/** A draft pairing. It reaches the board only once Confirm turns it into a match. */
+export interface Proposal {
+  id: number
+  eventId: number
+  cost: number
+  why: string
+  a: ProposalSide
+  b: ProposalSide
+}
 
 export interface MatchSide {
   athleteId: number

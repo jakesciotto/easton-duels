@@ -11,6 +11,9 @@ export interface Seeded {
   eventId: number
   teamA: number
   teamB: number
+  // Only when the caller asks for it. The two-team default is what twenty other test
+  // files read, so a third team is opt in.
+  teamC?: number
   rulesetId: number
   matIds: number[]
   a1: number
@@ -39,8 +42,9 @@ export async function freshDb(): Promise<Db> {
 
 // Two teams, two kids each, one default ruleset, `matCount` mats, up to two matches
 // (a1 vs b1 on mat 1, a2 vs b2 on mat 2 or mat 1). `live` marks the event live and
-// loads the first match on each mat without going through match/mats.ts.
-export async function seedEvent(db: Db, opts: { matCount?: number; live?: boolean; matches?: number; mode?: EventMode } = {}): Promise<Seeded> {
+// loads the first match on each mat without going through match/mats.ts. `thirdTeam`
+// adds an empty third team for the tests that need more than a duel.
+export async function seedEvent(db: Db, opts: { matCount?: number; live?: boolean; matches?: number; mode?: EventMode; thirdTeam?: boolean } = {}): Promise<Seeded> {
   const matCount = opts.matCount ?? 2
   const ev = await db.insert(events).values({
     name: 'Fall Duels', date: '2026-10-03', matCount, matCode: '0420',
@@ -50,6 +54,9 @@ export async function seedEvent(db: Db, opts: { matCount?: number; live?: boolea
     { eventId: ev.id, name: 'Ridgeline', color: 'red', position: 0 },
     { eventId: ev.id, name: 'Lakeside', color: 'blue', position: 1 },
   ]).returning().all()
+  const tc = opts.thirdTeam
+    ? await db.insert(teams).values({ eventId: ev.id, name: 'Hillcrest', color: 'green', position: 2 }).returning().get()
+    : null
   const kids = await db.insert(athletes).values([
     { eventId: ev.id, teamId: ta.id, firstName: 'Mateo', lastName: 'Rivera', age: 8, weightLbs: 62, belt: 'grey', gender: 'M', source: 'manual', erp: 6.1 },
     { eventId: ev.id, teamId: ta.id, firstName: 'Ava', lastName: 'Park', age: 9, weightLbs: 70, belt: 'grey-black', gender: 'F', source: 'manual', erp: null },
@@ -75,7 +82,7 @@ export async function seedEvent(db: Db, opts: { matCount?: number; live?: boolea
     }
   }
   return {
-    eventId: ev.id, teamA: ta.id, teamB: tb.id, rulesetId: rs.id, matIds: matRows.map(m => m.id),
+    eventId: ev.id, teamA: ta.id, teamB: tb.id, teamC: tc?.id, rulesetId: rs.id, matIds: matRows.map(m => m.id),
     a1: kids[0].id, a2: kids[1].id, b1: kids[2].id, b2: kids[3].id, matchIds: matchRows.map(m => m.id),
   }
 }
