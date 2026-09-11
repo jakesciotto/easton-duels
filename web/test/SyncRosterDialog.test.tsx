@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { StrictMode, useState } from 'react'
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 import { render, screen, act, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -10,7 +10,7 @@ import type { EventDetail, RosterCandidate, SyncReport } from '@/lib/types'
 import { fakeFetch, type Reply } from './fakes'
 
 beforeEach(() => { localStorage.clear(); setAdminToken('tok') })
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 const detail: EventDetail = {
   event: { id: 7, name: 'Fall Duels', date: '2026-10-03', matCount: 1, matCode: '0420', mode: 'live', status: 'setup', sameGender: false, createdAt: 'x' },
@@ -27,12 +27,12 @@ function mount(d: EventDetail = detail, onReport: (r: SyncReport) => void = () =
   return qc
 }
 
-function Host() {
+function Host({ onReport = () => {} }: { onReport?: (r: SyncReport) => void }) {
   const [open, setOpen] = useState(false)
   return (
     <>
       <button onClick={() => setOpen(true)}>Open sync</button>
-      <SyncRosterDialog detail={detail} open={open} onOpenChange={setOpen} onReport={() => {}} />
+      <SyncRosterDialog detail={detail} open={open} onOpenChange={setOpen} onReport={onReport} />
     </>
   )
 }
@@ -40,9 +40,11 @@ function Host() {
 const footerButton = (name: string) =>
   within(document.querySelector('[data-slot="dialog-footer"]') as HTMLElement).getByRole('button', { name })
 
-function mountHost() {
+function mountHost(onReport: (r: SyncReport) => void = () => {}, strict = false) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  render(<QueryClientProvider client={qc}><Host /></QueryClientProvider>)
+  const tree = <QueryClientProvider client={qc}><Host onReport={onReport} /></QueryClientProvider>
+  const { unmount } = render(strict ? <StrictMode>{tree}</StrictMode> : tree)
+  return { qc, unmount }
 }
 
 /** The sync answers, the search answers, everything else is an empty write. */
@@ -224,6 +226,71 @@ describe('SyncRosterDialog', () => {
       await new Promise(resolve => setTimeout(resolve, 0))
     })
     expect(screen.queryByText('Linked 0. Refreshed 99, 0 changed.')).not.toBeInTheDocument()
+  })
+
+  // The close is the only bump a sync that is never reopened will ever get, so the effect
+  // owes one on the way out: without it the answer lands on a dialog nobody is looking at,
+  // refetches the event behind the screen, and waits there for the next open.
+  it('drops a sync that lands after a close that is never reopened', async () => {
+    let resolveSync: (v: Reply) => void = () => {}
+    const held = new Promise<Reply>(resolve => { resolveSync = resolve })
+    fakeFetch(url => (url.endsWith('/roster/sync') ? held : { json: {} }))
+    const onReport = vi.fn()
+    const logged = vi.spyOn(console, 'error')
+    const { qc } = mountHost(onReport)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Open sync' }))
+    expect(screen.getByRole('progressbar', { name: 'Roster sync' })).toBeInTheDocument()
+
+    await user.keyboard('{Escape}')
+    await vi.waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    const invalidated = vi.spyOn(qc, 'invalidateQueries')
+
+    await act(async () => {
+      resolveSync({ json: { candidates: [], warnings: [], report: { ...CLEAN, linked: ['Zoe Martin'] } } })
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+
+    expect(onReport).not.toHaveBeenCalled()
+    expect(invalidated).not.toHaveBeenCalled()
+    expect(screen.queryByText('Linked 1. Refreshed 0, 0 changed.')).not.toBeInTheDocument()
+    expect(logged).not.toHaveBeenCalled()
+  })
+
+  it('drops a sync that lands after the dialog is gone', async () => {
+    let resolveSync: (v: Reply) => void = () => {}
+    const held = new Promise<Reply>(resolve => { resolveSync = resolve })
+    fakeFetch(url => (url.endsWith('/roster/sync') ? held : { json: {} }))
+    const logged = vi.spyOn(console, 'error')
+    const { qc, unmount } = mountHost()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Open sync' }))
+    expect(screen.getByRole('progressbar', { name: 'Roster sync' })).toBeInTheDocument()
+
+    const invalidated = vi.spyOn(qc, 'invalidateQueries')
+    unmount()
+
+    await act(async () => {
+      resolveSync({ json: { candidates: [], warnings: [], report: { ...CLEAN, linked: ['Zoe Martin'] } } })
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+
+    expect(invalidated).not.toHaveBeenCalled()
+    expect(logged).not.toHaveBeenCalled()
+  })
+
+  // Strict Mode double invokes an effect on MOUNT, and both mount sites render this dialog
+  // closed, so the press that opens it is a single run and the cleanup does not cost a
+  // second pull.
+  it('starts exactly one sync per open under Strict Mode', async () => {
+    const f = wl()
+    const logged = vi.spyOn(console, 'error')
+    mountHost(() => {}, true)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Open sync' }))
+    await screen.findByText('Linked 0. Refreshed 0, 0 changed.')
+    expect(syncCalls(f.calls)).toHaveLength(1)
+    expect(logged).not.toHaveBeenCalled()
   })
 
   /**

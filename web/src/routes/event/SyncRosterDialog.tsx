@@ -104,6 +104,10 @@ export function SyncRosterDialog({ detail, open, onOpenChange, onReport }: {
     search.setQ('')
     add.reset()
     void sync()
+    // A close with no Stop, and an unmount mid-sync, both land here. Bumping the generation
+    // is exactly what Stop does, and it is what makes an abandoned sync unreadable: nothing
+    // it comes back with reaches this component's state.
+    return () => { generation.current += 1 }
   }, [open, eventId])
 
   useEffect(() => {
