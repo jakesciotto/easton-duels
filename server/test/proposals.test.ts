@@ -93,6 +93,48 @@ describe('confirming', () => {
     expect((await call(app, 'POST', `/api/proposals/${made.body[0].id}/confirm`)).status).toBe(401)
   })
 
+  it('refuses a draft whose kid was given a match by hand', async () => {
+    const { app, db, adminToken, s, id } = await pool(THREE)
+    const made = await call(app, 'POST', `/api/events/${s.eventId}/proposals`, undefined, adminToken)
+    // The pool moved on under the draft: the organizer added this pair by hand.
+    const added = await call(app, 'POST', `/api/events/${s.eventId}/matches`, { athleteAId: id('Ines'), athleteBId: id('Kai') }, adminToken)
+    expect(added.status).toBe(201)
+
+    const refused = await call(app, 'POST', `/api/proposals/${made.body[0].id}/confirm`, undefined, adminToken)
+    expect(refused.status).toBe(409)
+    expect(refused.body.error.code).toBe('match_state')
+    expect(refused.body.error.message).toBe('Ines Vantel already has a match')
+    // The draft is left for the organizer to swap or remove, and nothing was written.
+    expect(await db.select().from(proposals).where(eq(proposals.id, made.body[0].id)).get()).toBeDefined()
+    expect(await db.select().from(matches).where(eq(matches.eventId, s.eventId)).all()).toHaveLength(1)
+  })
+
+  it('confirms what it can and counts the drafts it left behind', async () => {
+    const { app, db, adminToken, s, id } = await pool([
+      { name: 'Ines', team: 'A' },
+      { name: 'Bruno', team: 'B' },
+      { name: 'Kai', team: 'C' },
+      { name: 'Nadia', team: 'A' },
+      { name: 'Pilar', team: 'B' },
+    ])
+    const made = await call(app, 'POST', `/api/events/${s.eventId}/proposals`, undefined, adminToken)
+    expect(made.body.map((p: any) => [p.a.firstName, p.b.firstName])).toEqual([['Ines', 'Bruno'], ['Nadia', 'Kai']])
+    // Pilar is in no draft, so this hand-added match makes the first draft stale and
+    // leaves the second one alone.
+    expect((await call(app, 'POST', `/api/events/${s.eventId}/matches`, { athleteAId: id('Ines'), athleteBId: id('Pilar') }, adminToken)).status).toBe(201)
+
+    const all = await call(app, 'POST', `/api/events/${s.eventId}/proposals/confirm-all`, undefined, adminToken)
+    expect(all.status).toBe(201)
+    expect(all.body).toEqual({ created: 1, skipped: 1 })
+    const left = await db.select().from(proposals).where(eq(proposals.eventId, s.eventId)).all()
+    expect(left.map(p => p.id)).toEqual([made.body[0].id])
+    const rows = await db.select().from(matches).where(eq(matches.eventId, s.eventId)).orderBy(matches.orderIndex).all()
+    expect(rows.map(m => [m.athleteAId, m.athleteBId, m.source])).toEqual([
+      [id('Ines'), id('Pilar'), 'designed'],
+      [id('Nadia'), id('Kai'), 'proposed'],
+    ])
+  })
+
   it('confirms every draft in cost order and empties the panel', async () => {
     const { app, db, adminToken, s, id } = await pool([
       { name: 'Ines', team: 'A', lbs: 62, age: 11 },
@@ -103,13 +145,13 @@ describe('confirming', () => {
     await call(app, 'POST', `/api/events/${s.eventId}/proposals`, undefined, adminToken)
     const all = await call(app, 'POST', `/api/events/${s.eventId}/proposals/confirm-all`, undefined, adminToken)
     expect(all.status).toBe(201)
-    expect(all.body).toEqual({ created: 2 })
+    expect(all.body).toEqual({ created: 2, skipped: 0 })
     // Nadia and Kai cost nothing; Ines and Bruno are three years apart, so they go second.
     const rows = await db.select().from(matches).where(eq(matches.eventId, s.eventId)).orderBy(matches.orderIndex).all()
     expect(rows.map(m => [m.athleteAId, m.athleteBId])).toEqual([[id('Nadia'), id('Kai')], [id('Ines'), id('Bruno')]])
     expect(rows.every(m => m.source === 'proposed')).toBe(true)
     expect(await db.select().from(proposals).where(eq(proposals.eventId, s.eventId)).all()).toEqual([])
-    expect((await call(app, 'POST', `/api/events/${s.eventId}/proposals/confirm-all`, undefined, adminToken)).body).toEqual({ created: 0 })
+    expect((await call(app, 'POST', `/api/events/${s.eventId}/proposals/confirm-all`, undefined, adminToken)).body).toEqual({ created: 0, skipped: 0 })
     expect((await call(app, 'POST', '/api/events/9999/proposals/confirm-all', undefined, adminToken)).status).toBe(404)
   })
 })

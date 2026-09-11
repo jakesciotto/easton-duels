@@ -3,12 +3,12 @@ import { z } from 'zod'
 import { and, asc, eq, inArray, ne, or } from 'drizzle-orm'
 import type { Env } from '../context.js'
 import type { DbLike } from '../db/client.js'
-import { events, athletes, rulesets, matches, proposals, type ProposalRow } from '../db/schema.js'
+import { events, athletes, rulesets, proposals, type ProposalRow } from '../db/schema.js'
 import { validate } from '../lib/validate.js'
 import { errorJson, requireAdmin } from '../auth/middleware.js'
 import { assertNotCertified } from '../audit/certify.js'
 import { createMatch } from '../match/create.js'
-import { resolvePair } from '../match/pairs.js'
+import { busyAthlete, resolvePair } from '../match/pairs.js'
 import { loadProposal, loadProposals, pairCost, pairWarnings, pairWhy, proposeMatches } from '../matchmaker/propose.js'
 
 const swapSchema = z.object({
@@ -24,12 +24,26 @@ const firstRuleset = (db: DbLike, eventId: number) =>
 
 // A confirmed draft becomes a match on the same path the Add match dialog uses, and stops
 // being a draft in the same transaction.
+//
+// The draft was written against a pool that has moved on since. A kid the organizer has
+// given a match by hand in the meantime is spoken for, and the server is the one choosing
+// this pair, so it refuses rather than warns. The check sits inside the insert's
+// transaction so two confirms racing over the same kid cannot both pass it.
 const confirm = (db: DbLike, row: ProposalRow, rulesetId: number) =>
   createMatch(
     db,
     { eventId: row.eventId, athleteAId: row.athleteAId, athleteBId: row.athleteBId, rulesetId, source: 'proposed' },
-    async tx => { await tx.delete(proposals).where(eq(proposals.id, row.id)).run() },
+    {
+      guard: async tx => {
+        const busy = await busyAthlete(tx, row.eventId, [row.athleteAId, row.athleteBId])
+        return busy ? `${busy.firstName} ${busy.lastName} already has a match` : null
+      },
+      also: async tx => { await tx.delete(proposals).where(eq(proposals.id, row.id)).run() },
+    },
   )
+
+const refuse = (c: Parameters<typeof errorJson>[0], r: { code: 'validation' | 'match_state'; message: string }) =>
+  errorJson(c, r.code === 'match_state' ? 409 : 422, r.code, r.message)
 
 export const proposalRoutes = new Hono<Env>()
 
@@ -57,12 +71,13 @@ proposalRoutes.post('/events/:eventId/proposals/confirm-all', requireAdmin, asyn
   const rows = await db.select().from(proposals).where(eq(proposals.eventId, eventId))
     .orderBy(asc(proposals.cost), asc(proposals.id)).all()
   // Closest first, one match at a time, so each match lands on the mat that is emptiest
-  // once the one before it has been placed.
+  // once the one before it has been placed. A draft this cannot confirm stays a draft, so
+  // the organizer can swap or remove it; `skipped` is how many the panel still holds.
   let created = 0
   for (const row of rows) {
     if ((await confirm(db, row, ruleset.id)).ok) created++
   }
-  return c.json({ created }, 201)
+  return c.json({ created, skipped: rows.length - created }, 201)
 })
 
 proposalRoutes.post('/proposals/:proposalId/confirm', requireAdmin, async c => {
@@ -73,7 +88,7 @@ proposalRoutes.post('/proposals/:proposalId/confirm', requireAdmin, async c => {
   const ruleset = await firstRuleset(db, row.eventId)
   if (!ruleset) return errorJson(c, 409, 'match_state', 'event needs a ruleset')
   const result = await confirm(db, row, ruleset.id)
-  if (!result.ok) return errorJson(c, 422, 'validation', result.message)
+  if (!result.ok) return refuse(c, result)
   return c.json({ match: result.match }, 201)
 })
 
@@ -87,14 +102,7 @@ proposalRoutes.patch('/proposals/:proposalId', requireAdmin, validate('json', sw
   // refusing on their account would strand a draft the organizer is trying to fix.
   const incoming = [body.athleteAId, body.athleteBId]
     .filter((id): id is number => id !== undefined && id !== row.athleteAId && id !== row.athleteBId)
-  if (incoming.length > 0) {
-    const busy = await db.select({ id: matches.id }).from(matches).where(and(
-      eq(matches.eventId, row.eventId),
-      eq(matches.status, 'pending'),
-      or(inArray(matches.athleteAId, incoming), inArray(matches.athleteBId, incoming)),
-    )).get()
-    if (busy) return errorJson(c, 409, 'match_state', 'already has a match')
-  }
+  if (await busyAthlete(db, row.eventId, incoming)) return errorJson(c, 409, 'match_state', 'already has a match')
 
   const pair = await resolvePair(db, row.eventId, body.athleteAId ?? row.athleteAId, body.athleteBId ?? row.athleteBId)
   if (typeof pair === 'string') return errorJson(c, 422, 'validation', pair)

@@ -44,7 +44,7 @@ matchRoutes.post('/events/:eventId/matches', requireAdmin, validate('json', crea
   await assertNotCertified(db, eventId)
   const body = c.req.valid('json')
   const created = await createMatch(db, { eventId, ...body, source: 'designed' })
-  if (!created.ok) return errorJson(c, 422, 'validation', created.message)
+  if (!created.ok) return errorJson(c, created.code === 'match_state' ? 409 : 422, created.code, created.message)
   // A pair a person picked is never refused for being odd, only reported back, because the
   // organizer knows things the roster does not.
   const warnings = await pairWarnings(db, eventId, created.match.athleteAId, created.match.athleteBId, { exceptMatchId: created.match.id })

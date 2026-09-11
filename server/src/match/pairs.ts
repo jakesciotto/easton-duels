@@ -1,6 +1,6 @@
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, inArray, or } from 'drizzle-orm'
 import type { DbLike } from '../db/client.js'
-import { teams, athletes, mats, matches } from '../db/schema.js'
+import { teams, athletes, mats, matches, type AthleteRow } from '../db/schema.js'
 
 // Returns the pair with the kid from the earlier team first, or a message when the pair is
 // invalid. An event holds up to eight teams, so the order is the teams' own, which is what
@@ -16,6 +16,25 @@ export async function resolvePair(db: DbLike, eventId: number, aId: number, bId:
   if (a.teamId === b.teamId) return 'athletes must be on different teams'
   const positionOf = new Map(teamRows.map(t => [t.id, t.position]))
   return (positionOf.get(a.teamId) ?? 0) <= (positionOf.get(b.teamId) ?? 0) ? { a: a.id, b: b.id } : { a: b.id, b: a.id }
+}
+
+/**
+ * The first of these kids who already has an unfought match on this event, or null. A
+ * pending match is a pairing nobody has run yet, so a second one for the same kid is a
+ * mistake wherever the server is the one choosing the pair.
+ */
+export async function busyAthlete(db: DbLike, eventId: number, ids: number[]): Promise<AthleteRow | null> {
+  if (ids.length === 0) return null
+  const rows = await db.select({ a: matches.athleteAId, b: matches.athleteBId }).from(matches).where(and(
+    eq(matches.eventId, eventId),
+    eq(matches.status, 'pending'),
+    or(inArray(matches.athleteAId, ids), inArray(matches.athleteBId, ids)),
+  )).all()
+  const taken = new Set(rows.flatMap(m => [m.a, m.b]))
+  const first = ids.find(id => taken.has(id))
+  if (first === undefined) return null
+  const kid = await db.select().from(athletes).where(eq(athletes.id, first)).get()
+  return kid ?? null
 }
 
 export async function leastLoadedMat(db: DbLike, eventId: number): Promise<number | null> {
