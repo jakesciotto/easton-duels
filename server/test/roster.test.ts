@@ -7,7 +7,7 @@ import { buildCandidates } from '../src/roster/join.js'
 import { rosterFromEnv } from '../src/roster/config.js'
 import { WlRequestError } from '../src/roster/wl.js'
 import type { WlBeltRecord, LeaderboardCompetitor, WlLocation, WlNameFilter, RosterCandidate } from '../src/roster/types.js'
-import { events, athletes, rosterCandidates } from '../src/db/schema.js'
+import { auditLog, events, athletes, rosterCandidates } from '../src/db/schema.js'
 import type { Db } from '../src/db/client.js'
 import { createTestApp, call } from './helpers.js'
 import { seedEvent } from './fixtures.js'
@@ -202,6 +202,29 @@ describe('roster routes', () => {
     expect(detail.body.event.wlLocations).toBeNull()
   })
 
+  it('refuses a sync when WellnessLiving names no location, and writes nothing', async () => {
+    const wl = wlFake([])
+    const { app, db, adminToken } = await createTestApp({ roster: { wl, leaderboard: null, syncBudgetMs: null } })
+    const s = await seedEvent(db, { matches: 0 })
+    await db.update(athletes).set({ wlUid: 'w5', belt: 'grey' }).where(eq(athletes.id, s.a2)).run()
+    const versionOf = async () => (await db.select({ version: events.version }).from(events).where(eq(events.id, s.eventId)).get())!.version
+    const before = await versionOf()
+
+    const r = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, undefined, adminToken)
+
+    expect(r.status).toBe(503)
+    expect(r.body.error.code).toBe('wl_error')
+    expect(r.body.error.message).toBe('WellnessLiving returned no locations for this business')
+    // Nobody was asked, so no row may carry the time of a look, and the linked row keeps
+    // the profile it had rather than being reported gone from an empty pool.
+    const rows = await db.select().from(athletes).where(eq(athletes.eventId, s.eventId)).all()
+    expect(rows.every(a => a.syncedAt === null)).toBe(true)
+    expect(rows.every(a => a.syncChanges === null)).toBe(true)
+    expect(rows.find(a => a.id === s.a2)).toMatchObject({ wlUid: 'w5', belt: 'grey' })
+    expect(await versionOf()).toBe(before)
+    expect(await db.select().from(auditLog).where(eq(auditLog.eventId, s.eventId)).all()).toEqual([])
+  })
+
   it('gives up mid-location once the sync budget is spent, not only between locations', async () => {
     // Real start point: the admin token's expiry is checked against this same clock.
     const clock = { ms: Date.now() }
@@ -325,6 +348,15 @@ describe('the WellnessLiving search', () => {
     expect(r.status).toBe(200)
     expect(wl.searches[0].filter).toEqual({ uids: [], lastTokens: ['zo'], firstTokens: ['zo'] })
     expect(r.body.map((c: RosterCandidate) => c.wlUid)).toEqual(['9'])
+  })
+
+  it('refuses a search when WellnessLiving names no location', async () => {
+    const { app, db, adminToken } = await createTestApp(wlConfig(wlFake([])))
+    const s = await seedEvent(db, { matches: 0 })
+    const r = await call(app, 'GET', `/api/events/${s.eventId}/wl-search?q=martin`, undefined, adminToken)
+    expect(r.status).toBe(503)
+    expect(r.body.error.code).toBe('wl_error')
+    expect(r.body.error.message).toBe('WellnessLiving returned no locations for this business')
   })
 
   it('503s when WellnessLiving is not configured, and 404s an unknown event', async () => {

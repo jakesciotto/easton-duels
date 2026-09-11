@@ -21,6 +21,9 @@ type Sweep = { ok: true; records: WlBeltRecord[]; locations: number } | { ok: fa
  * platform timeout instead of an envelope it can render. The same absolute deadline is
  * handed to every location's own search, so a report that is still polling when the budget
  * runs out gives up mid-flight instead of only being caught once it returns.
+ *
+ * A business with no location is a failure, not an empty gym: nothing was asked, so the
+ * sync must not go on to report a roster it never looked for as missing.
  */
 async function sweepLocations(wl: WlLike, filter: WlNameFilter, budgetMs: number | null): Promise<Sweep> {
   const deadline = budgetMs === null ? null : Date.now() + budgetMs
@@ -30,6 +33,7 @@ async function sweepLocations(wl: WlLike, filter: WlNameFilter, budgetMs: number
   const outOfTime = () => `ran out of time after ${done} of ${locations} locations; try again`
   try {
     const all = await wl.listLocations()
+    if (all.length === 0) return { ok: false, message: 'WellnessLiving returned no locations for this business' }
     locations = all.length
     for (const loc of all) {
       if (deadline !== null && Date.now() > deadline) return { ok: false, message: outOfTime() }
