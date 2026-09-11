@@ -7,7 +7,7 @@ import { fetchCompetitors } from '../roster/leaderboard.js'
 import { buildCandidates } from '../roster/join.js'
 import { syncRoster } from '../roster/sync.js'
 import { WlRequestError } from '../roster/wl.js'
-import { nameTokens } from '../shared/similarity.js'
+import { nameScore, nameTokens } from '../shared/similarity.js'
 import { assertNotCertified } from '../audit/certify.js'
 import type { WlBeltRecord, WlLike, WlNameFilter, LeaderboardCompetitor, RosterCandidate } from '../roster/types.js'
 
@@ -111,5 +111,36 @@ rosterRoutes.get('/events/:eventId/candidates', requireAdmin, async c => {
     wlUid: r.wlUid, firstName: r.firstName, lastName: r.lastName, belt: r.belt, wlLocation: r.wlLocation ?? '',
     leaderboardId: r.leaderboardId, erp: r.erp, age: r.age, weightLbs: r.weightLbs, gender: r.gender, promotedAt: r.promotedAt,
   }))
+  return c.json(body)
+})
+
+rosterRoutes.get('/events/:eventId/wl-search', requireAdmin, async c => {
+  const { db, roster } = c.get('ctx')
+  const eventId = Number(c.req.param('eventId'))
+  if (!await db.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get()) return errorJson(c, 404, 'not_found', 'event not found')
+  if (!roster.wl) return errorJson(c, 503, 'wl_not_configured', 'WellnessLiving credentials are not set')
+  const q = (c.req.query('q') ?? '').trim()
+  if (q.length < 2) return errorJson(c, 422, 'validation', 'Type at least two letters.')
+
+  // A person types a name without saying which half it is, so both name columns are asked.
+  const tokens = nameTokens(q)
+  const found = await sweepLocations(roster.wl, { uids: [], lastTokens: tokens, firstTokens: tokens }, roster.syncBudgetMs)
+  if (!found.ok) return errorJson(c, 503, 'wl_error', found.message)
+
+  // The leaderboard is a bonus here: without it a candidate still carries the name, the
+  // belt and the location a picker needs.
+  let competitors: LeaderboardCompetitor[] = []
+  if (roster.leaderboard) {
+    try {
+      competitors = (await fetchCompetitors(roster.leaderboard)).competitors
+    } catch {
+      competitors = []
+    }
+  }
+  const typed = { firstName: q, lastName: '' }
+  const body: RosterCandidate[] = buildCandidates(found.records, competitors)
+    .map(cand => ({ cand, score: nameScore(typed, cand) }))
+    .sort((a, b) => b.score - a.score)
+    .map(scored => scored.cand)
   return c.json(body)
 })

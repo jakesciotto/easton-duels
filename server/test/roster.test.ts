@@ -94,42 +94,42 @@ describe('rosterFromEnv', () => {
   })
 })
 
-describe('roster routes', () => {
-  const NORTH = { kBusiness: '100001', title: 'North', city: 'Northtown' }
-  const SOUTH = { kBusiness: '100002', title: 'South', city: 'Southtown' }
+const NORTH = { kBusiness: '100001', title: 'North', city: 'Northtown' }
+const SOUTH = { kBusiness: '100002', title: 'South', city: 'Southtown' }
 
-  // Two children on the books, one at each location.
-  const GYM = [
-    { uid: '9', firstName: 'Zoe', lastName: 'Martin', kBusiness: NORTH.kBusiness },
-    { uid: '11', firstName: 'Ana', lastName: 'Martin', kBusiness: SOUTH.kBusiness },
-  ]
+// Two children on the books, one at each location.
+const GYM = [
+  { uid: '9', firstName: 'Zoe', lastName: 'Martin', kBusiness: NORTH.kBusiness },
+  { uid: '11', firstName: 'Ana', lastName: 'Martin', kBusiness: SOUTH.kBusiness },
+]
 
-  // What the report's own where clause asks for: a record answers when the filter names
-  // its uid, or one of the filter's tokens appears in one of its names.
-  const answers = (filter: WlNameFilter, r: WlBeltRecord) =>
-    filter.uids.includes(r.uid)
-    || filter.lastTokens.some(t => r.lastName.toLowerCase().includes(t))
-    || filter.firstTokens.some(t => r.firstName.toLowerCase().includes(t))
+// What the report's own where clause asks for: a record answers when the filter names
+// its uid, or one of the filter's tokens appears in one of its names.
+const answers = (filter: WlNameFilter, r: WlBeltRecord) =>
+  filter.uids.includes(r.uid)
+  || filter.lastTokens.some(t => r.lastName.toLowerCase().includes(t))
+  || filter.firstTokens.some(t => r.firstName.toLowerCase().includes(t))
 
-  function wlFake(locations: WlLocation[] = [NORTH], gym = GYM) {
-    const searches: { location: string; filter: WlNameFilter }[] = []
-    const at = (kBusiness: string, location: string): WlBeltRecord[] => gym
-      .filter(kid => kid.kBusiness === kBusiness)
-      .map(kid => ({ uid: kid.uid, kBusiness, location, firstName: kid.firstName, lastName: kid.lastName, rankTitle: 'Grey Belt', categoryTitle: 'Kids IBJJF Belts', promotedAt: null }))
-    return {
-      searches,
-      async listLocations() { return locations },
-      async fetchKidsBeltRecords(kBusiness: string, location: string) { return at(kBusiness, location) },
-      async searchKidsBeltRecords(kBusiness: string, location: string, filter: WlNameFilter) {
-        searches.push({ location, filter })
-        return at(kBusiness, location).filter(r => answers(filter, r))
-      },
-    }
+function wlFake(locations: WlLocation[] = [NORTH], gym = GYM) {
+  const searches: { location: string; filter: WlNameFilter }[] = []
+  const at = (kBusiness: string, location: string): WlBeltRecord[] => gym
+    .filter(kid => kid.kBusiness === kBusiness)
+    .map(kid => ({ uid: kid.uid, kBusiness, location, firstName: kid.firstName, lastName: kid.lastName, rankTitle: 'Grey Belt', categoryTitle: 'Kids IBJJF Belts', promotedAt: null }))
+  return {
+    searches,
+    async listLocations() { return locations },
+    async fetchKidsBeltRecords(kBusiness: string, location: string) { return at(kBusiness, location) },
+    async searchKidsBeltRecords(kBusiness: string, location: string, filter: WlNameFilter) {
+      searches.push({ location, filter })
+      return at(kBusiness, location).filter(r => answers(filter, r))
+    },
   }
+}
 
-  const addZoe = (db: Db, eventId: number) =>
-    db.insert(athletes).values({ eventId, firstName: 'Zoe', lastName: 'Martin', source: 'manual' }).run()
+const addZoe = (db: Db, eventId: number) =>
+  db.insert(athletes).values({ eventId, firstName: 'Zoe', lastName: 'Martin', source: 'manual' }).run()
 
+describe('roster routes', () => {
   it('503s when WL is not configured', async () => {
     const { app, db, adminToken } = await createTestApp()
     const s = await seedEvent(db)
@@ -268,6 +268,60 @@ describe('roster routes', () => {
     const r = await call(app, 'POST', '/api/events/999999/roster/sync', undefined, adminToken)
     expect(r.status).toBe(404)
     expect(wl.searches).toEqual([])
+  })
+})
+
+describe('the WellnessLiving search', () => {
+  const wlConfig = (wl: ReturnType<typeof wlFake>) => ({ roster: { wl, leaderboard: null, syncBudgetMs: null } })
+
+  it('asks for one letter more than the field does, and says so in the field\'s own words', async () => {
+    const { app, db, adminToken } = await createTestApp(wlConfig(wlFake()))
+    const s = await seedEvent(db, { matches: 0 })
+    for (const q of ['', '%20a%20']) {
+      const r = await call(app, 'GET', `/api/events/${s.eventId}/wl-search?q=${q}`, undefined, adminToken)
+      expect(r.status).toBe(422)
+      expect(r.body.error.code).toBe('validation')
+      expect(r.body.error.message).toBe('Type at least two letters.')
+    }
+  })
+
+  it('searches every location by first and last name, orders by score, and stores nothing', async () => {
+    const wl = wlFake([NORTH, SOUTH])
+    const { app, db, adminToken } = await createTestApp(wlConfig(wl))
+    const s = await seedEvent(db, { matches: 0 })
+
+    const r = await call(app, 'GET', `/api/events/${s.eventId}/wl-search?q=zoe%20martin`, undefined, adminToken)
+
+    expect(r.status).toBe(200)
+    expect(wl.searches.map(x => x.location)).toEqual(['North', 'South'])
+    expect(wl.searches[0].filter).toEqual({ uids: [], lastTokens: ['zoe', 'martin'], firstTokens: ['zoe', 'martin'] })
+    expect(r.body.map((c: RosterCandidate) => c.wlUid)).toEqual(['9', '11'])
+    expect(r.body[0]).toMatchObject({ firstName: 'Zoe', lastName: 'Martin', belt: 'grey', wlLocation: 'North' })
+    expect(await db.select().from(rosterCandidates).where(eq(rosterCandidates.eventId, s.eventId)).all()).toEqual([])
+  })
+
+  it('answers nothing for a query with no run of three letters, which narrows nothing', async () => {
+    const wl = wlFake([NORTH, SOUTH])
+    const { app, db, adminToken } = await createTestApp(wlConfig(wl))
+    const s = await seedEvent(db, { matches: 0 })
+    const r = await call(app, 'GET', `/api/events/${s.eventId}/wl-search?q=zo`, undefined, adminToken)
+    expect(r.status).toBe(200)
+    expect(r.body).toEqual([])
+  })
+
+  it('503s when WellnessLiving is not configured, and 404s an unknown event', async () => {
+    const { app, db, adminToken } = await createTestApp()
+    const s = await seedEvent(db, { matches: 0 })
+    const off = await call(app, 'GET', `/api/events/${s.eventId}/wl-search?q=martin`, undefined, adminToken)
+    expect(off.status).toBe(503)
+    expect(off.body.error.code).toBe('wl_not_configured')
+    expect((await call(app, 'GET', '/api/events/999999/wl-search?q=martin', undefined, adminToken)).status).toBe(404)
+  })
+
+  it('needs an admin token', async () => {
+    const { app, db } = await createTestApp(wlConfig(wlFake()))
+    const s = await seedEvent(db, { matches: 0 })
+    expect((await call(app, 'GET', `/api/events/${s.eventId}/wl-search?q=martin`)).status).toBe(401)
   })
 })
 
