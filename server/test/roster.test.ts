@@ -97,18 +97,22 @@ describe('rosterFromEnv', () => {
 const NORTH = { kBusiness: '100001', title: 'North', city: 'Northtown' }
 const SOUTH = { kBusiness: '100002', title: 'South', city: 'Southtown' }
 
-// Two children on the books, one at each location.
+// Three children on the books, two at North and one at South, stored the way
+// WellnessLiving stores a name: in title case, whatever case the roster types.
 const GYM = [
   { uid: '9', firstName: 'Zoe', lastName: 'Martin', kBusiness: NORTH.kBusiness },
+  { uid: '13', firstName: 'Iris', lastName: 'Delgado', kBusiness: NORTH.kBusiness },
   { uid: '11', firstName: 'Ana', lastName: 'Martin', kBusiness: SOUTH.kBusiness },
 ]
 
-// What the report's own where clause asks for: a record answers when the filter names
-// its uid, or one of the filter's tokens appears in one of its names.
+// What the report's own where clause asks for: a record answers when the filter names its
+// uid, or one of the filter's tokens appears in one of its names. The name comparison
+// lowers both sides, exactly as the query's lower() does, because WellnessLiving's own
+// like is case sensitive and a bare column would answer nothing for a title case name.
 const answers = (filter: WlNameFilter, r: WlBeltRecord) =>
   filter.uids.includes(r.uid)
-  || filter.lastTokens.some(t => r.lastName.toLowerCase().includes(t))
-  || filter.firstTokens.some(t => r.firstName.toLowerCase().includes(t))
+  || filter.lastTokens.some(t => r.lastName.toLowerCase().includes(t.toLowerCase()))
+  || filter.firstTokens.some(t => r.firstName.toLowerCase().includes(t.toLowerCase()))
 
 function wlFake(locations: WlLocation[] = [NORTH], gym = GYM) {
   const searches: { location: string; filter: WlNameFilter }[] = []
@@ -169,6 +173,19 @@ describe('roster routes', () => {
     expect(found.body.candidates.map((c: RosterCandidate) => c.wlLocation).sort()).toEqual(['North', 'South'])
     expect(found.body.candidates.find((c: RosterCandidate) => c.wlUid === '9')).toMatchObject({ firstName: 'Zoe', belt: 'grey', wlLocation: 'North', erp: null })
     expect(found.body.report.linked).toEqual(['Zoe Martin'])
+  })
+
+  it('finds a child whose name the roster typed in another case', async () => {
+    const wl = wlFake()
+    const { app, db, adminToken } = await createTestApp({ roster: { wl, leaderboard: null, syncBudgetMs: null } })
+    const s = await seedEvent(db, { matches: 0 })
+    await db.insert(athletes).values({ eventId: s.eventId, firstName: 'Iris', lastName: 'DELGADO', source: 'manual' }).run()
+
+    const r = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, undefined, adminToken)
+
+    expect(wl.searches[0].filter.lastTokens).toContain('delgado')
+    expect(r.body.candidates.map((c: RosterCandidate) => c.wlUid)).toEqual(['13'])
+    expect(r.body.report.linked).toEqual(['Iris DELGADO'])
   })
 
   it('ignores a body, and never writes the location column any more', async () => {

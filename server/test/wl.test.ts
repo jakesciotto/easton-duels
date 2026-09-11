@@ -100,7 +100,7 @@ describe('WlClient, a filtered search', () => {
     const rows = await wl.searchKidsBeltRecords('100001', 'Ridgeline', filter)
     expect(rows).toEqual([{ uid: 'w1', kBusiness: '100001', location: 'Ridgeline', firstName: 'Zoe', lastName: 'Martin', rankTitle: 'Grey Belt', categoryTitle: 'Kids IBJJF Belts', promotedAt: '2026-01-01' }])
     const body = JSON.parse(String(calls[1].init?.body))
-    expect(body.s_sql).toContain("and (uid in ('w1') or `o_client.text_last` like '%martin%')")
+    expect(body.s_sql).toContain("and (uid in ('w1') or lower(`o_client.text_last`) like '%martin%')")
   })
 
   it('asks WellnessLiving nothing when the filter names nobody', async () => {

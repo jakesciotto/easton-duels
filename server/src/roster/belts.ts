@@ -25,7 +25,9 @@ const quote = (s: string): string => s.replace(/'/g, "''")
  *
  * WellnessLiving answers a report whose where clause names an unknown column by polling
  * forever, so every column here is written exactly as the projection above names it,
- * backticks and all.
+ * backticks and all. Its `like` is case sensitive too, and a name is stored in title case,
+ * so both sides of a name comparison go through lower(); `ilike`, `collate nocase` and
+ * `regexp` each hang the report until the deadline.
  */
 export function searchQuery(filter: WlNameFilter, categoryTitle?: string): string[] {
   const terms = [
@@ -39,7 +41,7 @@ export function searchQuery(filter: WlNameFilter, categoryTitle?: string): strin
     const uids = batch.filter(t => t.column === null).map(t => `'${quote(t.value)}'`)
     const clauses = uids.length > 0 ? [`uid in (${uids.join(',')})`] : []
     for (const t of batch) {
-      if (t.column !== null) clauses.push(`\`${t.column}\` like '%${quote(t.value)}%'`)
+      if (t.column !== null) clauses.push(`lower(\`${t.column}\`) like '%${quote(t.value.toLowerCase())}%'`)
     }
     queries.push(`${kidsQuery(categoryTitle)} and (${clauses.join(' or ')})`)
   }
