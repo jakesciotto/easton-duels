@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { TEAM_COLOR_KEYS, type TeamColor } from '@shared/types'
-import { CONFUSION_FLOOR, CONFUSION_WARN, HUE_FLOOR, confusion, hueSeparation, pairVerdict, suggestions } from '@/lib/team-guard'
+import { CONFUSION_FLOOR, CONFUSION_WARN, HUE_FLOOR, colourVerdict, confusion, freeColors, hueSeparation, nextColor, suggestions } from '@/lib/team-guard'
 
-const blocked = (chosen: TeamColor) => TEAM_COLOR_KEYS.filter(c => c !== chosen && pairVerdict(chosen, c).level === 'block')
+const blocked = (chosen: TeamColor) => TEAM_COLOR_KEYS.filter(c => c !== chosen && colourVerdict(c, [chosen]).level === 'block')
 
 describe('team colour guards', () => {
   it('blocks exactly the two ring neighbours on hue alone, which is what 2.4 predicts', () => {
@@ -15,7 +15,7 @@ describe('team colour guards', () => {
   })
 
   it('names the pair and two legal swaps, generated rather than written', () => {
-    expect(pairVerdict('red', 'orange')).toEqual({
+    expect(colourVerdict('orange', ['red'])).toEqual({
       level: 'block',
       reason: 'Crimson and Amber look the same from the back of the gym. Try Azure or Teal.',
     })
@@ -26,7 +26,7 @@ describe('team colour guards', () => {
     // deuteranope. Hue separation cannot see that at all.
     expect(hueSeparation('pink', 'teal')).toBe(144)
     expect(confusion('pink', 'teal')).toBeLessThan(CONFUSION_FLOOR)
-    expect(pairVerdict('pink', 'teal').reason).toBe('These two look the same to about one person in twelve. Try Citron or Green.')
+    expect(colourVerdict('teal', ['pink']).reason).toBe('These two look the same to about one person in twelve. Try Citron or Green.')
 
     expect(blocked('red')).toEqual(['green', 'amber', 'pink', 'orange'])
     for (const c of TEAM_COLOR_KEYS) {
@@ -38,21 +38,42 @@ describe('team colour guards', () => {
     const dE = confusion('red', 'teal')
     expect(dE).toBeGreaterThanOrEqual(CONFUSION_FLOOR)
     expect(dE).toBeLessThan(CONFUSION_WARN)
-    expect(pairVerdict('red', 'teal').level).toBe('warn')
+    expect(colourVerdict('teal', ['red']).level).toBe('warn')
   })
 
   it('never leaves an organizer without a legal partner', () => {
     for (const c of TEAM_COLOR_KEYS) {
       expect(TEAM_COLOR_KEYS.length - 1 - blocked(c).length).toBeGreaterThanOrEqual(3)
-      expect(suggestions(c)).toHaveLength(2)
+      expect(suggestions([c])).toHaveLength(2)
     }
   })
 
   it('refuses the colour the other team already holds', () => {
-    expect(pairVerdict('blue', 'blue').level).toBe('block')
+    expect(colourVerdict('blue', ['blue']).level).toBe('block')
   })
 
   it('leaves the shipped default pair legal', () => {
-    expect(pairVerdict('red', 'blue').level).toBe('ok')
+    expect(colourVerdict('blue', ['red']).level).toBe('ok')
+  })
+
+  // An event holds up to eight teams, so a colour has to survive every one of them.
+  it('takes the worst verdict across every team already on the event', () => {
+    expect(colourVerdict('purple', ['red']).level).toBe('ok')
+    expect(colourVerdict('purple', ['red', 'blue']).level).toBe('block')
+  })
+
+  it('keeps a colour another team holds off the grid', () => {
+    expect(freeColors(['red', 'blue'])).not.toContain('red')
+    expect(freeColors(['red', 'blue'])).not.toContain('blue')
+    expect(freeColors([])).toEqual(TEAM_COLOR_KEYS)
+  })
+
+  // Eight hues 45 degrees apart cannot all clear a 60 degree floor, so a third team has
+  // nothing legal left. The suggestion is empty rather than wrong, and a fresh team still
+  // opens on a free colour.
+  it('runs out of legal colours past two teams, and still opens a third on a free one', () => {
+    expect(suggestions(['red', 'blue'])).toEqual([])
+    expect(colourVerdict('green', ['red', 'blue']).reason).not.toContain('Try')
+    expect(['red', 'blue']).not.toContain(nextColor(['red', 'blue']))
   })
 })

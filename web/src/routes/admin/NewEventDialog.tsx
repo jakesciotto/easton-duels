@@ -1,15 +1,13 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { RadioGroup } from '@base-ui/react/radio-group'
-import { Radio } from '@base-ui/react/radio'
-import { TEAM_COLOR_KEYS, TEAM_COLOR_LABELS, teamCode, type EventMode, type TeamColor } from '@shared/types'
+import type { EventMode } from '@shared/types'
 import { adminApi, useAdminMutation } from '@/lib/queries'
 import { MODE_GROUP_LABEL, MODE_HELP, MODE_OPTIONS, toMode } from '@/lib/eventMode'
-import { teamStyle } from '@/lib/format'
-import { pairVerdict, type GuardLevel } from '@/lib/team-guard'
+import { rankTeams } from '@/lib/leaderboard'
 import type { EventDetail } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { TeamPlate } from '@/components/TeamPlate'
 import { SetupSteps } from '@/components/SetupSteps'
+import { TeamList, type TeamDraft } from '@/routes/event/TeamList'
 import { dialogBody, dialogFooter, dialogStack, dialogSurface } from '@/components/dialog-frame'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -23,7 +21,7 @@ function today(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
-interface Team { name: string; color: TeamColor }
+const STARTING_TEAMS: TeamDraft[] = [{ name: '', color: 'red' }, { name: '', color: 'blue' }]
 
 // 7.8: never <input type="number">. The spinner adds arrows the numeric track has no
 // room for and hijacks the scroll wheel, so every count is a text field that carries
@@ -60,96 +58,21 @@ function CountField({ id, label, value, min, max, onChange }: {
   )
 }
 
-/**
- * 2.4's two guards, enforced from the tables rather than from memory. An illegal
- * partner renders at 40 percent with `aria-disabled` and is refused on selection with
- * the reason named, because a swatch that silently does nothing teaches nothing.
- */
-function ColourGrid({ value, other, onChange, label }: {
-  value: TeamColor
-  other: TeamColor
-  onChange: (c: TeamColor) => void
-  label: string
-}) {
-  const [refused, setRefused] = useState<TeamColor | null>(null)
-  const verdicts = new Map(TEAM_COLOR_KEYS.map(c => [c, pairVerdict(other, c)]))
-  const levelOf = (c: TeamColor): GuardLevel => verdicts.get(c)?.level ?? 'ok'
-  const shown = refused !== null && levelOf(refused) === 'block' ? refused : levelOf(value) === 'warn' ? value : null
-
-  return (
-    <div className="grid gap-2">
-      <RadioGroup
-        value={value}
-        aria-label={label}
-        onValueChange={v => {
-          const next = v as TeamColor
-          if (levelOf(next) === 'block') return setRefused(next)
-          setRefused(null)
-          onChange(next)
-        }}
-        className="flex flex-wrap gap-2"
-      >
-        {TEAM_COLOR_KEYS.map(c => (
-          <Radio.Root
-            key={c}
-            value={c}
-            aria-label={TEAM_COLOR_LABELS[c]}
-            aria-disabled={levelOf(c) === 'block' || undefined}
-            style={teamStyle(c)}
-            className={cn(
-              'team-dot size-[18px] rounded-full outline-none transition-opacity duration-150 ease-standard focus-visible:shadow-focus data-checked:ring-[1.5px] data-checked:ring-primary data-checked:ring-offset-2 data-checked:ring-offset-card',
-              levelOf(c) === 'block' && 'opacity-40',
-            )}
-          />
-        ))}
-      </RadioGroup>
-      {shown !== null && <p className="t2 text-gray-10">{verdicts.get(shown)?.reason}</p>}
-    </div>
-  )
-}
-
-function TeamBlock({ id, role, team, other, onChange }: {
-  id: string
-  role: string
-  team: Team
-  other: TeamColor
-  onChange: (t: Team) => void
-}) {
-  return (
-    <div className="grid content-start gap-3 bg-gray-1 p-4">
-      <div className="flex min-w-0 items-center gap-3">
-        <TeamPlate color={team.color} name={team.name || role} />
-        <span className="ml-auto shrink-0 t1 uppercase text-gray-10">{role}</span>
-      </div>
-      <div className="grid gap-2">
-        <Label htmlFor={id}>{role} name</Label>
-        <Input id={id} required value={team.name} onChange={e => onChange({ ...team, name: e.target.value })} />
-      </div>
-      <p className="t1 text-gray-10">
-        Board code <span className="fig fig-3 text-gray-11">{teamCode(team.name || role)}</span>
-      </p>
-      <ColourGrid value={team.color} other={other} label={`${role} colour`} onChange={color => onChange({ ...team, color })} />
-    </div>
-  )
-}
-
-// The room's view, at 120px. Nothing here is a board token: the board is sized in cqh
-// against its own stage and this is a still life of it inside a console dialog.
-function HeroPreview({ a, b }: { a: Team; b: Team }) {
-  const half = (team: Team, right: boolean) => (
-    <div className={cn('grid min-w-0 content-start gap-2', right && 'justify-items-end text-right')}>
-      <span aria-hidden style={teamStyle(team.color)} className="h-1 w-full bg-[var(--team)]" />
-      <TeamPlate color={team.color} name={team.name || (right ? 'Team B' : 'Team A')} size="scorer" />
-      <span className="fig fig-2 t7 text-gray-12">0</span>
-    </div>
-  )
+// The room's view, at the type step the console reads at. Nothing here is a board token:
+// the board is sized in cqh against its own stage and this is a still life of it.
+function LeaderboardPreview({ teams }: { teams: TeamDraft[] }) {
+  const rows = rankTeams(teams.map((_, i) => ({ id: i, wins: 0, points: 0, position: i })))
   return (
     <div className="grid gap-2">
       <span className="t1 uppercase text-gray-10">The room's view</span>
-      <div aria-hidden className="grid h-[120px] grid-cols-[1fr_24px_1fr] bg-background p-3">
-        {half(a, false)}
-        <span />
-        {half(b, true)}
+      <div aria-hidden className="grid gap-3 bg-background p-4">
+        {rows.map(row => (
+          <div key={row.teamId} className="grid grid-cols-[var(--col-num-s)_minmax(0,1fr)_62.4px] items-center gap-x-6">
+            <span className="fig t3 text-gray-10">{row.rank}</span>
+            <TeamPlate color={teams[row.teamId].color} name={teams[row.teamId].name || `Team ${row.teamId + 1}`} size="scorer" />
+            <span className="fig fig-2 t5 text-right text-gray-12">0</span>
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -160,8 +83,9 @@ export function NewEventDialog({ open, onOpenChange, onCreated }: { open: boolea
   const [date, setDate] = useState(today)
   const [mode, setMode] = useState<EventMode>('live')
   const [matCount, setMatCount] = useState('1')
-  const [teamA, setTeamA] = useState<Team>({ name: '', color: 'red' })
-  const [teamB, setTeamB] = useState<Team>({ name: '', color: 'blue' })
+  // Two rows to start, to eight, and never below two. The rows are still a draft here:
+  // nothing reaches the server until Continue.
+  const [teams, setTeams] = useState<TeamDraft[]>(STARTING_TEAMS)
   const [sameGender, setSameGender] = useState(false)
   const [contactName, setContactName] = useState('')
   const [contactPhone, setContactPhone] = useState('')
@@ -175,8 +99,7 @@ export function NewEventDialog({ open, onOpenChange, onCreated }: { open: boolea
     setDate(today())
     setMode('live')
     setMatCount('1')
-    setTeamA({ name: '', color: 'red' })
-    setTeamB({ name: '', color: 'blue' })
+    setTeams(STARTING_TEAMS)
     setSameGender(false)
     setContactName('')
     setContactPhone('')
@@ -190,7 +113,7 @@ export function NewEventDialog({ open, onOpenChange, onCreated }: { open: boolea
     e.preventDefault()
     if (!counts) return
     create.mutate({
-      name, date, mode, matCount: mats, teams: [teamA, teamB],
+      name, date, mode, matCount: mats, teams: teams.map(t => ({ name: t.name, color: t.color })),
       sameGender,
       contactName: contactName.trim(), contactPhone: contactPhone.trim(),
     }, {
@@ -231,11 +154,13 @@ export function NewEventDialog({ open, onOpenChange, onCreated }: { open: boolea
               <p className="t2 text-gray-10">{MODE_HELP[mode]}</p>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <TeamBlock id="team-a" role="Team A" team={teamA} other={teamB.color} onChange={setTeamA} />
-              <TeamBlock id="team-b" role="Team B" team={teamB} other={teamA.color} onChange={setTeamB} />
-            </div>
-            <HeroPreview a={teamA} b={teamB} />
+            <TeamList
+              teams={teams}
+              onChange={(i, next) => setTeams(list => list.map((t, at) => (at === i ? next : t)))}
+              onAdd={team => setTeams(list => [...list, team])}
+              onRemove={i => setTeams(list => list.filter((_, at) => at !== i))}
+            />
+            <LeaderboardPreview teams={teams} />
 
             <CountField id="mats" label="Mats" value={matCount} min={1} max={8} onChange={setMatCount} />
 

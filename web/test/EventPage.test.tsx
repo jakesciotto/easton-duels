@@ -630,6 +630,65 @@ describe('EventPage: the desk contact', () => {
  * URL fact so a reload on gym wifi resumes it, and an event opened from the list carries no
  * param and sees none of it.
  */
+// Spec 6: the same list the New event dialog carries, reached from the event itself, so a
+// team that turns up on the morning is added without recreating the event.
+describe('EventPage: the team list on the shell', () => {
+  const route = (over: Partial<EventDetail['event']> = {}, extra?: (url: string, init?: RequestInit) => Reply | undefined) =>
+    (url: string, init?: RequestInit) => extra?.(url, init)
+      ?? snapshotReply(url, slowSnapshot(over))
+      ?? (url === '/api/events/7' ? { json: { ...detailWith(IN_ORDER), event: { ...detailWith(IN_ORDER).event, ...over } } } : undefined)
+
+  const openTeams = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(await screen.findByRole('button', { name: '2 teams' }))
+    return screen.findByRole('dialog')
+  }
+
+  it('adds a team from the shell', async () => {
+    const { f } = mount(route())
+    const user = userEvent.setup()
+    const dialog = await openTeams(user)
+    expect(within(dialog).getByText('Ridgeline')).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: 'Add a team' }))
+    await user.type(within(dialog).getByLabelText('New team name'), 'Fernwood')
+    await user.click(within(dialog).getByRole('button', { name: 'Add team' }))
+    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/events/7/teams' && c.init?.method === 'POST')).toBe(true))
+    expect(f.body(f.calls.findIndex(c => c.url === '/api/events/7/teams'))).toMatchObject({ name: 'Fernwood' })
+  })
+
+  it('refuses to take the event below two teams', async () => {
+    mount(route())
+    const dialog = await openTeams(userEvent.setup())
+    expect(within(dialog).getByRole('button', { name: 'Remove Lakeside' })).toBeDisabled()
+  })
+
+  it('prints the server sentence when a team is still in use', async () => {
+    const withThree: EventDetail = {
+      ...detailWith(IN_ORDER),
+      teams: [...detailWith(IN_ORDER).teams, { id: 3, eventId: 7, name: 'Fernwood', color: 'teal', position: 2 }],
+    }
+    mount((url, init) => {
+      if (url === '/api/events/7/teams/3' && init?.method === 'DELETE') {
+        return { status: 409, json: { error: { code: 'team_in_use', message: 'a team with competitors on it cannot be removed' } } }
+      }
+      return snapshotReply(url) ?? (url === '/api/events/7' ? { json: withThree } : undefined)
+    })
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: '3 teams' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Remove Fernwood' }))
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('a team with competitors on it cannot be removed')
+  })
+
+  it('refuses both writes on a certified event and says why', async () => {
+    mount(route({ status: 'certified' }))
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: '2 teams' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText(CERTIFIED_REFUSAL)).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Add a team' })).toBeDisabled()
+  })
+})
+
 describe('EventPage: the three step setup', () => {
   const route = () => (url: string) =>
     snapshotReply(url) ?? (url === '/api/events/7' ? { json: detailWith([]) } : undefined)

@@ -23,9 +23,11 @@ describe('NewEventDialog', () => {
     fakeFetch(() => ({ json: {} }))
     mount()
     await screen.findByRole('dialog')
-    // Team A holds Crimson, so Team B's grid blocks its two hue neighbours plus the two
-    // that collapse onto it under dichromacy, and nothing else.
-    const b = grid('Team B colour')
+    // Team 1 holds Crimson, so team 2's grid blocks its two hue neighbours plus the two
+    // that collapse onto it under dichromacy, and nothing else. Crimson itself is not on
+    // the grid at all: a colour another team holds is never offered.
+    const b = grid('Team 2 colour')
+    expect(within(b).queryByRole('radio', { name: 'Crimson' })).not.toBeInTheDocument()
     for (const name of ['Amber', 'Magenta', 'Citron', 'Green']) {
       expect(within(b).getByRole('radio', { name })).toHaveAttribute('aria-disabled', 'true')
     }
@@ -39,9 +41,30 @@ describe('NewEventDialog', () => {
     mount()
     const user = userEvent.setup()
     await screen.findByRole('dialog')
-    await user.click(within(grid('Team B colour')).getByRole('radio', { name: 'Amber' }))
+    await user.click(within(grid('Team 2 colour')).getByRole('radio', { name: 'Amber' }))
     expect(screen.getByText('Crimson and Amber look the same from the back of the gym. Try Azure or Teal.')).toBeInTheDocument()
-    expect(within(grid('Team B colour')).getByRole('radio', { name: 'Azure' })).toBeChecked()
+    expect(within(grid('Team 2 colour')).getByRole('radio', { name: 'Azure' })).toBeChecked()
+  })
+
+  // Spec 1: an event holds two to eight teams, and the third one is built with the same
+  // list, hands the server the same shape, and shows up in the preview.
+  it('adds a third team and posts all three', async () => {
+    const f = fakeFetch((url, init) => (url === '/api/events' && init?.method === 'POST' ? { status: 201, json: {} } : { json: {} }))
+    mount()
+    const user = userEvent.setup()
+    await screen.findByRole('dialog')
+    await user.type(screen.getByLabelText('Event name'), 'Fall Duels')
+    await user.type(screen.getByLabelText('Team 1 name'), 'Ridgeline')
+    await user.type(screen.getByLabelText('Team 2 name'), 'Lakeside')
+    await user.click(screen.getByRole('button', { name: 'Add a team' }))
+    await user.type(screen.getByLabelText('New team name'), 'Fernwood')
+    await user.click(screen.getByRole('button', { name: 'Add team' }))
+    expect(screen.getByLabelText('Team 3 name')).toHaveValue('Fernwood')
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+    await vi.waitFor(() => expect(f.calls.some(c => c.init?.method === 'POST')).toBe(true))
+    const body = f.body(f.calls.findIndex(c => c.init?.method === 'POST'))
+    expect(body.teams.map((t: { name: string }) => t.name)).toEqual(['Ridgeline', 'Lakeside', 'Fernwood'])
+    expect(new Set(body.teams.map((t: { color: string }) => t.color)).size).toBe(3)
   })
 
   it('takes a legal colour and posts it', async () => {
@@ -50,9 +73,9 @@ describe('NewEventDialog', () => {
     const user = userEvent.setup()
     await screen.findByRole('dialog')
     await user.type(screen.getByLabelText('Event name'), 'Fall Duels')
-    await user.type(screen.getByLabelText('Team A name'), 'Ridgeline')
-    await user.type(screen.getByLabelText('Team B name'), 'Lakeside')
-    await user.click(within(grid('Team B colour')).getByRole('radio', { name: 'Teal' }))
+    await user.type(screen.getByLabelText('Team 1 name'), 'Ridgeline')
+    await user.type(screen.getByLabelText('Team 2 name'), 'Lakeside')
+    await user.click(within(grid('Team 2 colour')).getByRole('radio', { name: 'Teal' }))
     await user.click(screen.getByRole('button', { name: 'Continue' }))
     await vi.waitFor(() => expect(f.calls.some(c => c.init?.method === 'POST')).toBe(true))
     const body = f.body(f.calls.findIndex(c => c.init?.method === 'POST'))
@@ -67,7 +90,7 @@ describe('NewEventDialog', () => {
     mount()
     const user = userEvent.setup()
     await screen.findByRole('dialog')
-    await user.type(screen.getByLabelText('Team A name'), 'Ridgeline')
+    await user.type(screen.getByLabelText('Team 1 name'), 'Ridgeline')
     expect(screen.getAllByText('RID').length).toBeGreaterThan(0)
   })
 
@@ -89,8 +112,8 @@ describe('NewEventDialog', () => {
     await user.click(within(modeGrid).getByRole('radio', { name: MODE_LABEL.entry }))
     expect(screen.getByText(MODE_HELP.entry)).toBeInTheDocument()
     await user.type(screen.getByLabelText('Event name'), 'Fall Duels')
-    await user.type(screen.getByLabelText('Team A name'), 'Ridgeline')
-    await user.type(screen.getByLabelText('Team B name'), 'Lakeside')
+    await user.type(screen.getByLabelText('Team 1 name'), 'Ridgeline')
+    await user.type(screen.getByLabelText('Team 2 name'), 'Lakeside')
     await user.click(screen.getByRole('button', { name: 'Continue' }))
     await vi.waitFor(() => expect(f.calls.some(c => c.init?.method === 'POST')).toBe(true))
     const body = f.body(f.calls.findIndex(c => c.init?.method === 'POST'))
@@ -110,8 +133,8 @@ describe('NewEventDialog', () => {
     const user = userEvent.setup()
     await screen.findByRole('dialog')
     await user.type(screen.getByLabelText('Event name'), 'Fall Duels')
-    await user.type(screen.getByLabelText('Team A name'), 'Ridgeline')
-    await user.type(screen.getByLabelText('Team B name'), 'Lakeside')
+    await user.type(screen.getByLabelText('Team 1 name'), 'Ridgeline')
+    await user.type(screen.getByLabelText('Team 2 name'), 'Lakeside')
     await user.type(screen.getByLabelText('Desk contact (optional)'), 'Sam Whitfield')
     await user.type(screen.getByLabelText('Phone'), '555-0142')
     await user.click(screen.getByRole('button', { name: 'Continue' }))
@@ -126,8 +149,8 @@ describe('NewEventDialog', () => {
     const user = userEvent.setup()
     await screen.findByRole('dialog')
     await user.type(screen.getByLabelText('Event name'), 'Fall Duels')
-    await user.type(screen.getByLabelText('Team A name'), 'Ridgeline')
-    await user.type(screen.getByLabelText('Team B name'), 'Lakeside')
+    await user.type(screen.getByLabelText('Team 1 name'), 'Ridgeline')
+    await user.type(screen.getByLabelText('Team 2 name'), 'Lakeside')
     await user.click(screen.getByRole('button', { name: 'Continue' }))
     await vi.waitFor(() => expect(f.calls.some(c => c.init?.method === 'POST')).toBe(true))
     expect(f.body(f.calls.findIndex(c => c.init?.method === 'POST')))
@@ -161,8 +184,8 @@ describe('NewEventDialog', () => {
     const user = userEvent.setup()
     await screen.findByRole('dialog')
     await user.type(screen.getByLabelText('Event name'), 'Fall Duels')
-    await user.type(screen.getByLabelText('Team A name'), 'Ridgeline')
-    await user.type(screen.getByLabelText('Team B name'), 'Lakeside')
+    await user.type(screen.getByLabelText('Team 1 name'), 'Ridgeline')
+    await user.type(screen.getByLabelText('Team 2 name'), 'Lakeside')
     await user.click(screen.getByRole('button', { name: 'Continue' }))
     await vi.waitFor(() => expect(onCreated).toHaveBeenCalled())
     expect(onCreated.mock.calls[0][0].event.id).toBe(9)

@@ -27,6 +27,7 @@ import { dialogBody, dialogFooter, dialogSurface } from '@/components/dialog-fra
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { OverflowMenu } from '@/components/OverflowMenu'
 import { ContactDialog, contactFooter } from './event/ContactDialog'
+import { TeamsDialog } from './event/TeamsDialog'
 import { DELETE_EVENT_ACTION, DeleteEventDialog } from './event/DeleteEventDialog'
 import { RosterTab } from './event/RosterTab'
 import { EntryTab } from './event/EntryTab'
@@ -136,6 +137,7 @@ function EventMeta({ eventId, detail, mode, refusal, certified, snapshot }: {
 }) {
   const [confirming, setConfirming] = useState<MidMatchMat[]>([])
   const [contactOpen, setContactOpen] = useState(false)
+  const [teamsOpen, setTeamsOpen] = useState(false)
   const set = useAdminMutation(eventId, (m: EventMode) => adminApi(`/api/events/${eventId}`, { method: 'PATCH', body: { mode: m } }))
   const setFar = useAdminMutation(eventId, (far: number) => adminApi(`/api/events/${eventId}`, { method: 'PATCH', body: { far } }))
   const storedFar = farOf(detail)
@@ -161,6 +163,11 @@ function EventMeta({ eventId, detail, mode, refusal, certified, snapshot }: {
         <span className="fig">{detail.event.date}</span>
         <span><span className="fig">{detail.athletes.length}</span> competitors</span>
         <span><span className="fig">{detail.matches.length}</span> matches</span>
+        {/* An event holds two to eight teams, and the list that sets them lives on the
+            event rather than only in the dialog that created it. */}
+        <Button variant="ghost" size="sm" onClick={() => setTeamsOpen(true)}>
+          <span className="fig">{detail.teams.length}</span> teams
+        </Button>
         <Button
           variant="ghost" size="sm" disabled={certified}
           title={certified ? CERTIFIED_REFUSAL : undefined}
@@ -211,6 +218,7 @@ function EventMeta({ eventId, detail, mode, refusal, certified, snapshot }: {
         onConfirm={() => set.mutate('entry', { onSuccess: () => setConfirming([]) })}
       />
       <ContactDialog open={contactOpen} onOpenChange={setContactOpen} detail={detail} />
+      <TeamsDialog detail={detail} certified={certified} open={teamsOpen} onOpenChange={setTeamsOpen} />
     </div>
   )
 }

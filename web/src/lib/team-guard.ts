@@ -104,41 +104,67 @@ export function confusion(a: TeamColor, b: TeamColor): number {
   return Math.min(under('deuteranopia'), under('protanopia'))
 }
 
-function legalPartners(chosen: TeamColor): TeamColor[] {
-  return TEAM_COLOR_KEYS.filter(c => c !== chosen && hueSeparation(chosen, c) >= HUE_FLOOR && confusion(chosen, c) >= CONFUSION_FLOOR)
+function legalPartners(taken: TeamColor[]): TeamColor[] {
+  return TEAM_COLOR_KEYS.filter(c => !taken.includes(c)
+    && taken.every(t => hueSeparation(t, c) >= HUE_FLOOR && confusion(t, c) >= CONFUSION_FLOOR))
 }
 
+// How far a candidate sits from the nearest colour already in use, which is the distance
+// that decides whether the room can tell it apart from all of them.
+const nearest = (taken: TeamColor[], c: TeamColor) =>
+  taken.length === 0 ? 360 : Math.min(...taken.map(t => hueSeparation(t, c)))
+
 /**
- * The two most separated legal partners, printed in the palette's own order so the
- * suggestion reads in the same sequence as the grid the organizer is looking at.
+ * The two most separated legal partners for a whole event, printed in the palette's own
+ * order so the suggestion reads in the same sequence as the grid the organizer sees.
  */
-export function suggestions(chosen: TeamColor): TeamColor[] {
-  const best = [...legalPartners(chosen)].sort((x, y) => hueSeparation(chosen, y) - hueSeparation(chosen, x)).slice(0, 2)
+export function suggestions(taken: TeamColor[]): TeamColor[] {
+  const best = [...legalPartners(taken)].sort((x, y) => nearest(taken, y) - nearest(taken, x)).slice(0, 2)
   return TEAM_COLOR_KEYS.filter(c => best.includes(c))
 }
 
-const swapCopy = (chosen: TeamColor) => suggestions(chosen).map(c => TEAM_COLOR_LABELS[c]).join(' or ')
+/** What the grid offers at all: a colour another team holds is never on it. */
+export function freeColors(taken: TeamColor[]): TeamColor[] {
+  return TEAM_COLOR_KEYS.filter(c => !taken.includes(c))
+}
 
-export function pairVerdict(chosen: TeamColor, candidate: TeamColor): PairVerdict {
-  if (chosen === candidate) {
-    return { level: 'block', reason: `${TEAM_COLOR_LABELS[chosen]} is already the other team. Try ${swapCopy(chosen)}.` }
+/** The colour a fresh team opens on: the best legal one, and any free one if none is. */
+export function nextColor(taken: TeamColor[]): TeamColor {
+  return suggestions(taken)[0] ?? freeColors(taken)[0] ?? TEAM_COLOR_KEYS[0]
+}
+
+// Past three or four teams there is often nothing legal left to suggest, and a sentence
+// that ends "Try ." is worse than one that just states the problem.
+const swapTail = (taken: TeamColor[]) => {
+  const copy = suggestions(taken).map(c => TEAM_COLOR_LABELS[c]).join(' or ')
+  return copy === '' ? '' : ` Try ${copy}.`
+}
+
+/**
+ * The verdict on one colour against every other team on the event. An event holds up to
+ * eight of them, so a candidate has to survive all of them rather than one opponent.
+ */
+export function colourVerdict(candidate: TeamColor, others: TeamColor[]): PairVerdict {
+  if (others.includes(candidate)) {
+    return { level: 'block', reason: `${TEAM_COLOR_LABELS[candidate]} is already taken.${swapTail(others)}` }
   }
   // Guard 1 first where both fire: distance is the reason the organizer will actually
   // see across the gym, and guard 2's set is a strict superset of it.
-  if (hueSeparation(chosen, candidate) < HUE_FLOOR) {
+  const near = others.find(o => hueSeparation(o, candidate) < HUE_FLOOR)
+  if (near !== undefined) {
     return {
       level: 'block',
-      reason: `${TEAM_COLOR_LABELS[chosen]} and ${TEAM_COLOR_LABELS[candidate]} look the same from the back of the gym. Try ${swapCopy(chosen)}.`,
+      reason: `${TEAM_COLOR_LABELS[near]} and ${TEAM_COLOR_LABELS[candidate]} look the same from the back of the gym.${swapTail(others)}`,
     }
   }
-  const dE = confusion(chosen, candidate)
-  if (dE < CONFUSION_FLOOR) {
-    return { level: 'block', reason: `These two look the same to about one person in twelve. Try ${swapCopy(chosen)}.` }
+  if (others.some(o => confusion(o, candidate) < CONFUSION_FLOOR)) {
+    return { level: 'block', reason: `These two look the same to about one person in twelve.${swapTail(others)}` }
   }
-  if (dE < CONFUSION_WARN) {
+  const close = others.find(o => confusion(o, candidate) < CONFUSION_WARN)
+  if (close !== undefined) {
     return {
       level: 'warn',
-      reason: `${TEAM_COLOR_LABELS[chosen]} and ${TEAM_COLOR_LABELS[candidate]} are close under colour blindness. The three letter codes still tell them apart.`,
+      reason: `${TEAM_COLOR_LABELS[close]} and ${TEAM_COLOR_LABELS[candidate]} are close under colour blindness. The three letter codes still tell them apart.`,
     }
   }
   return { level: 'ok', reason: null }
