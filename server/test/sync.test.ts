@@ -243,9 +243,33 @@ describe('syncRoster', () => {
     expect(await syncRows(db, s.eventId)).toHaveLength(0)
   })
 
+  it('stamps the time it looked on a row WellnessLiving had nobody for', async () => {
+    const db = await freshDb()
+    const s = await seedEvent(db, { matches: 0 })
+    const before = await versionOf(db, s.eventId)
+
+    const report = await syncRoster(db, s.eventId, [rec({})], [], { locations: 1, warnings: 0 })
+
+    expect(report.unmatched).toContain('Mateo Rivera')
+    const mateo = await row(db, s.a1)
+    expect(typeof mateo!.syncedAt).toBe('string')
+    expect(mateo!.syncChanges).toEqual({})
+    expect(await versionOf(db, s.eventId)).toBeGreaterThan(before)
+  })
+
+  it('leaves syncedAt alone on a rematch, which asked WellnessLiving nothing', async () => {
+    const db = await freshDb()
+    const s = await seedEvent(db, { matches: 0 })
+
+    await syncRoster(db, s.eventId, null, [])
+
+    expect((await row(db, s.a1))!.syncedAt).toBeNull()
+  })
+
   it('records the pull even when it moved no athlete, without bumping the version', async () => {
     const db = await freshDb()
     const s = await seedEvent(db, { matches: 0 })
+    await db.delete(athletes).where(eq(athletes.eventId, s.eventId)).run()
     const before = await versionOf(db, s.eventId)
 
     await syncRoster(db, s.eventId, [], [], { locations: 2, warnings: 1 })

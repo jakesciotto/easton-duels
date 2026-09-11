@@ -1,71 +1,75 @@
 import { Hono } from 'hono'
-import { z } from 'zod'
 import { asc, count, eq } from 'drizzle-orm'
 import type { Env } from '../context.js'
 import { events, athletes, rosterCandidates } from '../db/schema.js'
-import { validate } from '../lib/validate.js'
 import { errorJson, requireAdmin } from '../auth/middleware.js'
 import { fetchCompetitors } from '../roster/leaderboard.js'
 import { buildCandidates } from '../roster/join.js'
 import { syncRoster } from '../roster/sync.js'
 import { WlRequestError } from '../roster/wl.js'
+import { nameTokens } from '../shared/similarity.js'
 import { assertNotCertified } from '../audit/certify.js'
-import type { WlBeltRecord, WlLocation, LeaderboardCompetitor, RosterCandidate } from '../roster/types.js'
+import type { WlBeltRecord, WlLike, WlNameFilter, LeaderboardCompetitor, RosterCandidate } from '../roster/types.js'
 
 export const rosterRoutes = new Hono<Env>()
 
-rosterRoutes.get('/events/:eventId/wl-locations', requireAdmin, async c => {
-  const { roster } = c.get('ctx')
-  if (!roster.wl) return errorJson(c, 503, 'wl_not_configured', 'WellnessLiving credentials are not set')
-  try {
-    return c.json(await roster.wl.listLocations())
-  } catch (e) {
-    return errorJson(c, 503, 'wl_error', e instanceof Error ? e.message : 'WellnessLiving request failed')
-  }
-})
+type Sweep = { ok: true; records: WlBeltRecord[]; locations: number } | { ok: false; message: string }
 
-rosterRoutes.post('/events/:eventId/roster/sync', requireAdmin, validate('json', z.object({ kBusinesses: z.array(z.string().min(1)).min(1).max(20).optional() })), async c => {
-  const { db, roster } = c.get('ctx')
-  const eventId = Number(c.req.param('eventId'))
-  const ev = await db.select().from(events).where(eq(events.id, eventId)).get()
-  if (!ev) return errorJson(c, 404, 'not_found', 'event not found')
-  await assertNotCertified(db, eventId)
-  if (!roster.wl) return errorJson(c, 503, 'wl_not_configured', 'WellnessLiving credentials are not set')
-  const { kBusinesses } = c.req.valid('json')
-  // The first sync picks the locations and the event remembers them, so every later sync
-  // runs on one press. A dialog that sends a pick changes it.
-  const picked = kBusinesses ?? ev.wlLocations ?? []
-  if (picked.length === 0) return errorJson(c, 422, 'locations_required', 'Pick at least one location.')
-  const warnings: string[] = []
+/**
+ * One filtered report per location, every location. Each can poll for minutes, so without
+ * an overall budget a sweep outlives the function's time limit and the dialog sees a
+ * platform timeout instead of an envelope it can render. The same absolute deadline is
+ * handed to every location's own search, so a report that is still polling when the budget
+ * runs out gives up mid-flight instead of only being caught once it returns.
+ */
+async function sweepLocations(wl: WlLike, filter: WlNameFilter, budgetMs: number | null): Promise<Sweep> {
+  const deadline = budgetMs === null ? null : Date.now() + budgetMs
   const records: WlBeltRecord[] = []
-  // One report per location, each of which can poll for minutes. Without an overall budget
-  // a multi-location sync outlives the function's time limit and the admin dialog sees a
-  // platform timeout instead of an envelope it can render. The same absolute deadline is
-  // handed to every location's own fetch, so a report that is still polling when the budget
-  // runs out gives up mid-flight instead of only being caught once it returns.
-  const deadline = roster.syncBudgetMs === null ? null : Date.now() + roster.syncBudgetMs
-  const outOfTime = (done: number) => `roster sync ran out of time after ${done} of ${picked.length} locations; sync fewer at once`
+  let locations = 0
   let done = 0
+  const outOfTime = () => `ran out of time after ${done} of ${locations} locations; try again`
   try {
-    const byK = new Map((await roster.wl.listLocations()).map(l => [l.kBusiness, l]))
-    const chosen: WlLocation[] = []
-    for (const k of picked) {
-      const loc = byK.get(k)
-      if (!loc) return errorJson(c, 422, 'validation', `unknown location ${k}`)
-      chosen.push(loc)
-    }
-    // Stored before the pull, and only once every id is known, so a sync that runs out of
-    // time can be retried on one press and a mistyped id is never remembered.
-    if (kBusinesses !== undefined) await db.update(events).set({ wlLocations: picked }).where(eq(events.id, eventId)).run()
-    for (const loc of chosen) {
-      if (deadline !== null && Date.now() > deadline) return errorJson(c, 503, 'wl_error', outOfTime(done))
-      records.push(...await roster.wl.fetchKidsBeltRecords(loc.kBusiness, loc.title, deadline ?? undefined))
+    const all = await wl.listLocations()
+    locations = all.length
+    for (const loc of all) {
+      if (deadline !== null && Date.now() > deadline) return { ok: false, message: outOfTime() }
+      records.push(...await wl.searchKidsBeltRecords(loc.kBusiness, loc.title, filter, deadline ?? undefined))
       done += 1
     }
   } catch (e) {
-    if (e instanceof WlRequestError && e.message === 'sync deadline exceeded') return errorJson(c, 503, 'wl_error', outOfTime(done))
-    return errorJson(c, 503, 'wl_error', e instanceof Error ? e.message : 'WellnessLiving request failed')
+    if (e instanceof WlRequestError && e.message === 'sync deadline exceeded') return { ok: false, message: outOfTime() }
+    return { ok: false, message: e instanceof Error ? e.message : 'WellnessLiving request failed' }
   }
+  return { ok: true, records, locations }
+}
+
+/**
+ * Who the sync looks for: the uid of every row already linked, and the last name of every
+ * row, linked ones too, so a child whose uid has gone can surface as a near match again.
+ * A first name would only widen what the last name already asks for.
+ */
+function rosterFilter(rows: { wlUid: string | null; lastName: string }[]): WlNameFilter {
+  const uids = new Set<string>()
+  const lastTokens = new Set<string>()
+  for (const row of rows) {
+    if (row.wlUid !== null) uids.add(row.wlUid)
+    for (const token of nameTokens(row.lastName)) lastTokens.add(token)
+  }
+  return { uids: [...uids], lastTokens: [...lastTokens], firstTokens: [] }
+}
+
+rosterRoutes.post('/events/:eventId/roster/sync', requireAdmin, async c => {
+  const { db, roster } = c.get('ctx')
+  const eventId = Number(c.req.param('eventId'))
+  if (!await db.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get()) return errorJson(c, 404, 'not_found', 'event not found')
+  await assertNotCertified(db, eventId)
+  if (!roster.wl) return errorJson(c, 503, 'wl_not_configured', 'WellnessLiving credentials are not set')
+
+  const rows = await db.select({ wlUid: athletes.wlUid, lastName: athletes.lastName }).from(athletes).where(eq(athletes.eventId, eventId)).all()
+  const found = await sweepLocations(roster.wl, rosterFilter(rows), roster.syncBudgetMs)
+  if (!found.ok) return errorJson(c, 503, 'wl_error', found.message)
+
+  const warnings: string[] = []
   let competitors: LeaderboardCompetitor[] = []
   if (roster.leaderboard) {
     try {
@@ -79,10 +83,10 @@ rosterRoutes.post('/events/:eventId/roster/sync', requireAdmin, validate('json',
     warnings.push('Leaderboard not configured. No ERP join.')
   }
   // The engine replaces the pool from the same records, so this build is only the copy the
-  // dialog lists. The pool is a cache of the last pull, not append-only history: a
-  // competitor who left WellnessLiving drops out of it.
-  const candidates = buildCandidates(records, competitors)
-  const report = await db.transaction(tx => syncRoster(tx, eventId, records, competitors, { locations: picked.length, warnings: warnings.length }))
+  // dialog lists. The pool is the subset the last sync found, not append-only history: a
+  // competitor WellnessLiving no longer answers for drops out of it.
+  const candidates = buildCandidates(found.records, competitors)
+  const report = await db.transaction(tx => syncRoster(tx, eventId, found.records, competitors, { locations: found.locations, warnings: warnings.length }))
   return c.json({ candidates, warnings, report })
 })
 

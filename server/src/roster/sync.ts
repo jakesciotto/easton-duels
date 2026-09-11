@@ -85,6 +85,12 @@ export async function syncRoster(
   let refreshed = 0
   let wrote = 0
 
+  // A pull asked WellnessLiving for this roster by name, so every row it considered
+  // carries the time it looked, unmatched rows too, and the web can say "Not in
+  // WellnessLiving" only about a row a sync has been through. A rematch against the
+  // cached pool asked nobody, and leaves an untouched row alone.
+  const looked = records !== null
+
   const at = new Date().toISOString()
   const write = async (id: number, update: AthleteUpdate) => {
     await db.update(athletes).set({ ...update, syncedAt: at }).where(eq(athletes.id, id)).run()
@@ -136,7 +142,12 @@ export async function syncRoster(
 
     if (clear) {
       unmatched.push(name)
-      if (athlete.suggestedWlUid !== null) await write(athlete.id, { suggestedWlUid: null, suggestedScore: null })
+      const update: AthleteUpdate = looked ? { syncChanges: {} } : {}
+      if (athlete.suggestedWlUid !== null) {
+        update.suggestedWlUid = null
+        update.suggestedScore = null
+      }
+      if (Object.keys(update).length > 0) await write(athlete.id, update)
       continue
     }
     suggested.push({ athleteId: athlete.id, name, candidate: fullName(best.cand), location: best.cand.wlLocation ?? '', score: best.score })

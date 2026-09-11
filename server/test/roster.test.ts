@@ -6,8 +6,9 @@ import { makeCompetitorId } from '../src/roster/slug.js'
 import { buildCandidates } from '../src/roster/join.js'
 import { rosterFromEnv } from '../src/roster/config.js'
 import { WlRequestError } from '../src/roster/wl.js'
-import type { WlBeltRecord, LeaderboardCompetitor, WlNameFilter } from '../src/roster/types.js'
+import type { WlBeltRecord, LeaderboardCompetitor, WlLocation, WlNameFilter, RosterCandidate } from '../src/roster/types.js'
 import { events, athletes, rosterCandidates } from '../src/db/schema.js'
+import type { Db } from '../src/db/client.js'
 import { createTestApp, call } from './helpers.js'
 import { seedEvent } from './fixtures.js'
 
@@ -94,34 +95,94 @@ describe('rosterFromEnv', () => {
 })
 
 describe('roster routes', () => {
-  const fakeWl = {
-    async listLocations() { return [{ kBusiness: '100001', title: 'North', city: 'Northtown' }] },
-    async fetchKidsBeltRecords(kBusiness: string, location: string) {
-      return [{ uid: '9', kBusiness, location, firstName: 'Zoe', lastName: 'Martin', rankTitle: 'Grey Belt', categoryTitle: 'Kids IBJJF Belts', promotedAt: null }]
-    },
-    async searchKidsBeltRecords(kBusiness: string, location: string) {
-      return this.fetchKidsBeltRecords(kBusiness, location)
-    },
+  const NORTH = { kBusiness: '100001', title: 'North', city: 'Northtown' }
+  const SOUTH = { kBusiness: '100002', title: 'South', city: 'Southtown' }
+
+  // Two children on the books, one at each location.
+  const GYM = [
+    { uid: '9', firstName: 'Zoe', lastName: 'Martin', kBusiness: NORTH.kBusiness },
+    { uid: '11', firstName: 'Ana', lastName: 'Martin', kBusiness: SOUTH.kBusiness },
+  ]
+
+  // What the report's own where clause asks for: a record answers when the filter names
+  // its uid, or one of the filter's tokens appears in one of its names.
+  const answers = (filter: WlNameFilter, r: WlBeltRecord) =>
+    filter.uids.includes(r.uid)
+    || filter.lastTokens.some(t => r.lastName.toLowerCase().includes(t))
+    || filter.firstTokens.some(t => r.firstName.toLowerCase().includes(t))
+
+  function wlFake(locations: WlLocation[] = [NORTH], gym = GYM) {
+    const searches: { location: string; filter: WlNameFilter }[] = []
+    const at = (kBusiness: string, location: string): WlBeltRecord[] => gym
+      .filter(kid => kid.kBusiness === kBusiness)
+      .map(kid => ({ uid: kid.uid, kBusiness, location, firstName: kid.firstName, lastName: kid.lastName, rankTitle: 'Grey Belt', categoryTitle: 'Kids IBJJF Belts', promotedAt: null }))
+    return {
+      searches,
+      async listLocations() { return locations },
+      async fetchKidsBeltRecords(kBusiness: string, location: string) { return at(kBusiness, location) },
+      async searchKidsBeltRecords(kBusiness: string, location: string, filter: WlNameFilter) {
+        searches.push({ location, filter })
+        return at(kBusiness, location).filter(r => answers(filter, r))
+      },
+    }
   }
+
+  const addZoe = (db: Db, eventId: number) =>
+    db.insert(athletes).values({ eventId, firstName: 'Zoe', lastName: 'Martin', source: 'manual' }).run()
 
   it('503s when WL is not configured', async () => {
     const { app, db, adminToken } = await createTestApp()
     const s = await seedEvent(db)
-    const r = await call(app, 'GET', `/api/events/${s.eventId}/wl-locations`, undefined, adminToken)
+    const r = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, undefined, adminToken)
     expect(r.status).toBe(503)
     expect(r.body.error.code).toBe('wl_not_configured')
   })
 
-  it('returns candidates and a warning when the leaderboard is off', async () => {
-    const { app, db, adminToken } = await createTestApp({ roster: { wl: fakeWl, leaderboard: null, syncBudgetMs: null } })
-    const s = await seedEvent(db)
-    const locs = await call(app, 'GET', `/api/events/${s.eventId}/wl-locations`, undefined, adminToken)
-    expect(locs.body[0].kBusiness).toBe('100001')
-    const r = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['100001'] }, adminToken)
+  it('asks every location for the roster by uid and by last name, with no body', async () => {
+    const wl = wlFake([NORTH, SOUTH])
+    const { app, db, adminToken } = await createTestApp({ roster: { wl, leaderboard: null, syncBudgetMs: null } })
+    const s = await seedEvent(db, { matches: 0 })
+    await db.update(athletes).set({ wlUid: 'w5' }).where(eq(athletes.id, s.a2)).run()
+
+    const r = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, undefined, adminToken)
+
     expect(r.status).toBe(200)
-    expect(r.body.candidates[0]).toMatchObject({ wlUid: '9', belt: 'grey', wlLocation: 'North', erp: null })
-    expect(r.body.warnings[0]).toMatch(/not configured/)
-    expect((await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['1'] }, adminToken)).status).toBe(422)
+    expect(wl.searches.map(x => x.location)).toEqual(['North', 'South'])
+    expect(wl.searches[0].filter.uids).toEqual(['w5'])
+    expect([...wl.searches[0].filter.lastTokens].sort()).toEqual(['kim', 'park', 'rivera', 'tran'])
+    expect(wl.searches[0].filter.firstTokens).toEqual([])
+    expect(wl.searches[1].filter).toEqual(wl.searches[0].filter)
+  })
+
+  it('brings back the children the roster names and nobody else, and warns that the leaderboard is off', async () => {
+    const wl = wlFake([NORTH, SOUTH])
+    const { app, db, adminToken } = await createTestApp({ roster: { wl, leaderboard: null, syncBudgetMs: null } })
+    const s = await seedEvent(db, { matches: 0 })
+
+    const none = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, undefined, adminToken)
+    expect(none.status).toBe(200)
+    expect(none.body.candidates).toEqual([])
+    expect(none.body.warnings[0]).toMatch(/not configured/)
+
+    await addZoe(db, s.eventId)
+    const found = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, undefined, adminToken)
+    expect(found.body.candidates.map((c: RosterCandidate) => c.wlLocation).sort()).toEqual(['North', 'South'])
+    expect(found.body.candidates.find((c: RosterCandidate) => c.wlUid === '9')).toMatchObject({ firstName: 'Zoe', belt: 'grey', wlLocation: 'North', erp: null })
+    expect(found.body.report.linked).toEqual(['Zoe Martin'])
+  })
+
+  it('ignores a body, and never writes the location column any more', async () => {
+    const wl = wlFake()
+    const { app, db, adminToken } = await createTestApp({ roster: { wl, leaderboard: null, syncBudgetMs: null } })
+    const s = await seedEvent(db, { matches: 0 })
+    await addZoe(db, s.eventId)
+
+    const r = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['999'] }, adminToken)
+
+    expect(r.status).toBe(200)
+    expect(wl.searches.map(x => x.location)).toEqual(['North'])
+    const detail = await call(app, 'GET', `/api/events/${s.eventId}`, undefined, adminToken)
+    expect(detail.body.event.wlLocations).toBeNull()
   })
 
   it('gives up mid-location once the sync budget is spent, not only between locations', async () => {
@@ -131,10 +192,11 @@ describe('roster routes', () => {
       async listLocations() {
         return ['100001', '100002', '100003'].map((kBusiness, i) => ({ kBusiness, title: `Site ${i + 1}`, city: 'Northtown' }))
       },
-      // Mirrors the real WlClient: several sleeps inside one location's own fetch, each
+      async fetchKidsBeltRecords() { return [] },
+      // Mirrors the real WlClient: several sleeps inside one location's own search, each
       // one checking the deadline the route passed down, rather than one lump sum that
       // only the between-locations check could ever catch.
-      async fetchKidsBeltRecords(kBusiness: string, location: string, deadlineMs?: number) {
+      async searchKidsBeltRecords(kBusiness: string, location: string, _filter: WlNameFilter, deadlineMs?: number) {
         const polls = kBusiness === '100001' ? 2 : 4
         for (let poll = 0; poll < polls; poll++) {
           clock.ms += 70_000
@@ -142,16 +204,13 @@ describe('roster routes', () => {
         }
         return [{ uid: kBusiness, kBusiness, location, firstName: 'Zoe', lastName: 'Martin', rankTitle: 'Grey Belt', categoryTitle: 'Kids IBJJF Belts', promotedAt: null }]
       },
-      async searchKidsBeltRecords(kBusiness: string, location: string, _filter: WlNameFilter, deadlineMs?: number) {
-        return this.fetchKidsBeltRecords(kBusiness, location, deadlineMs)
-      },
     }
     const { app, db, adminToken } = await createTestApp({ roster: { wl: slowWl, leaderboard: null, syncBudgetMs: 300_000 } })
     const s = await seedEvent(db)
     const spy = vi.spyOn(Date, 'now').mockImplementation(() => clock.ms)
     const start = clock.ms
     try {
-      const r = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['100001', '100002', '100003'] }, adminToken)
+      const r = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, undefined, adminToken)
       expect(r.status).toBe(503)
       expect(r.body.error.code).toBe('wl_error')
       // Location 1 completes (140_000ms) and passes the between-locations check at 300_000ms.
@@ -165,47 +224,26 @@ describe('roster routes', () => {
     }
   })
 
-  it('syncs every location when no budget is set', async () => {
-    const slowWl = {
-      async listLocations() {
-        return ['100001', '100002'].map((kBusiness, i) => ({ kBusiness, title: `Site ${i + 1}`, city: 'Northtown' }))
-      },
-      async fetchKidsBeltRecords(kBusiness: string, location: string) {
-        return [{ uid: kBusiness, kBusiness, location, firstName: 'Zoe', lastName: `Martin${kBusiness}`, rankTitle: 'Grey Belt', categoryTitle: 'Kids IBJJF Belts', promotedAt: null }]
-      },
-      async searchKidsBeltRecords(kBusiness: string, location: string) {
-        return this.fetchKidsBeltRecords(kBusiness, location)
-      },
-    }
-    const { app, db, adminToken } = await createTestApp({ roster: { wl: slowWl, leaderboard: null, syncBudgetMs: null } })
+  it('replaces the cached pool on every sync instead of accumulating it', async () => {
+    const { app, db, adminToken } = await createTestApp({ roster: { wl: wlFake(), leaderboard: null, syncBudgetMs: null } })
     const s = await seedEvent(db)
-    const r = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['100001', '100002'] }, adminToken)
-    expect(r.status).toBe(200)
-    expect(r.body.candidates).toHaveLength(2)
-  })
-
-  it('replaces the cached pool on every sync instead of accumulating it, and never bumps the event version', async () => {
-    const { app, db, adminToken } = await createTestApp({ roster: { wl: fakeWl, leaderboard: null, syncBudgetMs: null } })
-    const s = await seedEvent(db)
-    const before = (await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)).body.version
-    await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['100001'] }, adminToken)
+    await addZoe(db, s.eventId)
+    await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, undefined, adminToken)
     let rows = await db.select().from(rosterCandidates).where(eq(rosterCandidates.eventId, s.eventId)).all()
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ wlUid: '9', belt: 'grey' })
-    // A second sync with a different pull result replaces the first, it does not add to it.
-    const shrunkWl = { ...fakeWl, async fetchKidsBeltRecords() { return [] } }
-    const { app: app2 } = await createTestApp({ db, roster: { wl: shrunkWl, leaderboard: null, syncBudgetMs: null } })
-    await call(app2, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['100001'] }, adminToken)
+    // A second sync that finds nobody replaces the first, it does not add to it.
+    const { app: app2 } = await createTestApp({ db, roster: { wl: wlFake([NORTH], []), leaderboard: null, syncBudgetMs: null } })
+    await call(app2, 'POST', `/api/events/${s.eventId}/roster/sync`, undefined, adminToken)
     rows = await db.select().from(rosterCandidates).where(eq(rosterCandidates.eventId, s.eventId)).all()
     expect(rows).toHaveLength(0)
-    const after = (await call(app, 'GET', `/api/events/${s.eventId}/snapshot`)).body.version
-    expect(after).toBe(before)
   })
 
   it('serves the cached pool as RosterCandidate[] and drops it when the event is deleted', async () => {
-    const { app, db, adminToken } = await createTestApp({ roster: { wl: fakeWl, leaderboard: null, syncBudgetMs: null } })
+    const { app, db, adminToken } = await createTestApp({ roster: { wl: wlFake(), leaderboard: null, syncBudgetMs: null } })
     const s = await seedEvent(db, { matches: 0 })
-    await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['100001'] }, adminToken)
+    await addZoe(db, s.eventId)
+    await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, undefined, adminToken)
     const r = await call(app, 'GET', `/api/events/${s.eventId}/candidates`, undefined, adminToken)
     expect(r.status).toBe(200)
     expect(r.body).toEqual([{ wlUid: '9', firstName: 'Zoe', lastName: 'Martin', belt: 'grey', wlLocation: 'North', leaderboardId: null, erp: null, age: null, weightLbs: null, gender: null, promotedAt: null }])
@@ -214,45 +252,22 @@ describe('roster routes', () => {
     expect(await db.select().from(rosterCandidates).where(eq(rosterCandidates.eventId, s.eventId)).all()).toEqual([])
   })
 
-  it('stores the location pick on the event and runs a later sync without one', async () => {
-    const { app, db, adminToken } = await createTestApp({ roster: { wl: fakeWl, leaderboard: null, syncBudgetMs: null } })
-    const s = await seedEvent(db, { matches: 0 })
-
-    const first = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['100001'] }, adminToken)
-    expect(first.status).toBe(200)
-    const detail = await call(app, 'GET', `/api/events/${s.eventId}`, undefined, adminToken)
-    expect(detail.body.event.wlLocations).toEqual(['100001'])
-
-    const second = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, {}, adminToken)
-    expect(second.status).toBe(200)
-    expect(second.body.candidates).toHaveLength(1)
-  })
-
-  it('422s locations_required when neither the body nor the event names a location', async () => {
-    const { app, db, adminToken } = await createTestApp({ roster: { wl: fakeWl, leaderboard: null, syncBudgetMs: null } })
-    const s = await seedEvent(db, { matches: 0 })
-    const r = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, {}, adminToken)
-    expect(r.status).toBe(422)
-    expect(r.body.error.code).toBe('locations_required')
-    expect(r.body.error.message).toBe('Pick at least one location.')
-  })
-
-  it('never stores a location WellnessLiving does not know', async () => {
-    const { app, db, adminToken } = await createTestApp({ roster: { wl: fakeWl, leaderboard: null, syncBudgetMs: null } })
-    const s = await seedEvent(db, { matches: 0 })
-    expect((await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['999'] }, adminToken)).status).toBe(422)
-    const detail = await call(app, 'GET', `/api/events/${s.eventId}`, undefined, adminToken)
-    expect(detail.body.event.wlLocations).toBeNull()
-  })
-
   it('carries the sync report on the sync response', async () => {
-    const { app, db, adminToken } = await createTestApp({ roster: { wl: fakeWl, leaderboard: null, syncBudgetMs: null } })
+    const { app, db, adminToken } = await createTestApp({ roster: { wl: wlFake(), leaderboard: null, syncBudgetMs: null } })
     const s = await seedEvent(db, { matches: 0 })
-    await db.insert(athletes).values({ eventId: s.eventId, firstName: 'Zoe', lastName: 'Martin', source: 'manual' }).run()
-    const r = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, { kBusinesses: ['100001'] }, adminToken)
+    await addZoe(db, s.eventId)
+    const r = await call(app, 'POST', `/api/events/${s.eventId}/roster/sync`, undefined, adminToken)
     expect(r.status).toBe(200)
     expect(r.body.report.linked).toEqual(['Zoe Martin'])
     expect(r.body.report.refreshed).toBe(0)
+  })
+
+  it('404s an unknown event before it asks WellnessLiving anything', async () => {
+    const wl = wlFake()
+    const { app, adminToken } = await createTestApp({ roster: { wl, leaderboard: null, syncBudgetMs: null } })
+    const r = await call(app, 'POST', '/api/events/999999/roster/sync', undefined, adminToken)
+    expect(r.status).toBe(404)
+    expect(wl.searches).toEqual([])
   })
 })
 
