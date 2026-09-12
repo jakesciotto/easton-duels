@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { useSnapshot } from '@/lib/useSnapshot'
 import { statusOf } from '@/lib/eventMode'
 import type { EventDetail } from '@/lib/types'
@@ -23,12 +24,21 @@ export function SetupMatchesStep({ detail, open, onClose }: {
   // derived ramp.
   const { live } = useSnapshot(detail.event.id)
   const certified = statusOf(live, detail.event.status) === 'certified'
+  // The panel's replace confirm is a dialog of its own, and two open at once fight over
+  // the focus trap and the backdrop, so this step stands down while that one is up.
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  // A step reopened from the URL after a reload describes the event it is looking at now,
+  // not the confirm somebody left open before the page went away.
+  useEffect(() => { if (!open) setConfirmOpen(false) }, [open])
   const competitors = detail.athletes.length
   const teams = detail.teams.length
 
   return (
-    <Dialog open={open} onOpenChange={o => { if (!o) onClose() }}>
-      <DialogContent className={dialogSurface(640)}>
+    <Dialog open={open && !confirmOpen} onOpenChange={o => { if (!o) onClose() }}>
+      {/* Kept mounted only while the step itself is open, so standing down for the
+          panel's own confirm does not unmount the panel that opened it. A step nobody
+          opened is not in the DOM at all. */}
+      <DialogContent className={dialogSurface(640)} keepMounted={open}>
         <DialogHeader>
           <div className="grid gap-1">
             <DialogTitle>Assign the matches</DialogTitle>
@@ -41,7 +51,7 @@ export function SetupMatchesStep({ detail, open, onClose }: {
             <span className="fig">{teams}</span> {teams === 1 ? 'team' : 'teams'}. Proposing pairs them across teams by
             weight class first, then age, and you confirm the ones you want.
           </p>
-          <ProposalsPanel detail={detail} certified={certified} />
+          <ProposalsPanel detail={detail} certified={certified} onConfirmOpenChange={setConfirmOpen} />
         </DialogBody>
         <DialogFooter className={cn(dialogFooter, 'justify-between')}>
           <Button type="button" variant="ghost" onClick={onClose}>Skip for now</Button>

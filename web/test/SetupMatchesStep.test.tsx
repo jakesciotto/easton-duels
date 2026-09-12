@@ -37,6 +37,13 @@ function detailWith(matches: MatchRow[]): EventDetail {
 
 const QUIET = sampleSnapshot({ mats: [], matches: [] })
 
+const proposalSide = (athleteId: number, teamId: number, firstName: string, lastName: string) =>
+  ({ athleteId, teamId, firstName, lastName, age: 9, weightLbs: 58, weightClass: '54 to 61 lbs', belt: 'grey', erp: null })
+const PROPOSAL = {
+  id: 1, eventId: 7, cost: 2, why: 'same class, same age',
+  a: proposalSide(100, 1, 'Mateo', 'Alvarez'), b: proposalSide(200, 2, 'Olivia', 'Brandt'),
+}
+
 // The step reads the shared stream every tab reads, so the fixture provides one rather than
 // letting the component open a second poll loop of its own.
 function stream(snapshot: Snapshot) {
@@ -49,9 +56,9 @@ function stream(snapshot: Snapshot) {
   }
 }
 
-function mount(detail: EventDetail, opts: { snapshot?: Snapshot; onClose?: () => void; reply?: (url: string, init?: RequestInit) => Reply | undefined } = {}) {
+function mount(detail: EventDetail, opts: { snapshot?: Snapshot; onClose?: () => void; proposals?: unknown[]; reply?: (url: string, init?: RequestInit) => Reply | undefined } = {}) {
   const f = fakeFetch((url, init) => opts.reply?.(url, init)
-    ?? (url === '/api/events/7/proposals' ? { json: [] } : { json: {} }))
+    ?? (url === '/api/events/7/proposals' ? { json: opts.proposals ?? [] } : { json: {} }))
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={qc}>
@@ -86,6 +93,35 @@ describe('SetupMatchesStep', () => {
     await user.click(screen.getByRole('button', { name: 'Propose matches' }))
     await vi.waitFor(() => expect(posted(f, '/api/events/7/proposals')).toBe(1))
     expect(await screen.findByText('Nothing left to pair.')).toBeInTheDocument()
+  })
+
+  // Two open Dialog.Root fight over the focus trap and the backdrop, so the step stands
+  // down while the panel's replace confirm is up, the way the roster step does.
+  it('asks before replacing the drafts that already exist, and stands down while it asks', async () => {
+    const { f } = mount(detailWith([]), { proposals: [PROPOSAL] })
+    const user = userEvent.setup()
+    await screen.findByText('Assign the matches')
+    await user.click(await screen.findByRole('button', { name: 'Propose more' }))
+    expect(await screen.findByText('Replace 1 proposal?')).toBeInTheDocument()
+    // Held in the DOM but hidden: unmounting the step would take the panel, and the
+    // confirm the panel just opened, with it.
+    expect(screen.getByText('Assign the matches')).not.toBeVisible()
+    expect(posted(f, '/api/events/7/proposals')).toBe(0)
+
+    await user.click(screen.getByRole('button', { name: 'Propose more' }))
+    await vi.waitFor(() => expect(posted(f, '/api/events/7/proposals')).toBe(1))
+    await vi.waitFor(() => expect(screen.getByText('Assign the matches')).toBeVisible())
+  })
+
+  it('leaves the drafts alone when the confirm is cancelled, and comes back', async () => {
+    const { f } = mount(detailWith([]), { proposals: [PROPOSAL] })
+    const user = userEvent.setup()
+    await screen.findByText('Assign the matches')
+    await user.click(await screen.findByRole('button', { name: 'Propose more' }))
+    await screen.findByText('Replace 1 proposal?')
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await vi.waitFor(() => expect(screen.getByText('Assign the matches')).toBeVisible())
+    expect(posted(f, '/api/events/7/proposals')).toBe(0)
   })
 
   it('reports a refused propose in the step, in the server sentence', async () => {

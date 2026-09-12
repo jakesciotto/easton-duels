@@ -39,13 +39,21 @@ function DialogOverlay({
   )
 }
 
+/**
+ * `keepMounted` holds the popup's subtree in the DOM while the dialog is closed, hidden
+ * and inert. One caller needs it: a step whose body opens a dialog of its own has to close
+ * itself so two Dialog.Root never fight over the focus trap, and unmounting the body would
+ * take the dialog it just opened with it. The nested dialog portals to the body, so it is
+ * outside the hidden subtree and stays interactive.
+ */
 function DialogContent({
   className,
   children,
+  keepMounted = false,
   ...props
-}: DialogPrimitive.Popup.Props) {
+}: DialogPrimitive.Popup.Props & { keepMounted?: boolean }) {
   return (
-    <DialogPortal>
+    <DialogPortal keepMounted={keepMounted}>
       <DialogOverlay />
       <DialogPrimitive.Popup
         data-slot="dialog-content"
