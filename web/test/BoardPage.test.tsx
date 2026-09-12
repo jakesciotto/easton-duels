@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve as resolvePath } from 'node:path'
 import { act, render, screen, within, waitFor } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router'
-import { TEAM_COLORS, type EventMode, type EventStatus, type MatView, type MatchView, type Snapshot } from '@shared/types'
+import { TEAM_COLORS, TEAM_COLOR_KEYS, type EventMode, type EventStatus, type MatView, type MatchView, type Snapshot } from '@shared/types'
 import { routes } from '@/router'
 import { Board, FIRST_CONTACT_MS, NOTE_NO_CONTACT } from '@/routes/board/Board'
 import { RESULTS_EMPTY } from '@/routes/board/ResultsBand'
@@ -64,18 +64,17 @@ describe('Board compositions', () => {
     const { container } = render(<Board snapshot={null} connected />)
     expect(safe(container)).toHaveAttribute('data-comp', 'cold')
     expect(screen.getByRole('region', { name: 'Scoreboard' })).toBeInTheDocument()
-    // 6.15 is exact: both bars, both plates and both names hold their final positions
-    // and ONLY the two wins numerals are skeletons.
+    // 6.15 is exact: the two rows an event holds at its minimum are already in their
+    // final positions and ONLY their wins numerals are skeletons.
+    expect(container.querySelectorAll('.lb-row')).toHaveLength(2)
     expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBe(2)
-    expect(container.querySelectorAll('.b-bar')).toHaveLength(2)
-    expect(container.querySelectorAll('.b-code')).toHaveLength(2)
-    for (const box of container.querySelectorAll('.b-bar, .b-code, .b-team-name')) {
+    for (const box of container.querySelectorAll('.lb-edge, .lb-rank, .lb-name')) {
       expect(box).not.toHaveAttribute('data-slot', 'skeleton')
     }
-    expect(screen.getAllByText('Wins')).toHaveLength(2)
+    expect(screen.queryByText('Wins')).not.toBeInTheDocument()
     // The points box is the same slot the first snapshot renders into, so its arrival
     // moves nothing.
-    expect(container.querySelectorAll('.b-hero .b-pts')).toHaveLength(2)
+    expect(container.querySelectorAll('.lb-pts-n')).toHaveLength(2)
   })
 
   it('is the data entry panel when the event is run from the desk', () => {
@@ -472,11 +471,10 @@ describe('Board compositions', () => {
     expect(within(summary).getByText('7')).toBeInTheDocument()
     expect(within(summary).getByText('41')).toBeInTheDocument()
     expect(within(summary).getAllByText('Matches')).toHaveLength(2)
-    // The leading numeral is the brighter of the two figure tones. The tone is on the
-    // figure, whose crossfade slots carry the digits.
+    // The standings name the winner by the rank numeral and the lead tone on its row.
     const hero = screen.getByRole('region', { name: 'Scoreboard' })
-    expect(within(hero).getByText('7').closest('.b-fig')).toHaveClass('b-lead')
-    expect(within(hero).getByText('5').closest('.b-fig')).toHaveClass('b-trail')
+    expect(within(hero).getByText('7').closest('.lb-row')).toHaveClass('lb-lead')
+    expect(within(hero).getByText('5').closest('.lb-row')).not.toHaveClass('lb-lead')
   })
 
   // 6.15: one b3 line of its own under the summary, centred and quiet. It is not a note:
@@ -535,6 +533,104 @@ describe('Board compositions', () => {
     expect(container.querySelector('.b-stale')).toBeNull()
     rerender(<Board snapshot={liveBoard(1)} connected={false} />)
     expect(container.querySelector('.b-stale')).not.toBeNull()
+  })
+})
+
+// 7.1 and the approved mockup (frames 1, 2, 4 and 6A): one hero for every team count,
+// a row per team in the order the server ranked them. The board never ranks: it draws
+// `snapshot.leaderboard`, so the console, the Live tab and the television cannot
+// disagree about who is winning.
+describe('the leaderboard hero', () => {
+  const NAMES = ['Ridgeline', 'Lakeside', 'Harbor Park', 'Cedar Ridge', 'Stonebrook', 'Fairview', 'Northgate', 'Wildflower']
+
+  function standings(scores: [number, number][], over: Partial<Snapshot> = {}): Snapshot {
+    const teams = scores.map(([wins, points], i) => ({
+      id: i + 1, name: NAMES[i], color: TEAM_COLOR_KEYS[i], position: i, wins, points,
+    }))
+    return atMode(sampleSnapshot({ teams, mats: [mat(1, { current: pair(10, 'Mateo Rivera', 'Lucas Ferreira', { clock: RUNNING }), bound: true })], matches: [], ...over }), 'live')
+  }
+
+  function rows(container: HTMLElement): HTMLElement[] {
+    return [...container.querySelectorAll('.lb-row')] as HTMLElement[]
+  }
+  function cell(row: HTMLElement, selector: string): string {
+    return (row.querySelector(selector) as HTMLElement).textContent ?? ''
+  }
+
+  it('draws a row per team at two teams, where the halves used to be', () => {
+    const { container } = render(<Board snapshot={standings([[12, 71], [10, 64]])} connected />)
+    const drawn = rows(container)
+    expect(drawn).toHaveLength(2)
+    expect(drawn.map(r => cell(r, '.lb-rank'))).toEqual(['1', '2'])
+    expect(drawn.map(r => cell(r, '.lb-name'))).toEqual(['Ridgeline', 'Lakeside'])
+    expect(drawn.map(r => cell(r, '.lb-wins'))).toEqual(['12', '10'])
+    expect(drawn.map(r => cell(r, '.lb-pts'))).toEqual(['71 pts', '64 pts'])
+    // Pick 6: no three letter plate and no repeated label. The colour edge and the
+    // full name carry identity, and "pts" alone keeps the pair unambiguous.
+    expect(container.querySelector('.b-code')).toBeNull()
+    expect(screen.queryByText('RID')).not.toBeInTheDocument()
+    expect(screen.queryByText('Wins')).not.toBeInTheDocument()
+    // The two-half hero is retired, so nothing on the stage carries its geometry.
+    expect(container.querySelector('.b-hero')).toBeNull()
+    expect(container.querySelector('.b-half')).toBeNull()
+  })
+
+  it('carries the team colour as a full height edge that costs no column', () => {
+    const { container } = render(<Board snapshot={standings([[3, 9], [1, 4]])} connected />)
+    const drawn = rows(container)
+    expect(drawn.map(r => r.style.getPropertyValue('--team')))
+      .toEqual([TEAM_COLORS[TEAM_COLOR_KEYS[0]], TEAM_COLORS[TEAM_COLOR_KEYS[1]]])
+    // The edge paints that colour and is named nowhere: the row's own name says which
+    // team this is, so the colour is decoration and never the only channel.
+    for (const row of drawn) expect(row.querySelector('.lb-edge')).toHaveAttribute('aria-hidden')
+  })
+
+  it('ranks three teams and holds the mat band exactly where it was', () => {
+    const { container } = render(<Board snapshot={standings([[7, 38], [5, 31], [5, 29]])} connected />)
+    expect(rows(container).map(r => cell(r, '.lb-rank'))).toEqual(['1', '2', '3'])
+    const layer = safe(container)
+    // Frame 1: three rows still fit a 31cqh hero, so the band is byte for byte today's.
+    expect(layer.style.getPropertyValue('--b-hero-n')).toBe('31')
+    expect(layer.style.getPropertyValue('--lb-rows')).toBe('3')
+    expect(layer.style.getPropertyValue('--b-band-n')).toBe('56')
+    expect(within(row('Mat 1')).getByText(/^\d+:\d{2}$/)).toBeInTheDocument()
+  })
+
+  it('shares the numeral between tied teams and tones every one of them as the lead', () => {
+    // Frame 2: both leaders print 1, the next team prints 3, and the tie is carried by
+    // the tone on the figures, never by a background or a rule that would read as a win.
+    const { container } = render(<Board snapshot={standings([[7, 38], [7, 38], [5, 29]])} connected />)
+    const drawn = rows(container)
+    expect(drawn.map(r => cell(r, '.lb-rank'))).toEqual(['1', '1', '3'])
+    expect(drawn.map(r => r.classList.contains('lb-lead'))).toEqual([true, true, false])
+  })
+
+  it('orders a tie by the position the teams were added at, so a poll never reshuffles', () => {
+    const { container } = render(<Board snapshot={standings([[2, 10], [4, 12], [4, 12]])} connected />)
+    expect(rows(container).map(r => cell(r, '.lb-name'))).toEqual(['Lakeside', 'Harbor Park', 'Ridgeline'])
+    expect(rows(container).map(r => cell(r, '.lb-rank'))).toEqual(['1', '1', '3'])
+  })
+
+  it('grows the hero and shrinks the band to one mat row at eight teams', () => {
+    // Frame 6A: eight rows at the b3 floor, 78cqh of hero, a 3cqh gap and a 9cqh band.
+    // What the room gives up is the rest of the band: no next line and no clock.
+    const scores: [number, number][] = [[9, 51], [8, 47], [7, 44], [6, 38], [5, 33], [4, 26], [3, 19], [2, 14]]
+    const queue = [pair(20, 'Ana Bravo', 'Nina Costa', { status: 'pending' })]
+    const { container } = render(<Board snapshot={standings(scores, {
+      mats: [mat(1, { current: pair(10, 'Mateo Rivera', 'Lucas Ferreira', { clock: RUNNING }), onDeck: queue, bound: true })],
+    })} connected />)
+
+    expect(rows(container)).toHaveLength(8)
+    expect(rows(container).map(r => cell(r, '.lb-rank'))).toEqual(['1', '2', '3', '4', '5', '6', '7', '8'])
+    const layer = safe(container)
+    expect(layer.style.getPropertyValue('--b-hero-n')).toBe('78')
+    expect(layer.style.getPropertyValue('--lb-rows')).toBe('8')
+    expect(layer.style.getPropertyValue('--b-band-n')).toBe('9')
+    expect(layer.style.getPropertyValue('--b-row-n')).toBe('9')
+    expect(container.querySelectorAll('.b-panel')).toHaveLength(1)
+    expect(container.querySelectorAll('.b-next-line')).toHaveLength(0)
+    expect(within(row('Mat 1')).queryByText(/^\d+:\d{2}$/)).not.toBeInTheDocument()
+    expect(row('Mat 1')).not.toHaveClass('b-row-clock')
   })
 })
 
@@ -658,7 +754,7 @@ describe('Board figure change', () => {
     }), 'live')
 
     const { container, rerender } = render(<Board snapshot={withPoints(9)} connected />)
-    const slots = () => [...container.querySelectorAll('.b-hero .b-pts')]
+    const slots = () => [...container.querySelectorAll('.lb-pts-n')]
     expect(slots()).toHaveLength(2)
     // Only the digits are in the slot: " pts" inside it would size the box by the word.
     expect(slots()[0].textContent).toBe('9')
@@ -898,7 +994,7 @@ describe('BoardPage route', () => {
     fakeFetch(url => feed.handle(url) ?? { json: {} })
     render(<RouterProvider router={createMemoryRouter(routes, { initialEntries: ['/board/1'] })} />)
     await waitFor(() => expect(screen.getByRole('region', { name: 'Mat 1' })).toBeInTheDocument())
-    expect(within(screen.getByRole('region', { name: 'Scoreboard' })).getAllByText('Wins')).toHaveLength(2)
+    expect(within(screen.getByRole('region', { name: 'Scoreboard' })).getAllByText(/pts/)).toHaveLength(2)
   })
 
   it('takes a screen wake lock, because a slept panel never recovers on its own', async () => {

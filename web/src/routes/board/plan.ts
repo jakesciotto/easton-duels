@@ -9,6 +9,10 @@ export interface BoardPlan {
       from this rather than from a clamp, because the API accepts up to eight mats and a
       clamp meant every mat above the fourth was laid out off the bottom of the band. */
   mats: number
+  /** How many teams the event holds, two to eight. The hero is a row per team, so no
+      composition can be sized without it. Two on a board with no snapshot yet, which is
+      the fewest an event can hold. */
+  teams: number
 }
 
 /**
@@ -30,17 +34,18 @@ export interface BoardPlan {
  * Final Score panel until a mat started again.
  */
 export function boardPlan(snapshot: Snapshot | null): BoardPlan {
-  if (!snapshot || snapshot.teams.length < 2) return { comp: 'cold', mats: 1 }
+  if (!snapshot || snapshot.teams.length < 2) return { comp: 'cold', mats: 1, teams: 2 }
+  const teams = snapshot.teams.length
   // Certified is done with a signature on it, so it paints the same Final composition;
-  // the only thing it adds to the board is the note under the summary.
-  if (isFinished(snapshot.event.status)) return { comp: 'done', mats: 1 }
+  // the only thing it adds to the board is the line under the standings.
+  if (isFinished(snapshot.event.status)) return { comp: 'done', mats: 1, teams }
 
   const mats = Math.max(1, snapshot.mats.length)
   const results = snapshot.matches.some(m => m.status === 'done')
 
   // Before the first whistle nobody is asking about a score, and the queue fits. Both
   // modes open here.
-  if (snapshot.event.status === 'setup' && !results) return { comp: 'setup', mats }
+  if (snapshot.event.status === 'setup' && !results) return { comp: 'setup', mats, teams }
 
-  return snapshot.event.mode === 'entry' ? { comp: 'entry', mats: 1 } : { comp: 'mats', mats }
+  return snapshot.event.mode === 'entry' ? { comp: 'entry', mats: 1, teams } : { comp: 'mats', mats, teams }
 }

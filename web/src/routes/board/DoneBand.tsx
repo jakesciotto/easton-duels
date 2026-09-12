@@ -30,12 +30,3 @@ export function DoneBand({ teams, matches }: { teams: TeamView[]; matches: numbe
     </section>
   )
 }
-
-/** Wins first, then points as the tie break, matching how the event is scored. */
-export function winningTeam(teams: TeamView[]): TeamView | null {
-  const [a, b] = teams
-  if (!a || !b) return null
-  if (a.wins !== b.wins) return a.wins > b.wins ? a : b
-  if (a.points !== b.points) return a.points > b.points ? a : b
-  return null
-}

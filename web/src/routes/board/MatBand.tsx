@@ -68,25 +68,28 @@ function MatPanel({ mat, held, settled, serverNow, nextCount, withClock, lastSuc
  * Above two mats this is a ledger of full safe-width rows, not a tile grid. A four
  * column grid on a 1728px safe area leaves about four characters per name, so four
  * mats and readable names do not coexist in a grid on a 16:9 stage. The per mat clock
- * is what pays for the name field, which is why it is deleted at three and four mats
- * and kept at one and two.
+ * is what pays for the name field, which is why budget.ts deletes it at three mats and
+ * up, and on a band an eight team hero has shrunk to a single floor row.
  *
  * How deep the queue under a panel goes is budget.ts's, not this component's: the band
  * is not a fixed 56cqh once --far moves, so four next lines under a single mat fit at
  * far 1 and two of them fit at far 1.2.
  */
-export function MatBand({ mats, matches, held, settled, serverNow, teamColor, nextCount = 0, lastSuccessAt = null, pollIntervalMs = POLL_CLOCK_RUNNING_MS }: {
+export function MatBand({ mats, matches, held, settled, serverNow, teamColor, withClock = false, nextCount = 0, lastSuccessAt = null, pollIntervalMs = POLL_CLOCK_RUNNING_MS }: {
   mats: MatView[]
   matches: MatchView[]
   teamColor: (teamId: number | null) => string | null
   held: ReadonlyMap<number, MatchView>
   settled: ReadonlySet<number>
   serverNow: string | null
+  /** Whether the row reserves its clock track. The composition's call, not the band's:
+      the count alone no longer settles it, because a band shrunk to one floor row by an
+      eight team hero says the pair and the scores and nothing else. */
+  withClock?: boolean
   nextCount?: number
   lastSuccessAt?: number | null
   pollIntervalMs?: number
 }) {
-  const withClock = mats.length <= 2
   return (
     <div className="b-band">
       {mats.map(mat => {

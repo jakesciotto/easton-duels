@@ -49,14 +49,26 @@ function beforeTheField(snapshot: Snapshot): Snapshot {
 
 describe('boardPlan', () => {
   it('is a cold start before the first snapshot lands', () => {
-    expect(boardPlan(null)).toEqual({ comp: 'cold', mats: 1 })
+    // Two teams with no snapshot: the fewest an event can hold, and the shape the
+    // cold hero draws while it waits.
+    expect(boardPlan(null)).toEqual({ comp: 'cold', mats: 1, teams: 2 })
   })
 
   it('chooses the mat band by mat count', () => {
     for (const n of [1, 2, 3, 4]) {
       const mats = Array.from({ length: n }, (_, i) => mat({ id: i + 1, number: i + 1, current: sampleMatch({ id: 100 + i }) }))
-      expect(boardPlan(atMode(sampleSnapshot({ mats }), 'live'))).toEqual({ comp: 'mats', mats: n })
+      expect(boardPlan(atMode(sampleSnapshot({ mats }), 'live'))).toEqual({ comp: 'mats', mats: n, teams: 2 })
     }
+  })
+
+  it('carries the team count, because the hero is a row per team', () => {
+    const teams = [1, 2, 3, 4, 5].map(i => ({ id: i, name: `Team ${i}`, color: 'red' as const, position: i - 1, wins: 0, points: 0 }))
+    const five = sampleSnapshot({ teams })
+    expect(boardPlan(atMode(five, 'live')).teams).toBe(5)
+    expect(boardPlan({ ...five, event: event('done', 'live') }).teams).toBe(5)
+    // One team is not an event, so the board holds its cold start rather than drawing
+    // a leaderboard of one.
+    expect(boardPlan(sampleSnapshot({ teams: teams.slice(0, 1) }))).toEqual({ comp: 'cold', mats: 1, teams: 2 })
   })
 
   it('reports the real mat count above four, and at least one below it', () => {
@@ -72,8 +84,8 @@ describe('boardPlan', () => {
     // the stage differently: the mats drive a live event, the desk drives an entry one.
     const mats = [1, 2, 3, 4].map(n => mat({ id: n, number: n, bound: true, current: sampleMatch({ id: 100 + n }) }))
     const snapshot = sampleSnapshot({ mats, matches: [] })
-    expect(boardPlan(atMode(snapshot, 'live'))).toEqual({ comp: 'mats', mats: 4 })
-    expect(boardPlan(atMode(snapshot, 'entry'))).toEqual({ comp: 'entry', mats: 1 })
+    expect(boardPlan(atMode(snapshot, 'live'))).toEqual({ comp: 'mats', mats: 4, teams: 2 })
+    expect(boardPlan(atMode(snapshot, 'entry'))).toEqual({ comp: 'entry', mats: 1, teams: 2 })
   })
 
   it('never lets a live board flip to the final score panel between bouts', () => {
@@ -100,14 +112,14 @@ describe('boardPlan', () => {
         mats: [mat({ id: 1, number: 1, onDeck: [sampleMatch({ id: 5, status: 'pending' })] }), mat({ id: 2, number: 2 })],
         matches: [],
       })
-      expect(boardPlan(setup), mode).toEqual({ comp: 'setup', mats: 2 })
+      expect(boardPlan(setup), mode).toEqual({ comp: 'setup', mats: 2, teams: 2 })
 
       const done = sampleSnapshot({ event: event('done', mode) })
       expect(boardPlan(done).comp, mode).toBe('done')
 
       // Certified is done with a signature on it, so it paints the same composition.
       const certified = sampleSnapshot({ event: { ...event('certified', mode), certifiedAt: '2026-10-03T16:12:00.000Z' } })
-      expect(boardPlan(certified), mode).toEqual({ comp: 'done', mats: 1 })
+      expect(boardPlan(certified), mode).toEqual({ comp: 'done', mats: 1, teams: 2 })
     }
   })
 

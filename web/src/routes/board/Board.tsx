@@ -8,7 +8,7 @@ import { Hero, HeroSkeleton } from './Hero'
 import { MatBand } from './MatBand'
 import { ResultsBand } from './ResultsBand'
 import { OrderBand, SetupBand } from './SetupBand'
-import { DoneBand, winningTeam } from './DoneBand'
+import { DoneBand } from './DoneBand'
 import { boardPlan } from './plan'
 import { sortDoneMatches } from '@/lib/matchOrder'
 import { budgetWithNotes } from './budget'
@@ -103,7 +103,7 @@ export function Board({ snapshot, connected, lastSuccessAt = null, screenMaySlee
   // The note and the certified line each take a b3 line out of the composition rather
   // than painting over one, so the budget has to be resolved together with them.
   const { budget, notes } = budgetWithNotes(
-    { comp: plan.comp, mats: plan.mats, far, sign: certifiedAt !== null },
+    { comp: plan.comp, mats: plan.mats, teams: plan.teams, far, sign: certifiedAt !== null },
     reported,
   )
 
@@ -111,7 +111,6 @@ export function Board({ snapshot, connected, lastSuccessAt = null, screenMaySlee
   const entryRows = plan.comp === 'entry' ? done.slice(0, budget.rows) : []
   const settled = useSettleTimer(settleIds(snapshot, held, entryRows), snapshot !== null)
 
-  const winner = snapshot && plan.comp === 'done' ? winningTeam(snapshot.teams) : null
   // 7.3's team edge is read off the snapshot's own teams, so a row can only ever paint a
   // colour the board is already showing in the hero.
   const teamColors = new Map((snapshot?.teams ?? []).map(t => [t.id, t.color]))
@@ -131,12 +130,14 @@ export function Board({ snapshot, connected, lastSuccessAt = null, screenMaySlee
             '--b-panel-n': String(budget.panel),
             '--b-mat-gap-n': String(budget.matGap),
             '--b-row-n': String(budget.row),
+            '--lb-rows': String(budget.lbRows),
+            '--lb-gap-n': String(budget.lbGap),
             '--b-sum-k': String(budget.sumScale),
           } as CSSProperties}
         >
           {snapshot === null || plan.comp === 'cold'
             ? <HeroSkeleton />
-            : <Hero teams={snapshot.teams} winnerId={plan.comp === 'done' ? winner?.id ?? null : null} />}
+            : <Hero teams={snapshot.teams} leaderboard={snapshot.leaderboard} />}
 
           {/* G27: on a desk event no mat runs anything, so the head names the running
               order the room will actually see rather than an arrangement of mats. */}
@@ -151,6 +152,7 @@ export function Board({ snapshot, connected, lastSuccessAt = null, screenMaySlee
               settled={settled}
               serverNow={snapshot.now}
               teamColor={teamColor}
+              withClock={budget.clock}
               nextCount={budget.queue}
               lastSuccessAt={lastSuccessAt}
               pollIntervalMs={pollIntervalMs}

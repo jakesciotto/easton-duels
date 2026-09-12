@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve as resolvePath } from 'node:path'
-import { B1, B2, B3, HERO_GAP, PLATE, SETUP_HEAD_GAP, boardBudget } from '@/routes/board/budget'
+import { B1, B2, B3, HERO_GAP, SETUP_HEAD_GAP, boardBudget } from '@/routes/board/budget'
+import type { Composition } from '@/routes/board/plan'
 
 /**
  * The board's colour and size decisions live in board.css, where a type checker cannot
@@ -145,6 +146,23 @@ function boardVars(far: number): Vars {
 }
 
 /**
+ * The same, with the hero's own steps resolved for a team count: the budget states
+ * --b-hero-n, --lb-rows and --lb-gap-n on the safe layer, and .b-lb derives the row and
+ * both type steps from them.
+ */
+function lbVars(far: number, teams: number, comp: Composition = 'mats', mats = 2): Vars {
+  const budget = boardBudget({ comp, mats, teams, far, note: false })
+  return {
+    ...boardVars(far),
+    ...customProperties('.b-lb'),
+    ...customProperties('.lb-row'),
+    '--b-hero-n': String(budget.hero),
+    '--lb-rows': String(budget.lbRows),
+    '--lb-gap-n': String(budget.lbGap),
+  }
+}
+
+/**
  * The fixed tracks of a row and the number of `minmax(0, 1fr)` name tracks beside them.
  * A flexible track has no width of its own: it is whatever the row has left.
  */
@@ -166,7 +184,7 @@ describe('the far knob', () => {
     expect(rule('.b-safe')).not.toMatch(/transform/)
     expect(decl('.b-safe', 'inset')).toBe('5%')
 
-    for (const step of ['--b1', '--b2', '--b3', '--b-plate', '--b-indent', '--b-code',
+    for (const step of ['--b1', '--b2', '--b3', '--b-indent',
       '--b-gap-row', '--b-gap-tight', '--b-gap-pair']) {
       expect(customProperties('.b-stage')[step], step).toContain('var(--far)')
     }
@@ -178,17 +196,18 @@ describe('the far knob', () => {
 
   it('scales the hero band and the leading inside it together', () => {
     // The defect: a fixed 31cqh hero around contents that scaled meant turning the deep
-    // room knob UP squeezed the plate row, which is the one flexible item, and clipped
-    // the team name. The plate row no longer flexes and the band comes from the budget.
-    expect(decl('.b-hero', 'height')).toBe('calc(var(--b-hero-n) * 1cqh)')
+    // room knob UP squeezed the one flexible item and clipped the team name. Nothing in
+    // the hero flexes now: the rows divide --b-hero-n, which the budget states.
+    expect(decl('.b-lb', 'height')).toBe('calc(var(--b-hero-n) * 1cqh)')
+    expect(decl('.b-lb', 'flex')).toBe('none')
+    expect(decl('.lb-row', 'flex')).toBe('none')
     expect(decl('.b-band', 'height')).toBe('calc(var(--b-band-n) * 1cqh)')
     expect(decl('.b-band', 'margin-top')).toBe('calc(var(--b-hero-gap-n) * 1cqh)')
-    expect(decl('.b-plate-row', 'flex')).toBe('none')
-    for (const [selector, prop] of [
-      ['.b-bar', 'height'], ['.b-plate-row', 'margin-top'], ['.b-score-row', 'margin-top'],
-    ] as const) {
-      expect(decl(selector, prop), `${selector} ${prop}`).toContain('var(--far)')
+    // The two-half hero is retired, so none of its geometry is left to drift.
+    for (const gone of ['.b-hero', '.b-half', '.b-bar', '.b-plate-row', '.b-code', '.b-score-row', '.b-wins', '.b-labels', '.b-pts']) {
+      expect(ruleFor(gone), gone).toBeNull()
     }
+    expect(css).not.toMatch(/--b-plate|--b-code|--b-wins-box/)
   })
 
   it('states the same type steps and plates the budget module works from', () => {
@@ -197,45 +216,72 @@ describe('the far knob', () => {
     expect(px('var(--b1)', at1)).toBeCloseTo(B1 * CQH, 6)
     expect(px('var(--b2)', at1)).toBeCloseTo(B2 * CQH, 6)
     expect(px('var(--b3)', at1)).toBeCloseTo(B3 * CQH, 6)
-    expect(px('var(--b-plate)', at1)).toBeCloseTo(PLATE.mats * CQH, 6)
-    expect(px(declIn(rule("[data-comp='entry'] .b-hero"), '--b-plate'), at1)).toBeCloseTo(PLATE.entry * CQH, 6)
-    expect(px(declIn(rule("[data-comp='done'] .b-hero"), '--b-plate'), at1)).toBeCloseTo(PLATE.done * CQH, 6)
-    // The stylesheet's own defaults are the live composition at far 1, one mat, no note.
-    const live = boardBudget({ comp: 'mats', mats: 1, far: 1, note: false })
+    // The stylesheet's own defaults are the live composition at far 1, two teams, one
+    // mat, no note.
+    const live = boardBudget({ comp: 'mats', mats: 1, teams: 2, far: 1, note: false })
     const safe = customProperties('.b-safe')
     expect(Number(safe['--b-hero-n'])).toBeCloseTo(live.hero, 6)
     expect(Number(safe['--b-band-n'])).toBeCloseTo(live.band, 6)
     expect(Number(safe['--b-hero-gap-n'])).toBe(HERO_GAP.mats)
+    expect(Number(safe['--lb-rows'])).toBe(live.lbRows)
+    expect(Number(safe['--lb-gap-n'])).toBeCloseTo(live.lbGap, 6)
   })
 })
 
 describe('the hero figures', () => {
-  it('gives both hero numerals a character slot, points included', () => {
+  it('gives every standing figure a character slot, points included', () => {
     // 2.8: a fixed slot, so a value change can never change the width of its container.
     // The points figure was the one board number without one. At a 1920 stage a b3
     // character is 58.32px, so a team taking a 2 point takedown from 9 grew its label
-    // box by that much in one frame and shoved " pts" sideways on a still hero half.
-    const vars = boardVars(1)
-    const b1 = px(decl('.b-wins', 'font-size'), vars)
-    const b3 = px('var(--b3)', vars)
-    expect(px(decl('.b-wins', 'min-width'), vars, b1)).toBeCloseTo(2 * CH_EM * b1, 6)
-    expect(decl('.b-pts', 'display')).toBe('inline-block')
-    expect(px(decl('.b-pts', 'min-width'), vars, b3)).toBeCloseTo(3 * CH_EM * b3, 6)
+    // box by that much in one frame and shoved " pts" sideways on a still hero.
+    const vars = lbVars(1, 2)
+    const wins = px('var(--lb-wins)', vars)
+    const name = px('var(--lb-name)', vars)
+    expect(px(declIn(rule('.lb-row'), '--lb-col-wins'), vars, wins)).toBeCloseTo(2 * CH_EM * wins, 6)
+    expect(decl('.lb-pts-n', 'display')).toBe('inline-block')
+    expect(px(decl('.lb-pts-n', 'min-width'), vars, name)).toBeCloseTo(3 * CH_EM * name, 6)
     // Three characters, because a team's points total passes 99 in a full event.
-    expect(3 * CH_EM * b3).toBeCloseTo(174.96, 2)
+    expect(3 * CH_EM * name).toBeCloseTo(174.96, 2)
+    expect(decl('.lb-pts-n', 'text-align')).toBe('right')
     // One rule for the live box and the cold start box, so the two cannot drift apart.
     expect(css).not.toMatch(/b-cold-pts/)
   })
 
-  it('states the alignment inside the points slot instead of inheriting two of them', () => {
-    // The two halves do not inherit the same alignment: half B sets text-align: right and
-    // half A leaves it at the start. A slot with no rule of its own therefore put a single
-    // digit hard against " pts" on one half and two blank characters away from it on the
-    // other, which is 116.64px at the design stage on a hero that is meant to mirror.
-    expect(decl('.b-half-b', 'text-align')).toBe('right')
-    expect(ruleFor('.b-half')).not.toMatch(/text-align/)
-    expect(decl('.b-pts', 'text-align')).toBe('right')
-    expect(2 * CH_EM * px('var(--b3)', boardVars(1))).toBeCloseTo(116.64, 2)
+  it('puts the rank numeral on the track the mat numeral uses', () => {
+    // Both are 0.6 of the step beside them, so the standings and the ledger below them
+    // read down one column rather than two that nearly line up.
+    const vars = lbVars(1, 3)
+    expect(px(declIn(rule('.lb-row'), '--lb-col-rank'), vars))
+      .toBeCloseTo(px('var(--col-board-mat)', { ...vars, '--b-name-step': 'var(--lb-name)' }), 6)
+    expect(decl('.lb-rank', 'font-size')).toBe('var(--lb-name)')
+    expect(decl('.lb-rank', 'text-align')).toBe('center')
+  })
+
+  it('takes the second half of the leading indent for the team edge, costing no column', () => {
+    expect(decl('.lb-edge', 'position')).toBe('absolute')
+    expect(decl('.lb-edge', 'left')).toBe('var(--b-edge-w)')
+    expect(decl('.lb-edge', 'width')).toBe('var(--b-edge-w)')
+    expect(decl('.lb-edge', 'background')).toBe('var(--team)')
+    expect(decl('.lb-edge', 'top')).toBe('0')
+    expect(decl('.lb-edge', 'bottom')).toBe('0')
+    // The row reserves exactly two edges of indent on the leading side, as a mat row does.
+    for (const far of FARS) {
+      const vars = lbVars(far, 3)
+      expect(px(decl('.lb-row', 'padding-left'), vars), `far ${far}`).toBeCloseTo(2 * px('var(--b-edge-w)', vars), 6)
+      expect(decl('.lb-row', 'padding-right')).toBe('var(--b-indent)')
+    }
+  })
+
+  it('tones a tied leader on the figure and the numeral, and nowhere else', () => {
+    expect(decl('.lb-lead .lb-wins', 'color')).toBe('var(--fig-lead)')
+    expect(decl('.lb-lead .lb-rank', 'color')).toBe('var(--gray-12)')
+    expect(decl('.lb-wins', 'color')).toBe('var(--fig-trail)')
+    expect(decl('.lb-rank', 'color')).toBe('var(--gray-10)')
+    // No highlight and no rule: either would make a shared rank read as a winner.
+    expect(ruleFor('.lb-lead')).toBeNull()
+    expect(rule('.lb-row')).not.toMatch(/background/)
+    // Pick 4: nothing separates the standings from the band but the 3cqh gap.
+    expect(rule('.b-lb')).not.toMatch(/border/)
   })
 })
 
@@ -452,11 +498,10 @@ describe('the board greps in 5.1', () => {
 
   it('spends no grey below --gray-10 beyond the two 6.15 and 2.5 name', () => {
     expect(css.match(/var\(--gray-[2-9]\)/g)).toBeNull()
-    // The settled row background, the plate code text, and the letterbox bars outside
-    // the stage, which 3.4 states in those words.
-    expect(css.match(/var\(--gray-1\)/g)).toHaveLength(3)
+    // The settled row background and the letterbox bars outside the stage, which 3.4
+    // states in those words. The plate the third one cut its code out of is retired.
+    expect(css.match(/var\(--gray-1\)/g)).toHaveLength(2)
     expect(decl('.b-row-settled', 'background')).toBe('var(--gray-1)')
-    expect(decl('.b-code', 'color')).toBe('var(--gray-1)')
     expect(decl('.b-frame', 'background')).toBe('var(--gray-1)')
   })
 })

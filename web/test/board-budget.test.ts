@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   B2, B3, ENTRY_ROWS_MAX, FLOOR_NOTE_FAR, FLOOR_NOTE_MATS, FOOTER_GAP, NOTE_GAP, SAFE_CQH,
   SETUP_HEAD_GAP, SUM_ALLOW, SUM_FIGS,
-  SIGN_GAP, SUM_GAP, SUM_LINES, boardBudget, budgetWithNotes, heroContent, matGapFor,
+  SIGN_GAP, SUM_GAP, SUM_LINES, boardBudget, budgetWithNotes, lbGapFor, lbRowFor, matGapFor, maxFarFor,
 } from '@/routes/board/budget'
 import type { Composition } from '@/routes/board/plan'
 
@@ -56,7 +56,7 @@ describe('the composition budget', () => {
             const b = boardBudget({ comp, mats, far, note, sign })
             const where = `${comp} ${mats} mats at far ${far.toFixed(2)} note ${note} sign ${sign}`
             expect(total(b), where).toBeCloseTo(SAFE_CQH, 6)
-            expect(b.hero, where).toBeGreaterThanOrEqual(heroContent(comp, far) - 1e-9)
+            expect(lbRowFor(b.hero, 2, far), where).toBeGreaterThanOrEqual(B3 * far - 1e-9)
             if (comp === 'entry') {
               expect(b.rows, where).toBeGreaterThan(0)
               expect(nameStep(b.row, far), where).toBeCloseTo(B3 * far, 6)
@@ -84,16 +84,18 @@ describe('the composition budget', () => {
     }
   })
 
-  it('grows the hero with the knob and always covers its own contents', () => {
-    // The defect this replaces: the hero band was a fixed 31cqh while the plate and the
-    // wins numeral inside it scaled, so at far 1.2 on a 1920 x 1080 stage the contents
-    // needed 388.71px inside a 334.8px band and the plate row absorbed all 53.91px.
+  it('grows the hero with the knob and always holds its rows at the floor', () => {
+    // The defect this replaces: the hero band was a fixed 31cqh while the type inside it
+    // scaled, so at far 1.2 on a 1920 x 1080 stage the contents needed 388.71px inside a
+    // 334.8px band and the one flexible item absorbed all 53.91px.
     for (const comp of COMPS) {
       let previous = 0
       for (const far of FARS) {
         const b = boardBudget({ comp, mats: 4, far, note: false })
-        expect(b.hero, `${comp} at far ${far}`).toBeGreaterThanOrEqual(heroContent(comp, far) - 1e-9)
-        expect(b.hero).toBeGreaterThan(previous)
+        expect(lbRowFor(b.hero, 2, far), `${comp} at far ${far}`).toBeGreaterThanOrEqual(B3 * far - 1e-9)
+        // done is the one composition the knob shrinks: the lines under its standings
+        // are type too, and they take their b3 out of the panel above them.
+        if (comp !== 'done') expect(b.hero, `${comp} at far ${far}`).toBeGreaterThan(previous)
         previous = b.hero
       }
     }
@@ -108,6 +110,103 @@ describe('the composition budget', () => {
     expect(at(1).band).toBeCloseTo(56, 6)
     expect(at(1.2).hero).toBeCloseTo(37.2, 6)
     expect(at(1.2).band).toBeCloseTo(49.8, 6)
+  })
+})
+
+/**
+ * 7.1's hero: a row per team. Under five teams the rows fit the 31cqh hero budget and
+ * nothing else moves; above it the hero grows and the mat band pays, down to the single
+ * floor row an eight team event leaves it. The mockup's own frames are the table below.
+ */
+describe('the leaderboard hero', () => {
+  const TEAM_COUNTS = [2, 3, 4, 5, 6, 7, 8]
+
+  it('fills the hero with its rows and their gaps at every count and every setting', () => {
+    for (const far of FARS) {
+      for (const teams of TEAM_COUNTS) {
+        for (const comp of COMPS) {
+          const b = boardBudget({ comp, mats: 4, teams, far, note: false })
+          const where = `${comp}, ${teams} teams at far ${far}`
+          const row = lbRowFor(b.hero, teams, far)
+          expect(teams * row + (teams - 1) * b.lbGap, where).toBeCloseTo(b.hero, 6)
+          expect(b.lbRows, where).toBe(teams)
+          expect(b.lbGap, where).toBeCloseTo(lbGapFor(teams) * far, 6)
+          expect(row, where).toBeGreaterThan(0)
+          expect(total(b), where).toBeCloseTo(SAFE_CQH, 6)
+        }
+      }
+    }
+  })
+
+  it('keeps the rows at the b3 floor while the room holds them', () => {
+    // The knob is clamped against the count, so every setting a board can actually be
+    // opened at holds the floor. Past the cap the type steps down rather than clipping.
+    for (const teams of TEAM_COUNTS) {
+      for (const far of FARS.filter(f => f <= maxFarFor(teams))) {
+        const b = boardBudget({ comp: 'mats', mats: 2, teams, far, note: false })
+        expect(lbRowFor(b.hero, teams, far), `${teams} teams at far ${far}`).toBeGreaterThanOrEqual(B3 * far - 1e-9)
+      }
+    }
+  })
+
+  it('states the mockup composition at two, three and eight teams', () => {
+    const at = (teams: number) => boardBudget({ comp: 'mats', mats: 2, teams, far: 1, note: false })
+    // Frame 4: two rows of 14.75cqh, and the band is byte for byte today's.
+    expect(at(2).hero).toBeCloseTo(31, 6)
+    expect(lbRowFor(at(2).hero, 2, 1)).toBeCloseTo(14.75, 6)
+    expect(at(2).band).toBeCloseTo(56, 6)
+    expect(at(2).clock).toBe(true)
+    // Frame 1: three rows of 9.53cqh, which is the floor, and the same band.
+    expect(at(3).hero).toBeCloseTo(31, 6)
+    expect(lbRowFor(at(3).hero, 3, 1)).toBeCloseTo(9.5333, 4)
+    expect(at(3).band).toBeCloseTo(56, 6)
+    expect(at(3).clock).toBe(true)
+    // Frame 6A: 78 + 3 + 9 is the whole safe frame. One mat row, no queue, no clock.
+    expect(at(8).hero).toBeCloseTo(78, 6)
+    expect(lbRowFor(at(8).hero, 8, 1)).toBeCloseTo(9.4, 6)
+    expect(at(8).band).toBeCloseTo(9, 6)
+    expect(at(8).matsShown).toBe(1)
+    expect(at(8).queue).toBe(0)
+    expect(at(8).clock).toBe(false)
+    expect(at(8).hero + at(8).heroGap + at(8).band).toBeCloseTo(SAFE_CQH, 6)
+  })
+
+  it('grows the hero one count at a time rather than in one cliff', () => {
+    const hero = (teams: number) => boardBudget({ comp: 'mats', mats: 2, teams, far: 1, note: false }).hero
+    expect(TEAM_COUNTS.map(hero)).toEqual([31, 31, 39.6, 46.6, 56, 65.4, 78])
+    for (const teams of [5, 6, 7, 8]) expect(hero(teams), `${teams} teams`).toBeGreaterThan(hero(teams - 1))
+  })
+
+  it('caps the far knob against the team count', () => {
+    // Eight floor rows at 1.2 are 86.4cqh plus 3.36 of gaps, which is the whole frame.
+    expect(maxFarFor(8)).toBeLessThan(1.2)
+    expect(maxFarFor(8)).toBeGreaterThanOrEqual(1)
+    for (const teams of [2, 3, 4, 5, 6]) expect(maxFarFor(teams), `${teams} teams`).toBeGreaterThanOrEqual(1.2)
+    // At the cap the composition still holds a mat row at the floor, exactly.
+    for (const teams of TEAM_COUNTS) {
+      const far = maxFarFor(teams)
+      const b = boardBudget({ comp: 'mats', mats: 1, teams, far, note: false })
+      expect(b.band, `${teams} teams`).toBeGreaterThanOrEqual(B3 * far - 1e-9)
+      expect(total(b), `${teams} teams`).toBeCloseTo(SAFE_CQH, 6)
+    }
+  })
+
+  it('says nothing about the far setting when the count is what filled the screen', () => {
+    // FLOOR_NOTE_FAR would be a lie: the knob is already clamped to the count, and at
+    // eight teams there is no line left to print a note on without pushing the rows
+    // under their own floor. A board already carrying a note says both on that line.
+    const eight = budgetWithNotes({ comp: 'mats', mats: 4, teams: 8, far: 1 }, [])
+    expect(eight.notes).toEqual([])
+    expect(eight.budget.note).toBe(0)
+    expect(total(eight.budget)).toBeCloseTo(SAFE_CQH, 6)
+
+    const seven = budgetWithNotes({ comp: 'mats', mats: 4, teams: 7, far: 1 }, [])
+    expect(seven.notes).toEqual([FLOOR_NOTE_MATS])
+    expect(lbRowFor(seven.budget.hero, 7, 1)).toBeGreaterThanOrEqual(B3 - 1e-9)
+
+    const quiet = budgetWithNotes({ comp: 'mats', mats: 4, teams: 8, far: 1 }, ['Not updating 12s'])
+    expect(quiet.notes).toEqual(['Not updating 12s', FLOOR_NOTE_MATS])
+    expect(total(quiet.budget)).toBeCloseTo(SAFE_CQH, 6)
   })
 })
 
@@ -180,8 +279,9 @@ describe('the certified line', () => {
       // Whatever the setting, the summary is scaled to the band rather than overrunning.
       expect(SUM_GAP * 2 + SUM_ALLOW * far + SUM_FIGS * far * both.sumScale).toBeLessThanOrEqual(both.band + 1e-9)
     }
-    expect(boardBudget({ comp: 'done', mats: 1, far: 1, note: true, sign: true }).floorNote).toBeNull()
-    expect(boardBudget({ comp: 'done', mats: 1, far: 1.2, note: true, sign: true }).floorNote).toBe(FLOOR_NOTE_FAR)
+    for (const far of FARS) {
+      expect(boardBudget({ comp: 'done', mats: 1, far, note: true, sign: true }).floorNote, `far ${far}`).toBeNull()
+    }
   })
 
   it('belongs to done alone, whatever a caller asks for', () => {
@@ -271,7 +371,7 @@ describe('the closing composition', () => {
         const where = `far ${far} note ${note}`
         const content = SUM_GAP * 2 + SUM_LINES * far * b.sumScale
         expect(content, where).toBeLessThanOrEqual(b.band + 1e-9)
-        expect(b.hero, where).toBeGreaterThanOrEqual(heroContent('done', far) - 1e-9)
+        expect(lbRowFor(b.hero, 2, far), where).toBeGreaterThanOrEqual(B3 * far - 1e-9)
         // The figures step down together only where they have to, and never below b3.
         expect(b.sumScale).toBeLessThanOrEqual(1)
         expect(B2 * far * b.sumScale, where).toBeGreaterThanOrEqual(B3 * far)

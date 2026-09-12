@@ -42,11 +42,7 @@
   --b1: calc(22cqh * var(--far));
   --b2: calc(13cqh * var(--far));
   --b3: calc(9cqh * var(--far));
-  /* A b3 row sets `line-height: 1`, so --b3 doubles as the height of a one line b3 row,
-     and --b-wins-box is b1 at the 0.78 a digits only slot may set. */
-  --b-wins-box: calc(17.16cqh * var(--far));
-  --b-plate: calc(10cqh * var(--far));
-  --b-code: calc(5.6cqh * var(--far));
+  /* A b3 row sets `line-height: 1`, so --b3 doubles as the height of a one line b3 row. */
   --b-round: 0.6cqh;
   --b-indent: calc(2.4cqh * var(--far));
   /* Section 8 and 7.3 give the live gutter and the team edge the same 1.2cqh at the
@@ -74,28 +70,21 @@
    The --b-*-n numbers are cqh, and boardBudget() in budget.ts sets them per snapshot.
    They are numbers rather than lengths so the arithmetic can be stated, tested and
    divided in one place; the values here are the defaults that make the stylesheet
-   correct on its own at far 1, one mat, no note.
+   correct on its own at far 1, two teams, one mat, no note.
 
-   Hero contents, per half, every one of them type and every one scaling with --far:
+   The hero is a leaderboard: --lb-rows rows and --lb-rows - 1 gaps inside --b-hero-n,
+   so a row is (hero - (n - 1) * gap) / n and every step inside it is clamped against
+   that row. At far 1 the hero holds 31cqh while the rows stay at the 9cqh floor:
 
-     bar 1.2 + gap 1.0 + plate P + gap 1.2 + wins box 17.16  =  (20.56 + P) * far
+     teams   gap    hero    row      band        the band holds
+     2       1.5    31      14.75    56          two mats, clocks, a next line each
+     3       1.2    31       9.53    56          the same
+     8       0.4    78       9.40     9          one mat row, no clock, no next line
 
-   with P = 10 on the live compositions, 12 on data entry, 13 on done. So:
-
-     comp    hero budget   hero content   gap   band                    sum
-     mats    31F           30.56F          3    90 - 31F - 3 - note      90
-     entry   38F           32.56F          2    87 - 47F - note          90
-     done    see below     33.56F          2    90 - hero - 2 - note     90
-
-     mats, no note:  far 0.85  hero 26.35  band 60.65
-                     far 1.00  hero 31.00  band 56.00
-                     far 1.20  hero 37.20  band 49.80
-
-   The hero always covers its own content (0.44F, 5.44F and up to 6.44F of slack), so
-   the plate row is `flex: none` and the score row is the item that spends the slack.
-   done is the one composition whose closing summary is taller than its hero, so its
-   hero takes the smaller of 40F and whatever the summary's 2 + 38.44F does not need,
-   and never less than its own 33.56F: at far 1.2 that is hero 40.27 and band 47.73.
+   Above four teams the floor rows are taller than the 31cqh budget, so the hero grows
+   and the band pays, down to the single floor row an eight team event leaves it. done
+   draws no mat band at all: the standings take everything the result line and the
+   certified line do not.
 
    The note is a b3 line plus 1cqh of leading and it DISPLACES rather than covers. As an
    overlay it painted over the bottom 97.2px of the safe area, which on a four mat board
@@ -115,6 +104,8 @@
   --b-mat-gap-n: 2;
   --b-row-n: 20;
   --b-sum-k: 1;
+  --lb-rows: 2;
+  --lb-gap-n: 1.5;
 
   /* A row never renders type its own box cannot hold. The score steps down from b2 and
      the name from b3 as the room shrinks, so a six mat ledger lays out instead of
@@ -178,68 +169,73 @@
   color: var(--gray-11);
 }
 
-/* ---------------- hero ---------------- */
+/* ---------------- hero, the ranked leaderboard ---------------- */
 
-.b-hero {
+/* 7.1: one hero for every team count. The rows and the gaps between them fill
+   --b-hero-n exactly, and every step inside a row is clamped against the row's own
+   height, so a count that shortens the rows steps the type down instead of clipping it.
+   --lb-rows and --lb-gap-n are budget.ts's, like every other -n on the safe layer. */
+.b-lb {
   flex: none;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 4cqw minmax(0, 1fr);
   height: calc(var(--b-hero-n) * 1cqh);
-}
-.b-half {
   display: flex;
   flex-direction: column;
-  min-width: 0;
-  overflow: hidden;
+  gap: calc(var(--lb-gap-n) * 1cqh);
+
+  --lb-row: calc(
+    (var(--b-hero-n) * 1cqh - (var(--lb-rows) - 1) * var(--lb-gap-n) * 1cqh) / var(--lb-rows)
+  );
+  --lb-name: min(var(--b3), var(--lb-row));
+  /* Digits carry no descender, so the wins numeral may set its box at 0.78 and take the
+     largest step that box fits, up to b1. Two teams reach 18.9cqh, eight reach 12.05. */
+  --lb-wins: min(var(--b1), calc(var(--lb-row) / 0.78));
 }
-.b-half-b {
-  grid-column: 3;
-  text-align: right;
-}
-/* The bar and the two hero gaps are leading between type, so they scale with the type
-   they separate. Left fixed they made the hero's content 26.49cqh inside a 26.35cqh
-   band at far 0.85, which is the same overflow from the other end of the knob. */
-.b-bar {
+
+.lb-row {
+  position: relative;
   flex: none;
-  height: calc(1.2cqh * var(--far));
-  width: 100%;
-  background: var(--team);
-}
-/* At the close only the winning team's bar is filled. The other one empties rather
-   than dropping to a grey, because every grey below --gray-10 is deleted here. */
-.b-bar-quiet {
-  background: transparent;
-}
-.b-plate-row {
-  /* Never the item that absorbs a shortfall. The hero budget covers the plate and the
-     numeral at every --far, so a squeezed plate row would mean the arithmetic above is
-     wrong, and clipping the team name is not how that should be reported. */
-  flex: none;
-  height: var(--b-plate);
-  margin-top: calc(1cqh * var(--far));
-  display: flex;
-  align-items: center;
-  gap: 1.6cqw;
-  min-width: 0;
-  overflow: hidden;
-}
-.b-code {
-  flex: none;
-  height: 100%;
+  height: var(--lb-row);
   display: grid;
-  place-items: center;
-  padding: 0 1.4cqw;
-  font-size: var(--b-code);
-  line-height: 1;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  align-items: center;
+  grid-template-columns:
+    var(--lb-col-rank) var(--b-gap-row) minmax(0, 1fr) var(--b-gap-row)
+    var(--lb-col-wins) var(--b-gap-tight) auto;
+  padding-left: var(--b-indent);
+  /* The trailing indent the mat row does not need: without it the points figure sits
+     hard against the safe edge, where a television's own overscan eats it. */
+  padding-right: var(--b-indent);
   border-radius: var(--b-round);
-  background: var(--team);
-  color: var(--gray-1);
+  overflow: hidden;
+  font-size: var(--lb-wins);
+
+  /* The mat numeral's own track, stated the same way: 0.6 of the step beside it. */
+  --lb-col-rank: calc(var(--lb-name) * 0.6);
+  --lb-col-wins: 2ch;
 }
-.b-team-name {
+
+/* Costs no track and no padding, exactly like .b-edge-a on a mat row: it takes the
+   second half of the leading indent, which the row already reserves. */
+.lb-edge {
+  position: absolute;
+  left: var(--b-edge-w);
+  top: 0;
+  bottom: 0;
+  width: var(--b-edge-w);
+  background: var(--team);
+}
+.lb-rank {
+  grid-column: 1;
+  font-size: var(--lb-name);
+  line-height: 1;
+  font-weight: 500;
+  text-align: center;
+  color: var(--gray-10);
+  font-variant-numeric: tabular-nums;
+}
+.lb-name {
+  grid-column: 3;
   min-width: 0;
-  font-size: var(--b3);
+  font-size: var(--lb-name);
   line-height: 1;
   font-weight: 500;
   color: var(--gray-12);
@@ -247,62 +243,36 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.b-score-row {
-  flex: 1;
-  min-height: var(--b-wins-box);
-  min-width: 0;
-  margin-top: calc(1.2cqh * var(--far));
-  display: flex;
-  align-items: center;
-  gap: 1.2cqw;
-}
-.b-wins {
-  flex: none;
-  min-width: 2ch;
-  font-size: var(--b1);
+.lb-wins {
+  grid-column: 5;
+  font-size: var(--lb-wins);
   line-height: 0.78;
   font-weight: 500;
   letter-spacing: -0.018em;
-  text-align: center;
+  text-align: right;
   font-variant-numeric: tabular-nums;
+  color: var(--fig-trail);
 }
-.b-labels {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-.b-labels > span {
-  font-size: var(--b3);
-  line-height: 0.95;
-  font-weight: 400;
-  letter-spacing: 0;
+.lb-pts {
+  grid-column: 7;
+  font-size: var(--lb-name);
+  line-height: 1;
   color: var(--gray-10);
   white-space: nowrap;
 }
-/* 2.8's fixed character slot, which the points figure was the one board number without.
-   Three characters, because a team's points total passes 99 in a full event, and one
-   character of b3 mono is 58.32px at a 1920 stage: a takedown taking a team from 9 to 11
-   moved the word beside it that far, in one frame, on the still half of the hero.
-
-   The alignment inside the slot is stated here rather than inherited. The two halves do
-   not inherit the same one -- half B sets text-align: right and half A leaves it at the
-   start -- so a slot with no rule of its own put a single digit hard against " pts" on
-   one half and two blank characters, 116.64px at the design stage, away from it on the
-   other. Right aligned on both, the digits always end against their own word and the
-   slack always falls on the far side of the number, which is 2.7's register rule for a
-   numeric track. The cold start reserves this same box. */
-.b-pts {
+/* 2.8's fixed character slot. Three characters, because a team's points total passes 99
+   in a full event, and a takedown taking a team from 9 to 11 would otherwise move the
+   word beside it by a whole character on a still hero. */
+.lb-pts-n {
   display: inline-block;
   min-width: 3ch;
   text-align: right;
+  font-variant-numeric: tabular-nums;
 }
-.b-half-b .b-plate-row,
-.b-half-b .b-score-row {
-  flex-direction: row-reverse;
-}
-.b-half-b .b-labels {
-  align-items: flex-end;
-}
+/* Every team level at the top takes the lead tone, on the numeral and on the figure.
+   There is no other cue: a highlight or a rule would make a tie read as a winner. */
+.lb-lead .lb-rank { color: var(--gray-12); }
+.lb-lead .lb-wins { color: var(--fig-lead); }
 
 .b-lead { color: var(--fig-lead); }
 .b-trail { color: var(--fig-trail); }
@@ -633,26 +603,18 @@
 
 /* ---------------- cold start ---------------- */
 
-/* 6.15: the bars, the plates and the team names hold their final positions and ONLY
-   the two wins numerals are Skeletons. There is no snapshot yet, so those positions
-   are empty boxes: --team is unset, which paints nothing, and the plate keeps the
-   width three uppercase characters will take at b-code (1.8em of Geist Mono plus the
-   plate's own 2.8cqw of padding) so the name lands where it finally lands. The points
-   box is .b-pts itself, so the slot the cold start reserves cannot drift from the one
-   the first snapshot renders into. */
-.b-cold-code { width: calc(var(--b-code) * 1.8 + 2.8cqw); }
+/* 6.15: the rows hold their final positions and ONLY the wins numerals are Skeletons.
+   There is no snapshot yet, so the other boxes are empty: --team is unset, which paints
+   nothing. The skeleton takes the row's own wins slot, 2ch of --lb-wins at the 0.78 box
+   the figure sets, so the numeral that arrives lands exactly where the box was. */
 .b-skel-wins {
-  height: var(--b-wins-box);
+  height: calc(var(--lb-wins) * 0.78);
   width: 2ch;
-  font-size: var(--b1);
-  flex: none;
   border-radius: var(--b-round);
 }
 
 /* ---------------- compositions ---------------- */
 
-[data-comp='entry'] .b-hero { --b-plate: calc(12cqh * var(--far)); }
-[data-comp='done'] .b-hero { --b-plate: calc(13cqh * var(--far)); }
 [data-comp='entry'] .b-row { height: calc(var(--b-row-n) * 1cqh); }
 /* Digits carry no descender, so a b2 figure may set its own box under 1.0, and the
    score step above is already the largest step that fits the row at 0.76. */
