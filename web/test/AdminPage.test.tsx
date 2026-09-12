@@ -36,6 +36,26 @@ describe('AdminPage', () => {
     expect(router.state.location.pathname).toBe('/events/7')
   })
 
+  // An event holds up to eight teams and the row has space for two plates beside the
+  // name, so past that it states the remainder rather than crowding out its own link.
+  it('states the teams it has no room for', async () => {
+    const many = {
+      ...summary,
+      teams: [
+        ...summary.teams,
+        { id: 3, eventId: 7, name: 'Fernwood', color: 'teal', position: 2 },
+        { id: 4, eventId: 7, name: 'Harborview', color: 'purple', position: 3 },
+      ],
+    }
+    fakeFetch(url => url === '/api/events' ? { json: [many] } : { json: {} })
+    mount()
+    expect(await screen.findByText('Fall Duels')).toBeInTheDocument()
+    expect(screen.getByText('Ridgeline')).toBeInTheDocument()
+    expect(screen.getByText('Lakeside')).toBeInTheDocument()
+    expect(screen.queryByText('Fernwood')).not.toBeInTheDocument()
+    expect(screen.getByText(/and.*more/)).toHaveTextContent('and 2 more')
+  })
+
   // Measured in a real browser against the dev server: an event named "test" gave the
   // name link a 25 by 20px hit area inside a 1102 by 40px row, so clicking the row did
   // nothing and the list read as broken. The link stretches over the row instead. jsdom

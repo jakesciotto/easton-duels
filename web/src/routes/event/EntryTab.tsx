@@ -780,10 +780,10 @@ export function EntryTab({ detail }: { detail: EventDetail }) {
   )
 }
 
-// The resting colour is the leading or trailing figure token, which is the only thing
-// separating the numbers from each other.
-// 7.5: the whole numeral crossfades, 100ms, and never moves. It sits at t5 rather than
-// t7 because the header carries up to eight of them now, one per team.
+// 7.5: the whole numeral crossfades, 100ms, and never moves. The resting colour is the
+// leading or trailing figure token, which is the only thing separating the numbers from
+// each other. It sits at t5 rather than t7 because the header now carries one per team,
+// which is up to eight of them.
 function Figure({ value, lead }: { value: number; lead: boolean }) {
   const [shown, setShown] = useState(value)
   const [fading, setFading] = useState(false)

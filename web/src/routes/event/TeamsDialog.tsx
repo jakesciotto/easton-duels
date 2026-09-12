@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { TeamList, type TeamDraft } from './TeamList'
 
-export const TEAMS_NOTE = 'An event holds two to eight teams. A team with a competitor or a match on it cannot be removed.'
+const TEAMS_NOTE = 'An event holds two to eight teams. A team with a competitor or a match on it cannot be removed.'
 
 /**
  * The same list the New event dialog carries, after creation. The rows exist on the

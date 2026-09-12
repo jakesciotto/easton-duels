@@ -156,8 +156,8 @@ function LiveStrip({ line, a, b, serverNow, lastSuccessAt, pollIntervalMs, highl
 
 /**
  * Controlled, because React writes a `defaultValue` once at mount and never again: a
- * length another operator changed never reached this cell, and the
- * operator set a mat clock from a number the model had already replaced. The draft is
+ * length another operator changed never reached this cell, and the operator set a mat
+ * clock from a number the model had already replaced. The draft is
  * dropped whenever the served value moves and whenever a write is refused, so a value
  * on screen is either the served one or one the operator is still typing.
  */

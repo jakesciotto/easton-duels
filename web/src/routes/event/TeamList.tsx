@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { RadioGroup } from '@base-ui/react/radio-group'
 import { Radio } from '@base-ui/react/radio'
 import { TEAM_COLOR_KEYS, TEAM_COLOR_LABELS, teamCode, type TeamColor } from '@shared/types'
 import { teamStyle } from '@/lib/format'
-import { colourVerdict, freeColors, nextColor, type GuardLevel } from '@/lib/team-guard'
+import { colourVerdict, nextColor, type GuardLevel } from '@/lib/team-guard'
 import { cn } from '@/lib/utils'
 import { TeamPlate } from '@/components/TeamPlate'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -18,11 +18,11 @@ export interface TeamDraft {
   color: TeamColor
 }
 
-export const MIN_TEAMS = 2
-export const MAX_TEAMS = 8
+const MIN_TEAMS = 2
+const MAX_TEAMS = 8
 
-export const AT_MOST = 'An event holds at most eight teams.'
-export const AT_LEAST = 'An event holds at least two teams.'
+const AT_MOST = 'An event holds at most eight teams.'
+const AT_LEAST = 'An event holds at least two teams.'
 
 const colorsOf = (teams: TeamDraft[], except = -1) => teams.filter((_, i) => i !== except).map(t => t.color)
 
@@ -87,7 +87,7 @@ function ColourGrid({ value, taken, label, onChange }: {
   )
 }
 
-function Panel({ children }: { children: React.ReactNode }) {
+function Panel({ children }: { children: ReactNode }) {
   return <div className="grid content-start gap-3 bg-gray-1 p-4">{children}</div>
 }
 
@@ -210,5 +210,3 @@ export function TeamList({ teams, locked = false, pending = false, error = null,
     </div>
   )
 }
-
-export { freeColors }

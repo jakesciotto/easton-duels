@@ -225,7 +225,9 @@ export function LiveTab({ detail }: { detail: EventDetail }) {
   // (409 match_state) prints the server's own reason here like every other refusal.
   const error = (finishOpen ? null : status.error) ?? act.error ?? advance.error ?? (ending ? null : end.error)
   const matUrl = connect ? `${connect.url}/mat?event=${eventId}` : ''
-  const teamColor = (teamId: number | null) => detail.teams.find(t => t.id === teamId)?.color ?? detail.teams[0].color
+  // A side whose team is not on this event gets the neutral swatch rather than the first
+  // team's colour: a wrong colour is worse than none, and an event holds up to eight.
+  const teamColor = (teamId: number | null) => detail.teams.find(t => t.id === teamId)?.color ?? ''
 
   const mats = [...(view?.mats ?? [])].sort((a, b) => a.number - b.number)
   const allBound = mats.length > 0 && mats.every(m => m.bound)

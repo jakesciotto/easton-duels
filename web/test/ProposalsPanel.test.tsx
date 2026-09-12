@@ -60,7 +60,7 @@ function mount(start: Proposal[], handler: (url: string, init?: RequestInit) => 
       list = list.filter(p => String(p.id) !== url.split('/')[3])
       return { status: 201, json: { match: { id: 55 } } }
     }
-    if (url === '/api/events/7/proposals/confirm-all') { const created = list.length; list = []; return { status: 201, json: { created } } }
+    if (url === '/api/events/7/proposals/confirm-all') { const created = list.length; list = []; return { status: 201, json: { created, skipped: 0 } } }
     if (/^\/api\/proposals\/\d+$/.test(url) && init?.method === 'DELETE') {
       list = list.filter(p => String(p.id) !== url.split('/')[3])
       return { status: 204 }
@@ -136,8 +136,22 @@ describe('ProposalsPanel', () => {
     await screen.findByText('same class, same age')
     await user.click(screen.getByRole('button', { name: 'Confirm all' }))
     await vi.waitFor(() => expect(posted(f, '/api/events/7/proposals/confirm-all')).toBe(1))
-    expect(await screen.findByText('2 matches confirmed.')).toBeInTheDocument()
+    expect(await screen.findByText('Confirmed 2.')).toBeInTheDocument()
     expect(await screen.findByText('No proposals yet.')).toBeInTheDocument()
+  })
+
+  // A kid can pick up a match between the proposer running and the organizer pressing
+  // Confirm all, so the server leaves that draft standing and says how many it left.
+  it('counts the drafts confirm all left in place, and keeps them on the screen', async () => {
+    const f = mount([P1, P2], (url, init) => (url === '/api/events/7/proposals/confirm-all' && init?.method === 'POST'
+      ? { status: 201, json: { created: 1, skipped: 1 } }
+      : undefined))
+    const user = userEvent.setup()
+    await screen.findByText('same class, same age')
+    await user.click(screen.getByRole('button', { name: 'Confirm all' }))
+    await vi.waitFor(() => expect(posted(f, '/api/events/7/proposals/confirm-all')).toBe(1))
+    expect(await screen.findByText('Confirmed 1, skipped 1.')).toBeInTheDocument()
+    expect(screen.getAllByRole('listitem')).toHaveLength(2)
   })
 
   it('swaps a side from the picker, which offers every team but the one staying in', async () => {
@@ -170,14 +184,30 @@ describe('ProposalsPanel', () => {
     await vi.waitFor(() => expect(screen.queryByText('same class, same age')).not.toBeInTheDocument())
   })
 
-  it('reports a refused confirm in the sentence the server sent', async () => {
+  // A refused confirm belongs to the row it refused, not to a banner over the whole
+  // panel: the row stays put so the organizer can swap or remove it instead.
+  it('reports a refused confirm on the row it refused', async () => {
+    mount([P1, P2], (url, init) => (url === '/api/proposals/1/confirm' && init?.method === 'POST'
+      ? { status: 409, json: { error: { code: 'match_state', message: 'Ines Vantel already has a match' } } }
+      : undefined))
+    const user = userEvent.setup()
+    await screen.findByText('same class, same age')
+    await user.click(screen.getByRole('button', { name: 'Confirm Mateo Alvarez versus Olivia Castellano' }))
+    const row = (await screen.findAllByRole('listitem'))[0]
+    expect(await within(row).findByText('Ines Vantel already has a match')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getAllByRole('listitem')).toHaveLength(2)
+  })
+
+  it('reports the ruleset refusal the same way', async () => {
     mount([P1], (url, init) => (url === '/api/proposals/1/confirm' && init?.method === 'POST'
       ? { status: 409, json: { error: { code: 'match_state', message: 'this event has no ruleset' } } }
       : undefined))
     const user = userEvent.setup()
     await screen.findByText('same class, same age')
     await user.click(screen.getByRole('button', { name: 'Confirm Mateo Alvarez versus Olivia Castellano' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('this event has no ruleset')
+    const row = (await screen.findAllByRole('listitem'))[0]
+    expect(await within(row).findByText('this event has no ruleset')).toBeInTheDocument()
   })
 
   // 6.8: a certified event refuses rather than asks, and the reason is printed once beside

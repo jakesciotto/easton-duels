@@ -20,27 +20,36 @@ interface Swap { proposalId: number; side: 'a' | 'b'; exclude: number; held: num
 
 interface SwapResult { proposal: Proposal; removed: number[]; warnings: string[] }
 
-/** What a swap left behind on one row: what the server warned about, and what it deleted. */
-interface RowNote { warnings: string[]; removed: number }
+/**
+ * What the last write on one row left behind: what the server warned about a swap, what
+ * that swap deleted, and the sentence a refused confirm answered with. A refusal belongs
+ * to its own row rather than to a banner over the panel, because the row is still there
+ * and swapping or removing it is what the organizer does next.
+ */
+interface RowNote { warnings: string[]; removed: number; refusal: string | null }
 
-export const sideName = (s: ProposalSide) => `${s.firstName} ${s.lastName}`.trim()
-export const proposalLabel = (p: Proposal) => `${sideName(p.a)} versus ${sideName(p.b)}`
+const EMPTY_NOTE: RowNote = { warnings: [], removed: 0, refusal: null }
+
+const sideName = (s: ProposalSide) => `${s.firstName} ${s.lastName}`.trim()
+const proposalLabel = (p: Proposal) => `${sideName(p.a)} versus ${sideName(p.b)}`
 
 // A kid sits in at most one proposal, so a swap frees one draft at most. The plural is
 // carried anyway because the server answers a list.
-export function removalNotice(removed: number): string {
+function removalNotice(removed: number): string {
   return removed === 1
     ? 'One other proposal was removed to free this competitor.'
     : `${removed} other proposals were removed to free this competitor.`
 }
 
-export function proposedLine(count: number): string {
+function proposedLine(count: number): string {
   if (count === 0) return 'Nothing left to pair.'
   return `${count} ${count === 1 ? 'proposal' : 'proposals'} ready.`
 }
 
-export function confirmedLine(created: number): string {
-  return `${created} ${created === 1 ? 'match' : 'matches'} confirmed.`
+// A kid can pick up a match between the proposer running and the press, so confirm all
+// leaves those drafts standing and says how many it left.
+function confirmedLine(created: number, skipped: number): string {
+  return skipped > 0 ? `Confirmed ${created}, skipped ${skipped}.` : `Confirmed ${created}.`
 }
 
 /**
@@ -90,7 +99,7 @@ export function ProposalsPanel({ detail, certified }: { detail: EventDetail; cer
 
   const propose = useAdminMutation(eventId, () => adminApi<Proposal[]>(`/api/events/${eventId}/proposals`, { method: 'POST' }), { proposals: true })
   const confirm = useAdminMutation(eventId, (id: number) => adminApi(`/api/proposals/${id}/confirm`, { method: 'POST' }), { proposals: true })
-  const confirmAll = useAdminMutation(eventId, () => adminApi<{ created: number }>(`/api/events/${eventId}/proposals/confirm-all`, { method: 'POST' }), { proposals: true })
+  const confirmAll = useAdminMutation(eventId, () => adminApi<{ created: number; skipped: number }>(`/api/events/${eventId}/proposals/confirm-all`, { method: 'POST' }), { proposals: true })
   const swap = useAdminMutation(eventId, (v: { id: number; body: Record<string, number> }) =>
     adminApi<SwapResult>(`/api/proposals/${v.id}`, { method: 'PATCH', body: v.body }), { proposals: true })
   const remove = useAdminMutation(eventId, (id: number) => adminApi(`/api/proposals/${id}`, { method: 'DELETE' }), { proposals: true })
@@ -118,15 +127,16 @@ export function ProposalsPanel({ detail, certified }: { detail: EventDetail; cer
   }
   const onConfirmAll = () => {
     setSummary(null)
-    confirmAll.mutate(undefined, { onSuccess: r => setSummary(confirmedLine(r.created)) })
+    confirmAll.mutate(undefined, { onSuccess: r => setSummary(confirmedLine(r.created, r.skipped ?? 0)) })
   }
   const onPicked = (athleteId: number) => {
     if (!swapping) return
     const { proposalId, side } = swapping
     setSummary(null)
+    setNotes(n => ({ ...n, [proposalId]: EMPTY_NOTE }))
     swap.mutate(
       { id: proposalId, body: side === 'a' ? { athleteAId: athleteId } : { athleteBId: athleteId } },
-      { onSuccess: r => setNotes(n => ({ ...n, [proposalId]: { warnings: r.warnings, removed: r.removed.length } })) },
+      { onSuccess: r => setNotes(n => ({ ...n, [proposalId]: { warnings: r.warnings, removed: r.removed.length, refusal: null } })) },
     )
     setSwapping(null)
   }
@@ -136,7 +146,6 @@ export function ProposalsPanel({ detail, certified }: { detail: EventDetail; cer
   // action. While the confirm dialog is open a failed propose belongs inside it.
   const failure = [
     confirmOpen || !propose.error ? null : { title: 'The proposals did not come back', error: propose.error, at: propose.submittedAt },
-    confirm.error ? { title: 'That match was not confirmed', error: confirm.error, at: confirm.submittedAt } : null,
     confirmAll.error ? { title: 'The proposals were not confirmed', error: confirmAll.error, at: confirmAll.submittedAt } : null,
     swap.error ? { title: 'The swap did not save', error: swap.error, at: swap.submittedAt } : null,
     remove.error ? { title: 'That proposal was not removed', error: remove.error, at: remove.submittedAt } : null,
@@ -204,7 +213,13 @@ export function ProposalsPanel({ detail, certified }: { detail: EventDetail; cer
                           size="sm" aria-label={`Confirm ${label}`}
                           title={certified ? CERTIFIED_REFUSAL : undefined}
                           disabled={certified || confirm.isPending}
-                          onClick={() => { setSummary(null); confirm.mutate(p.id) }}
+                          onClick={() => {
+                            setSummary(null)
+                            setNotes(n => ({ ...n, [p.id]: EMPTY_NOTE }))
+                            confirm.mutate(p.id, {
+                              onError: e => setNotes(n => ({ ...n, [p.id]: { ...EMPTY_NOTE, refusal: writeErrorMessage(e) } })),
+                            })
+                          }}
                         >
                           Confirm
                         </Button>
@@ -220,8 +235,9 @@ export function ProposalsPanel({ detail, certified }: { detail: EventDetail; cer
                         </Button>
                       </span>
                     </div>
-                    {note && (note.warnings.length > 0 || note.removed > 0) && (
+                    {note && (note.warnings.length > 0 || note.removed > 0 || note.refusal !== null) && (
                       <div className="flex flex-wrap items-center gap-3 pt-1">
+                        {note.refusal !== null && <span className="t2 text-attend">{note.refusal}</span>}
                         {note.warnings.map(w => <span key={w} className="t2 text-attend">{w}</span>)}
                         {note.removed > 0 && <span className="t2 text-gray-10">{removalNotice(note.removed)}</span>}
                       </div>

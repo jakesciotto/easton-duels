@@ -32,8 +32,14 @@ const STATE_RULE: Record<EventSummary['status'], string> = {
 // candidate row already document -- and the labels take t1 back on themselves.
 const ROW = 'grid h-10 grid-cols-[var(--col-state)_minmax(0,1fr)_92px_116px_var(--col-num-s)_auto] items-center gap-x-3 font-mono t2'
 
+// Two plates fit beside the name; an event holds up to eight teams, so past that the row
+// states the count rather than pushing the name, which is its identity and its link, out
+// of the cell.
+const PLATES = 2
+
 function EventRow({ ev }: { ev: EventSummary }) {
-  const [teamA, teamB] = ev.teams
+  const shown = ev.teams.slice(0, PLATES)
+  const rest = ev.teams.length - shown.length
   return (
     <FieldRow className={cn(ROW, 'relative')}>
       <span aria-hidden className={cn('h-full self-stretch', STATE_RULE[ev.status])} />
@@ -52,11 +58,11 @@ function EventRow({ ev }: { ev: EventSummary }) {
         >
           {ev.name}
         </Link>
-        {/* Below 640px the two plates and the date leave the name about one character,
-            and the name is the row's identity and its link. The plates stand down: the
-            teams are on the event's own page, the name is the only thing that is not. */}
-        {teamA && <TeamPlate color={teamA.color} name={teamA.name} size="inline" className="hidden sm:inline-flex" />}
-        {teamB && <TeamPlate color={teamB.color} name={teamB.name} size="inline" className="hidden sm:inline-flex" />}
+        {/* Below 640px the plates and the date leave the name about one character, and
+            the name is the row's identity and its link. The plates stand down: the teams
+            are on the event's own page, the name is the only thing that is not. */}
+        {shown.map(t => <TeamPlate key={t.id} color={t.color} name={t.name} size="inline" className="hidden sm:inline-flex" />)}
+        {rest > 0 && <span className="hidden shrink-0 t2 text-gray-10 sm:inline">and <span className="fig">{rest}</span> more</span>}
       </div>
       <span className="fig text-gray-10">{ev.date}</span>
       {/* One word per row for how the event runs, in the one exported vocabulary the New
