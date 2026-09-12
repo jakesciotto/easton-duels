@@ -34,6 +34,7 @@ export function matchViewOf(row: MatchRow, detail: EventDetail, snapshot: Snapsh
     rulesetId: row.rulesetId,
     lengthSec: row.lengthSec,
     why: row.why,
+    source: row.source,
     a: side(row.athleteAId, row.pointsA),
     b: side(row.athleteBId, row.pointsB),
     clock: { elapsedMs: row.clockElapsedMs, startedAt: row.clockStartedAt, lengthMs: row.lengthSec * 1000 },

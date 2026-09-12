@@ -1,5 +1,6 @@
 import { vi } from 'vitest'
 import type { Snapshot, MatchView } from '@shared/types'
+import { rankTeams } from '@/lib/leaderboard'
 
 export type Reply = { status?: number; json?: unknown }
 export function fakeFetch(handler: (url: string, init?: RequestInit) => Reply | Promise<Reply>) {
@@ -43,7 +44,7 @@ export function snapshotFeed(initial: Snapshot): SnapshotFeed {
 
 export function sampleMatch(over: Partial<MatchView> = {}): MatchView {
   return {
-    id: 10, orderIndex: 0, matId: 1, status: 'live', rulesetId: 1, lengthSec: 300, why: null,
+    id: 10, orderIndex: 0, matId: 1, status: 'live', rulesetId: 1, lengthSec: 300, why: null, source: 'designed',
     a: { athleteId: 100, name: 'Mateo Rivera', teamId: 1, belt: 'grey', weightLbs: 62, score: 0 },
     b: { athleteId: 200, name: 'Olivia Kim', teamId: 2, belt: 'grey-white', weightLbs: 60, score: 0 },
     clock: { elapsedMs: 0, startedAt: null, lengthMs: 300_000 },
@@ -51,9 +52,12 @@ export function sampleMatch(over: Partial<MatchView> = {}): MatchView {
   }
 }
 
+// The leaderboard is derived from whichever teams the fixture ends up with rather than
+// pinned beside them, so a test that overrides `teams` cannot describe a standing its own
+// teams contradict. A test about the leaderboard itself still overrides it directly.
 export function sampleSnapshot(over: Partial<Snapshot> = {}): Snapshot {
   const match = sampleMatch()
-  return {
+  const snapshot: Snapshot = {
     version: 1, now: '2026-10-03T16:00:00.000Z',
     event: { id: 1, name: 'Fall Duels', date: '2026-10-03', status: 'live', mode: 'live', matCount: 1, contact: null, certifiedAt: null, far: null },
     teams: [
@@ -65,6 +69,8 @@ export function sampleSnapshot(over: Partial<Snapshot> = {}): Snapshot {
       terminals: [{ key: 'submission', label: 'Submission', winType: 'submission' }, { key: 'pin', label: 'Pin', winType: 'submission' }] }],
     mats: [{ id: 1, number: 1, current: match, onDeck: [], bound: false }],
     matches: [match],
+    leaderboard: [],
     ...over,
   }
+  return { ...snapshot, leaderboard: over.leaderboard ?? rankTeams(snapshot.teams) }
 }

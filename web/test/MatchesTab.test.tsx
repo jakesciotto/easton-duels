@@ -336,6 +336,24 @@ describe('MatchesTab', () => {
     expect(row.queryByRole('button', { name: 'Swap Iris Nolan, Lakeside' })).not.toBeInTheDocument()
   })
 
+  // Spec 6 draws Swap as a labelled control beside Up, Down and Delete. A pairing has two
+  // sides, so it names both competitors and the choice picks the side.
+  it('carries a visible Swap on the row that names both competitors', async () => {
+    const f = mount()
+    const user = userEvent.setup()
+    const swap = within(pendingRows()[0]).getByRole('button', { name: `Swap in ${M1}` })
+    expect(swap).toHaveTextContent('Swap')
+
+    await user.click(swap)
+    expect((await screen.findAllByRole('menuitem')).map(i => i.textContent))
+      .toEqual(['Swap Mateo Rivera', 'Swap Olivia Kim'])
+
+    await user.click(screen.getByRole('menuitem', { name: 'Swap Olivia Kim' }))
+    await user.click(await screen.findByRole('button', { name: 'Kai Wong' }))
+    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/matches/1')).toBe(true))
+    expect(f.body(f.calls.findIndex(c => c.url === '/api/matches/1'))).toEqual({ athleteBId: 202 })
+  })
+
   // The picker offers everybody the pairing can legally take, which is every team but
   // the one the competitor staying in the match is on.
   it('offers a third team when swapping a side', async () => {
@@ -506,7 +524,7 @@ describe('MatchesTab on a certified event', () => {
     mountCertified()
     await vi.waitFor(() => expect(screen.getAllByText(CERTIFIED_REFUSAL).length).toBeGreaterThan(0))
     const row = within(pendingRows()[0])
-    for (const name of [`Reorder ${M1}`, `Move ${M1} up`, `Move ${M1} down`, `Delete ${M1}`]) {
+    for (const name of [`Reorder ${M1}`, `Move ${M1} up`, `Move ${M1} down`, `Swap in ${M1}`, `Delete ${M1}`]) {
       expect(row.getByRole('button', { name }), name).toBeDisabled()
     }
     expect(row.getByRole('combobox', { name: `Mat for ${M1}` })).toBeDisabled()

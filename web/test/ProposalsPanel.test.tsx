@@ -154,6 +154,30 @@ describe('ProposalsPanel', () => {
     expect(screen.getAllByRole('listitem')).toHaveLength(2)
   })
 
+  // Spec 6 draws Swap as a labelled control in the row's cluster. A pairing has two sides,
+  // so the control names both competitors and the choice picks the side.
+  it('carries a visible Swap that names both competitors', async () => {
+    const f = mount([P1], (url, init) => (url === '/api/proposals/1' && init?.method === 'PATCH'
+      ? { json: { proposal: P1, removed: [], warnings: [] } }
+      : undefined))
+    const user = userEvent.setup()
+    await screen.findByText('same class, same age')
+    const swap = within(panel()).getByRole('button', { name: 'Swap Mateo Alvarez versus Olivia Castellano' })
+    expect(swap).toHaveTextContent('Swap')
+
+    await user.click(swap)
+    expect((await screen.findAllByRole('menuitem')).map(i => i.textContent))
+      .toEqual(['Swap Mateo Alvarez', 'Swap Olivia Castellano'])
+
+    await user.click(screen.getByRole('menuitem', { name: 'Swap Mateo Alvarez' }))
+    const picker = await screen.findByRole('dialog')
+    // Olivia stays in, so nobody on Lakeside can take the side Mateo holds.
+    expect(within(picker).queryByRole('button', { name: 'Noah Delgado' })).not.toBeInTheDocument()
+    await user.click(within(picker).getByRole('button', { name: 'Kai Espinoza' }))
+    await vi.waitFor(() => expect(f.calls.some(c => c.url === '/api/proposals/1' && c.init?.method === 'PATCH')).toBe(true))
+    expect(f.body(f.calls.findIndex(c => c.url === '/api/proposals/1' && c.init?.method === 'PATCH'))).toEqual({ athleteAId: 300 })
+  })
+
   it('swaps a side from the picker, which offers every team but the one staying in', async () => {
     const f = mount([P1], (url, init) => (url === '/api/proposals/1' && init?.method === 'PATCH'
       ? { json: { proposal: { ...P1, b: side(300, 3, 'Kai', 'Espinoza'), why: '2 classes apart' }, removed: [9], warnings: ['2 weight classes apart', 'Already met'] } }
@@ -219,6 +243,7 @@ describe('ProposalsPanel', () => {
     expect(screen.getByRole('button', { name: 'Confirm all' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Confirm Mateo Alvarez versus Olivia Castellano' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Swap Mateo Alvarez, Ridgeline' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Swap Mateo Alvarez versus Olivia Castellano' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Remove Mateo Alvarez versus Olivia Castellano' })).toBeDisabled()
     expect(within(panel()).getByText(CERTIFIED_REFUSAL)).toBeInTheDocument()
   })

@@ -9,6 +9,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { FieldHead, FieldRow, FieldSet } from '@/components/ui/field-set'
+import { OverflowMenu } from '@/components/OverflowMenu'
 import { TeamPlate } from '@/components/TeamPlate'
 
 /** Two competitors and the sentence between them, with the three actions at the right. */
@@ -88,7 +89,16 @@ function SideLine({ side, team, disabled, onSwap }: {
  * step. Nothing here is running or scheduled: a proposal is a suggestion the organizer
  * confirms, swaps, removes, or replaces by proposing again.
  */
-export function ProposalsPanel({ detail, certified }: { detail: EventDetail; certified: boolean }) {
+export function ProposalsPanel({ detail, certified, onConfirmOpenChange }: {
+  detail: EventDetail
+  certified: boolean
+  /**
+   * Whether the replace confirm is up. A host that is itself a dialog closes its own while
+   * this one stands, because two open Dialog.Root fight over the focus trap and the
+   * backdrop, and the setup steps already answer that the same way.
+   */
+  onConfirmOpenChange?: (open: boolean) => void
+}) {
   const eventId = detail.event.id
   const q = useProposals(eventId)
   const proposals = q.data ?? []
@@ -107,8 +117,12 @@ export function ProposalsPanel({ detail, certified }: { detail: EventDetail; cer
   const teams = new Map(detail.teams.map(t => [t.id, t]))
   const has = proposals.length > 0
 
+  const openConfirm = (o: boolean) => {
+    setConfirmOpen(o)
+    onConfirmOpenChange?.(o)
+  }
   const closeConfirm = () => {
-    setConfirmOpen(false)
+    openConfirm(false)
     propose.reset()
   }
   const runPropose = () => {
@@ -122,7 +136,7 @@ export function ProposalsPanel({ detail, certified }: { detail: EventDetail; cer
   }
   const onProposeClick = () => {
     setSummary(null)
-    if (has) { setConfirmOpen(true); return }
+    if (has) { openConfirm(true); return }
     runPropose()
   }
   const onConfirmAll = () => {
@@ -223,6 +237,18 @@ export function ProposalsPanel({ detail, certified }: { detail: EventDetail; cer
                         >
                           Confirm
                         </Button>
+                        {/* A pairing has two sides, so Swap has to say which one it is
+                            replacing. The plates above are the shortcut; this is the
+                            labelled control, and it names both competitors. */}
+                        <OverflowMenu
+                          label={`Swap ${label}`}
+                          text="Swap"
+                          disabled={certified}
+                          items={[
+                            { key: 'a', label: `Swap ${sideName(p.a)}`, disabled: false, onSelect: () => setSwapping({ proposalId: p.id, side: 'a', exclude: p.b.teamId, held: p.a.athleteId }) },
+                            { key: 'b', label: `Swap ${sideName(p.b)}`, disabled: false, onSelect: () => setSwapping({ proposalId: p.id, side: 'b', exclude: p.a.teamId, held: p.b.athleteId }) },
+                          ]}
+                        />
                         {/* 7.7: a destructive control never sits flush against the row's
                             most repeated one. */}
                         <Button
@@ -254,7 +280,7 @@ export function ProposalsPanel({ detail, certified }: { detail: EventDetail; cer
         count={proposals.length}
         pending={propose.isPending}
         error={propose.error}
-        onOpenChange={o => { if (o) setConfirmOpen(true); else closeConfirm() }}
+        onOpenChange={o => { if (o) openConfirm(true); else closeConfirm() }}
         onConfirm={runPropose}
       />
       <KidPickerDialog

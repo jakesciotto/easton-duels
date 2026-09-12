@@ -333,6 +333,17 @@ function PendingRow({ line, sideOf, warnings, matItems, rulesetItems, index, cou
         <div className="flex items-center gap-2">
           <Button size="sm" variant="ghost" aria-label={`Move ${row} up`} title={certified ? CERTIFIED_REFUSAL : undefined} disabled={certified || index === 0} onClick={() => onMove(index, -1)}>Up</Button>
           <Button size="sm" variant="ghost" aria-label={`Move ${row} down`} title={certified ? CERTIFIED_REFUSAL : undefined} disabled={certified || index === count - 1} onClick={() => onMove(index, 1)}>Down</Button>
+          {/* A pairing has two sides, so Swap has to say which one it is replacing. The
+              competitor lines are the shortcut; this is the labelled control. */}
+          <OverflowMenu
+            label={`Swap in ${row}`}
+            text="Swap"
+            disabled={certified}
+            items={[
+              { key: 'a', label: `Swap ${a.name}`, disabled: b.team === undefined, onSelect: () => { if (b.team) onPick({ matchId: m.id, side: 'a', exclude: b.team.id, held: m.athleteAId }) } },
+              { key: 'b', label: `Swap ${b.name}`, disabled: a.team === undefined, onSelect: () => { if (a.team) onPick({ matchId: m.id, side: 'b', exclude: a.team.id, held: m.athleteBId }) } },
+            ]}
+          />
           {/* 7.7: a destructive control never sits flush against the row's most repeated one. */}
           <Button size="sm" variant="destructive" className="ml-4" aria-label={`Delete ${row}`} title={certified ? CERTIFIED_REFUSAL : undefined} disabled={certified} onClick={() => onDelete(m.id)}>Delete</Button>
         </div>
