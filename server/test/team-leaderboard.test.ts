@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { rankTeams } from '@/lib/leaderboard'
+import { rankTeams } from '../src/shared/leaderboard.js'
 
 const team = (id: number, wins: number, points: number, position: number) => ({ id, wins, points, position })
 

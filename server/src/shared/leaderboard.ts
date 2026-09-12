@@ -1,4 +1,4 @@
-import type { LeaderboardRow } from './types'
+import type { LeaderboardRow } from './types.js'
 
 export interface RankableTeam { id: number; wins: number; points: number; position: number }
 
@@ -6,6 +6,10 @@ export interface RankableTeam { id: number; wins: number; points: number; positi
  * Spec 5's order: wins, then points, then the position the team was created at, which
  * never ties. Teams level on wins and points share a rank and the ranks they used up are
  * skipped, so a table reads 1, 1, 3 rather than 1, 1, 2.
+ *
+ * Shared because three surfaces state the same standing: the snapshot the server builds,
+ * the console's own tables, and the board's hero. Two copies of a ranking rule is two
+ * answers to "who is winning" in one room.
  */
 export function rankTeams(teams: RankableTeam[]): LeaderboardRow[] {
   const sorted = [...teams].sort((x, y) => y.wins - x.wins || y.points - x.points || x.position - y.position)

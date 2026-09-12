@@ -11,7 +11,7 @@ import { DESK_NOTE, DESK_NOTE_DETAIL, FINISHED_LINE, isFinished, modeOf, statusO
 import { useClock } from '@/lib/useClock'
 import { pollIntervalForSnapshot } from '@/lib/pollInterval'
 import { teamStyle, timeOfDay } from '@/lib/format'
-import { rankTeams } from '@/lib/leaderboard'
+import { rankTeams } from '@shared/leaderboard'
 import { cn } from '@/lib/utils'
 import type { EventDetail } from '@/lib/types'
 import { Clock } from '@/components/Clock'

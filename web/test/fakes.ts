@@ -1,6 +1,6 @@
 import { vi } from 'vitest'
 import type { Snapshot, MatchView } from '@shared/types'
-import { rankTeams } from '@/lib/leaderboard'
+import { rankTeams } from '@shared/leaderboard'
 
 export type Reply = { status?: number; json?: unknown }
 export function fakeFetch(handler: (url: string, init?: RequestInit) => Reply | Promise<Reply>) {
