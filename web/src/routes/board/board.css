@@ -556,17 +556,19 @@
    needs nobody. Its own flex item, so it displaces rather than covering a numeral. */
 .b-result {
   flex: none;
-  display: flex;
-  align-items: center;
   height: var(--b3);
   margin-top: 1cqh;
   padding-left: var(--b-indent);
+  padding-right: var(--b-indent);
   font-size: var(--b3);
   line-height: 1;
   font-weight: 500;
   color: var(--gray-12);
+  /* A block, not a flex row: a five way tie names five teams, and a line that runs past
+     the safe width should end in an ellipsis rather than at a cut letter. */
   white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ---------------- cold start ---------------- */

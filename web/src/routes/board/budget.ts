@@ -229,6 +229,7 @@ export function boardBudget({ comp, mats, teams = 2, far, note, sign = false }: 
     const row = rows > 0 ? band / rows : band
     return {
       ...base, heroGap, hero, band, footer: b3, footerGap: FOOTER_GAP, panel: row, row, rows,
+      // The band keeps one result row whatever the hero wants: another tripwire.
       floorNote: rows === 0 ? FLOOR_NOTE_FAR : null,
     }
   }
@@ -245,8 +246,8 @@ export function boardBudget({ comp, mats, teams = 2, far, note, sign = false }: 
     const queue = clampInt(linesIn(band - b3 - SETUP_HEAD_GAP, b3), 0, SETUP_FIRST_UP)
     return {
       ...base, heroGap, hero, band, panel: band, row: b3, queue, matsShown: count,
-      // A setup column that cannot hold a head plus one pairing is short of height,
-      // which is a far setting problem: the columns sit side by side, not stacked.
+      // The band keeps room for a head over one pairing whatever the hero wants, so
+      // this is a tripwire rather than a state the knob can reach.
       floorNote: queue === 0 ? FLOOR_NOTE_FAR : null,
     }
   }

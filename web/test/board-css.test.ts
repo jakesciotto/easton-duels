@@ -473,6 +473,22 @@ describe('the note', () => {
   })
 })
 
+describe('the result line', () => {
+  it('takes the note slot and none of the note colour', () => {
+    const body = rule('.b-result')
+    expect(body).not.toMatch(/position\s*:/)
+    expect(declIn(body, 'flex')).toBe('none')
+    expect(px(declIn(body, 'height'), boardVars(1))).toBeCloseTo(B3 * CQH, 6)
+    expect(px(declIn(body, 'margin-top'), boardVars(1))).toBeCloseTo(CQH, 6)
+    expect(px(declIn(body, 'font-size'), boardVars(1))).toBeCloseTo(B3 * CQH, 6)
+    // Section 8 keeps --attend for a state that needs a person; a closed event needs none.
+    expect(declIn(body, 'color')).toBe('var(--gray-12)')
+    expect(declIn(body, 'text-overflow')).toBe('ellipsis')
+    // It sits on the standings' own left edge, like every other line on the board.
+    expect(declIn(body, 'padding-left')).toBe('var(--b-indent)')
+  })
+})
+
 describe('the certified line', () => {
   it('is a line of its own, centred and quiet, never the note\'s attend colour', () => {
     const body = rule('.b-sign')
