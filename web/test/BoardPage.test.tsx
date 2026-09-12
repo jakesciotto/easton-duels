@@ -486,6 +486,23 @@ describe('Board compositions', () => {
       expect(container.querySelector('.b-summary')).toBeNull()
     })
 
+    it('closes a two team event on the same one panel', () => {
+      // Pick 1 reaches the close too: the event that used to end on two mirrored halves
+      // and a summary now ends on two standings rows and a sentence.
+      const certifiedAt = new Date(2026, 9, 3, 15, 42).toISOString()
+      const snapshot = closed([[9, 48], [7, 41]])
+      const { container } = render(
+        <Board snapshot={{ ...snapshot, event: { ...snapshot.event, status: 'certified', certifiedAt } }} connected lastSuccessAt={Date.now()} />,
+      )
+      expect(safe(container)).toHaveAttribute('data-comp', 'done')
+      const rows = [...container.querySelectorAll('.lb-row')]
+      expect(rows).toHaveLength(2)
+      expect(rows.map(r => (r.querySelector('.lb-rank') as HTMLElement).textContent)).toEqual(['1', '2'])
+      expect(container.querySelector('.b-result')).toHaveTextContent('Ridgeline wins')
+      expect(container.querySelector('.b-sign')).toHaveTextContent('Final, certified at 3:42 pm')
+      expect(screen.queryByText('Matches')).not.toBeInTheDocument()
+    })
+
     it('keeps every team edge lit, because these are final standings', () => {
       // Today the loser's bar emptied. Every team should still be identifiable at the
       // close: the winner is named by the numeral and by the sentence, not by a blank.

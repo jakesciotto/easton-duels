@@ -369,6 +369,24 @@ describe('the data entry composition', () => {
     }
   })
 
+  it('keeps a result row whatever the hero wants, and pins where eight teams land', () => {
+    // The desk band never gives up its last row, so the hero is capped at room - b3 and
+    // the standings, not the results, are what a large team count shortens.
+    for (const teams of [2, 3, 4, 5, 6, 7]) {
+      const b = boardBudget({ comp: 'entry', mats: 1, teams, far: 1, note: false })
+      expect(lbRowFor(b.hero, teams, 1), `${teams} teams`).toBeGreaterThanOrEqual(B3 - 1e-9)
+    }
+    // Eight is the cap count and the shortfall there is accepted: the desk panel is read
+    // between bouts, not all afternoon, and a composition aware far cap would shrink the
+    // live mats board instead. Pinned so it cannot get worse unnoticed.
+    const eight = boardBudget({ comp: 'entry', mats: 1, teams: 8, far: 1, note: false })
+    expect(eight.hero).toBeCloseTo(69, 6)
+    expect(eight.rows).toBe(1)
+    expect(eight.row).toBeCloseTo(B3, 6)
+    expect(lbRowFor(eight.hero, 8, 1)).toBeCloseTo(8.275, 6)
+    expect(total(eight)).toBeCloseTo(SAFE_CQH, 6)
+  })
+
   it('keeps four results at far 1 and drops the count rather than the floor step', () => {
     expect(boardBudget({ comp: 'entry', mats: 1, far: 1, note: false }).rows).toBe(4)
     expect(boardBudget({ comp: 'entry', mats: 1, far: 1, note: false }).row).toBeCloseTo(10, 6)
@@ -434,5 +452,21 @@ describe('the setup composition', () => {
       }
     }
     expect(boardBudget({ comp: 'setup', mats: 4, far: 1, note: false }).queue).toBe(3)
+  })
+
+  it('keeps a head over one pairing whatever the hero wants, and pins eight teams', () => {
+    for (const teams of [2, 3, 4, 5, 6, 7]) {
+      const b = boardBudget({ comp: 'setup', mats: 4, teams, far: 1, note: false })
+      expect(lbRowFor(b.hero, teams, 1), `${teams} teams`).toBeGreaterThanOrEqual(B3 - 1e-9)
+    }
+    // Eight is the cap count and the shortfall there is accepted: the setup board is on
+    // the screen until the first whistle, and clipping the running order under it would
+    // be the worse trade. Pinned so it cannot get worse unnoticed.
+    const eight = boardBudget({ comp: 'setup', mats: 4, teams: 8, far: 1, note: false })
+    expect(eight.hero).toBeCloseTo(67, 6)
+    expect(eight.band).toBeCloseTo(2 * B3 + SETUP_HEAD_GAP, 6)
+    expect(eight.queue).toBe(1)
+    expect(lbRowFor(eight.hero, 8, 1)).toBeCloseTo(8.025, 6)
+    expect(total(eight)).toBeCloseTo(SAFE_CQH, 6)
   })
 })
