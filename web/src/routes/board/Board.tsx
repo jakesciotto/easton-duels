@@ -132,7 +132,6 @@ export function Board({ snapshot, connected, lastSuccessAt = null, screenMaySlee
             '--b-row-n': String(budget.row),
             '--lb-rows': String(budget.lbRows),
             '--lb-gap-n': String(budget.lbGap),
-            '--b-sum-k': String(budget.sumScale),
           } as CSSProperties}
         >
           {snapshot === null || plan.comp === 'cold'
@@ -162,7 +161,7 @@ export function Board({ snapshot, connected, lastSuccessAt = null, screenMaySlee
             <ResultsBand results={entryRows} total={done.length} settled={settled} teamColor={teamColor} />
           )}
           {snapshot !== null && plan.comp === 'done' && (
-            <DoneBand teams={snapshot.teams} matches={done.length} />
+            <DoneBand teams={snapshot.teams} leaderboard={snapshot.leaderboard} />
           )}
           {snapshot === null && <div className="b-band" />}
 

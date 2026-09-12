@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { Snapshot } from '@shared/types'
 import { getAdminToken } from '@/lib/auth'
 import { adminApi } from '@/lib/queries'
+import { maxFarFor } from './budget'
 
 const KEY = 'duels.board.far'
 // 3.4 names three settings and no others. The clamp is the same range on purpose: the
@@ -15,6 +16,20 @@ const MAX = FAR_STEPS[FAR_STEPS.length - 1]
 
 function clamp(value: number): number {
   return Math.min(MAX, Math.max(MIN, value))
+}
+
+/**
+ * The deepest step a team count can draw. The hero is a row per team, so eight floor
+ * rows at 1.2 are the whole safe frame with nothing left for a mat row, and there is no
+ * line spare to report it on: the knob is capped by the count instead of the board
+ * saying afterwards that the setting was too large. The cap lands on a step, because
+ * 3.4 names three settings and a board that has to give something up should give up a
+ * whole one rather than an arbitrary fraction.
+ */
+export function farCapFor(teams: number): number {
+  const max = maxFarFor(teams)
+  const held = FAR_STEPS.filter(step => step <= max + 1e-9)
+  return held.length > 0 ? held[held.length - 1] : MIN
 }
 
 /**
@@ -75,14 +90,17 @@ export function useFar(snapshot: Snapshot | null): number {
   // is a visible relayout in front of the room for no gain.
   const [local, setLocal] = useState(readLocal)
   const stored = farOf(snapshot)
-  const far = stored === null ? local : clamp(stored)
+  const set = stored === null ? local : clamp(stored)
+  // The setting the room measured, and then what this event's team count can hold of it.
+  const far = Math.min(set, farCapFor(snapshot?.teams.length ?? 2))
 
   // 3.4: the knob persists. A `?far=` on the URL is how it is set at the dress rehearsal,
   // so it has to survive the next plain visit to /board/:id, not just the tab it was
-  // typed into.
+  // typed into. What persists is the measurement, not the cap: the next event on this
+  // television may hold three teams and be able to draw it.
   useEffect(() => {
-    try { window.localStorage?.setItem(KEY, String(far)) } catch { /* private mode */ }
-  }, [far])
+    try { window.localStorage?.setItem(KEY, String(set)) } catch { /* private mode */ }
+  }, [set])
 
   // One write per event per value. A board with no admin token, which is every television
   // in the room, reads the event and writes nothing.

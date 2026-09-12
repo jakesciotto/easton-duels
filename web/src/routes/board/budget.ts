@@ -4,21 +4,27 @@ import type { Composition } from './plan'
  * The board's vertical arithmetic, in one place, because the stage mixes two frames and
  * only one of them moves. Every type step scales with `--far`; the 90cqh safe frame does
  * not. A band therefore cannot be a fixed number of cqh while the type inside it grows:
- * at far 1.2 the hero's own contents came to 388.71px inside a 334.8px band and the
- * plate row, the one flexible item, absorbed all 53.91px of it, so turning the deep room
- * knob UP made the plate and the team name smaller and clipped the name.
+ * at far 1.2 the hero's own contents came to 388.71px inside a 334.8px band and its one
+ * flexible item absorbed all 53.91px of it, so turning the deep room knob UP made the
+ * team name smaller and then clipped it.
  *
  * The rule this module applies, once, for every composition:
  *
- *   1. The hero takes its own type. It is never the item that absorbs a shortfall.
- *   2. The band takes what is left after the hero, the gaps, the footer and the note.
+ *   1. The hero takes its own type: its budget, or the rows the team count needs at the
+ *      floor where those are taller. It is never the item that absorbs a shortfall.
+ *   2. The band takes what is left after the hero, the gaps, the footer and the note,
+ *      and never less than its own minimum, which the hero cannot spend.
  *   3. Where what is left will not hold a row at the floor step, the row COUNT drops.
  *      The type steps down only after the count has reached one, and a board that has
- *      dropped below the floor says so in words rather than clipping a digit.
+ *      dropped below the floor says so in words rather than clipping a digit, unless
+ *      the words themselves are what it has no room for.
  *
  * A deeper room buys bigger type and pays for it in queue depth, which is the trade
  * section 3.4 already states. Every composition sums to exactly 90cqh at every setting.
  */
+
+/** Every composition but done, which draws no mat band under its standings. */
+export type Banded = Exclude<Composition, 'done'>
 
 /** The safe frame, per 3.4. Every composition budget is stated in it. */
 export const SAFE_CQH = 90
@@ -27,11 +33,15 @@ export const SAFE_CQH = 90
 export const B1 = 22
 export const B2 = 13
 export const B3 = 9
-/** The hero budget per composition, from 3.4's table. A leaderboard that cannot hold
-    its rows at the floor inside it raises the hero above it: see heroFloorFor. */
-export const HERO: Record<Composition, number> = { cold: 31, setup: 31, mats: 31, entry: 38, done: 40 }
+/**
+ * The hero budget per composition, from 3.4's table. A leaderboard that cannot hold its
+ * rows at the floor inside it raises the hero above it: see heroFloorFor. done is not
+ * here, because it draws no band: its standings take whatever the two closing lines
+ * leave, which is 70cqh at far 1 with a signature on the record.
+ */
+export const HERO: Record<Banded, number> = { cold: 31, setup: 31, mats: 31, entry: 38 }
 /** Hero to band, from the same table. */
-export const HERO_GAP: Record<Composition, number> = { cold: 3, setup: 3, mats: 3, entry: 2, done: 2 }
+export const HERO_GAP: Record<Banded, number> = { cold: 3, setup: 3, mats: 3, entry: 2 }
 
 /** The note is a b3 line and it DISPLACES: 7.6's words cannot cover a score. */
 export const NOTE_GAP = 1
@@ -45,23 +55,12 @@ export const SIGN_GAP = 1
 /** data entry's "Results entered" line, which is b3 tall. */
 export const FOOTER_GAP = 1
 
-/** done's summary: three lines per half with a stated leading between them. */
-export const SUM_GAP = 1
 /**
- * The three summary lines, tallest box each. The figures set line-height 0.78 and the
- * labels beside them are b3 at 1.0, and the two are baseline aligned, so a small line's
- * union box is a little taller than the figure's own: 0.5cqh per small line is the
- * measured allowance for it.
+ * done's result line: "{Team} wins" or the tie form, a b3 line in its own slot under the
+ * standings. It takes the note's spend but not the note's colour, because --attend is
+ * reserved for a state that needs a person and a finished event needs nobody.
  */
-export const SUM_FIGS = B1 * 0.78 + 2 * (B2 * 0.78)
-/**
- * The allowance is the labels' overhang past the figures they sit beside. It follows
- * the type, so it scales with far, but it does NOT shrink when the figures shrink,
- * so it must stay outside the term sumScale divides. Scaling it too made the model
- * under-state the rendered height and let the summary overrun its band.
- */
-export const SUM_ALLOW = 2 * 0.5
-export const SUM_LINES = SUM_FIGS + SUM_ALLOW
+export const RESULT_GAP = 1
 
 /** 6.15: the last four results, and each mat's first three pairings. Ceilings, not counts. */
 export const ENTRY_ROWS_MAX = 4
@@ -79,7 +78,7 @@ export const FLOOR_NOTE_MATS = 'More mats than this screen fits. The rest are on
 export const FLOOR_NOTE_FAR = 'The far setting is too large for this screen'
 
 export interface BoardBudget {
-  /** All of these are cqh in the safe frame, except sumScale and the two counts. */
+  /** All of these are cqh in the safe frame, except the counts and the clock flag. */
   hero: number
   heroGap: number
   band: number
@@ -90,6 +89,9 @@ export interface BoardBudget {
   /** done's certified line, when the event has been signed off. Zero everywhere else. */
   sign: number
   signGap: number
+  /** done's result line, which names the winner or the tie. Zero everywhere else. */
+  result: number
+  resultGap: number
   /** mats: one mat's panel. setup: a column. entry: unused. */
   panel: number
   matGap: number
@@ -106,14 +108,21 @@ export interface BoardBudget {
   lbGap: number
   /** entry: result rows the band can hold at the floor. */
   rows: number
-  /** done: the factor its summary figures step down by when the band is short. */
-  sumScale: number
   /** Set when the composition can no longer say its facts at b3. */
   floorNote: string | null
 }
 
 function clampInt(value: number, low: number, high: number): number {
   return Math.min(high, Math.max(low, value))
+}
+
+/**
+ * How many lines of `step` fit in `room`. The tolerance is not cosmetic: the band is
+ * derived by subtracting far scaled terms from 90, so a column sized to hold exactly one
+ * pairing comes out as 10.799999999999997 against a 10.8 line and drops it.
+ */
+function linesIn(room: number, step: number): number {
+  return Math.floor(room / step + 1e-9)
 }
 
 /**
@@ -187,31 +196,28 @@ export function boardBudget({ comp, mats, teams = 2, far, note, sign = false }: 
   const signH = signed ? b3 : 0
   const signGap = signed ? SIGN_GAP : 0
   const foot = noteGap + noteH + signGap + signH
-  const heroGap = HERO_GAP[comp]
   const lbGap = lbGapFor(lbRows) * far
   const floorHero = heroFloorFor(lbRows) * far
   const base = {
-    heroGap, note: noteH, noteGap, sign: signH, signGap, footer: 0, footerGap: 0,
-    matGap: 0, queue: 0, rows: 0, matsShown: 0, sumScale: 1, clock: false,
+    note: noteH, noteGap, sign: signH, signGap, footer: 0, footerGap: 0,
+    result: 0, resultGap: 0, matGap: 0, queue: 0, rows: 0, matsShown: 0, clock: false,
     lbRows, lbGap, floorNote: null as string | null,
   }
-  /** What the hero wants: its own budget, or the floor rows where those are taller. */
-  const wanted = Math.max(HERO[comp] * far, floorHero)
 
   if (comp === 'done') {
-    // The one composition whose band is taller than its hero, so the hero takes the
-    // smaller of its budget and whatever the summary's own content does not need, and
-    // never less than its own content.
-    const content = SUM_GAP * 2 + SUM_LINES * far
-    const room = SAFE_CQH - heroGap - foot
-    const hero = Math.max(floorHero, Math.min(HERO.done * far, room - content))
-    const band = room - hero
-    const sumScale = Math.min(1, (band - SUM_GAP * 2 - SUM_ALLOW * far) / (SUM_FIGS * far))
+    // One panel, and no band: a summary under the standings would say the standings
+    // again. Everything the result line and the certified line do not take is the
+    // leaderboard's, which is 70cqh at far 1 on a certified board.
     return {
-      ...base, hero, band, panel: band, row: 0, sumScale,
-      floorNote: B2 * far * sumScale < b3 ? FLOOR_NOTE_FAR : null,
+      ...base, heroGap: 0, band: 0, panel: 0, row: 0,
+      result: b3, resultGap: RESULT_GAP,
+      hero: SAFE_CQH - RESULT_GAP - b3 - foot,
     }
   }
+
+  const heroGap = HERO_GAP[comp]
+  /** What the hero wants: its own budget, or the floor rows where those are taller. */
+  const wanted = Math.max(HERO[comp] * far, floorHero)
 
   if (comp === 'entry') {
     // The desk's own room, shared by the hero and the result rows. The footer line and
@@ -219,10 +225,10 @@ export function boardBudget({ comp, mats, teams = 2, far, note, sign = false }: 
     const room = SAFE_CQH - heroGap - FOOTER_GAP - b3 - foot
     const hero = Math.min(wanted, room - b3)
     const band = room - hero
-    const rows = clampInt(Math.floor(band / b3), 0, ENTRY_ROWS_MAX)
+    const rows = clampInt(linesIn(band, b3), 0, ENTRY_ROWS_MAX)
     const row = rows > 0 ? band / rows : band
     return {
-      ...base, hero, band, footer: b3, footerGap: FOOTER_GAP, panel: row, row, rows,
+      ...base, heroGap, hero, band, footer: b3, footerGap: FOOTER_GAP, panel: row, row, rows,
       floorNote: rows === 0 ? FLOOR_NOTE_FAR : null,
     }
   }
@@ -236,9 +242,9 @@ export function boardBudget({ comp, mats, teams = 2, far, note, sign = false }: 
   let band = room - hero
 
   if (comp === 'setup') {
-    const queue = clampInt(Math.floor((band - b3 - SETUP_HEAD_GAP) / b3), 0, SETUP_FIRST_UP)
+    const queue = clampInt(linesIn(band - b3 - SETUP_HEAD_GAP, b3), 0, SETUP_FIRST_UP)
     return {
-      ...base, hero, band, panel: band, row: b3, queue, matsShown: count,
+      ...base, heroGap, hero, band, panel: band, row: b3, queue, matsShown: count,
       // A setup column that cannot hold a head plus one pairing is short of height,
       // which is a far setting problem: the columns sit side by side, not stacked.
       floorNote: queue === 0 ? FLOOR_NOTE_FAR : null,
@@ -258,7 +264,7 @@ export function boardBudget({ comp, mats, teams = 2, far, note, sign = false }: 
     : matsShown === 2 ? Math.min(panel, MAT_ROW_2 * far)
     : panel
   const queue = matsShown > 2 ? 0
-    : clampInt(Math.floor((panel - row) / b3), 0, matsShown === 1 ? MAT_QUEUE_1 : MAT_QUEUE_2)
+    : clampInt(linesIn(panel - row, b3), 0, matsShown === 1 ? MAT_QUEUE_1 : MAT_QUEUE_2)
 
   // A hero already past its own budget is a leaderboard short of height, and a band
   // holding one row with nothing under it has nowhere to spend what is left over. The
@@ -280,12 +286,12 @@ export function boardBudget({ comp, mats, teams = 2, far, note, sign = false }: 
   // being carried anyway the words cost nothing extra: they share that one line.
   const noteFits = note || room - NOTE_GAP - b3 >= floorHero + minBand - 1e-9
   return {
-    ...base, hero, band, panel, matGap, row, queue, matsShown, clock,
+    ...base, heroGap, hero, band, panel, matGap, row, queue, matsShown, clock,
     // cold paints an empty band, so it is never below anything. A single mat that
     // still will not fit is a far setting problem, not a mat count problem.
     floorNote: comp !== 'mats' || !noteFits ? null
       : matsShown < count ? FLOOR_NOTE_MATS
-      : row < b3 ? FLOOR_NOTE_FAR
+      : row < b3 - 1e-9 ? FLOOR_NOTE_FAR
       : null,
   }
 }

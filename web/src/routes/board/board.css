@@ -103,7 +103,6 @@
   --b-panel-n: 56;
   --b-mat-gap-n: 2;
   --b-row-n: 20;
-  --b-sum-k: 1;
   --lb-rows: 2;
   --lb-gap-n: 1.5;
 
@@ -551,54 +550,23 @@
 
 /* ---------------- done ---------------- */
 
-.b-summary {
+/* The sentence under the final standings: "{Team} wins", or the tie form naming every
+   team level at the top. It takes the note's slot in the budget but not its colour,
+   because --attend is reserved for a state that needs a person and a finished event
+   needs nobody. Its own flex item, so it displaces rather than covering a numeral. */
+.b-result {
   flex: none;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 4cqw minmax(0, 1fr);
-  height: calc(var(--b-band-n) * 1cqh);
-  margin-top: calc(var(--b-hero-gap-n) * 1cqh);
-}
-.b-sum-half {
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 1cqh;
-  min-width: 0;
-}
-.b-sum-half-b {
-  grid-column: 3;
-  align-items: flex-end;
-}
-.b-sum-line {
-  display: flex;
-  align-items: baseline;
-  gap: 1.2cqw;
-}
-.b-sum-half-b .b-sum-line {
-  flex-direction: row-reverse;
-}
-.b-sum-fig {
-  min-width: 2ch;
-  line-height: 0.78;
-  font-weight: 500;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  color: var(--gray-12);
-}
-.b-sum-half-b .b-sum-fig {
-  text-align: left;
-}
-/* The three lines and their labels step down together where the band is shorter than
-   the type asks for, which is what keeps the closing panel inside 90cqh when a note
-   takes a line off a deep room board. --b-sum-k is 1 at every setting that fits. */
-.b-sum-big { font-size: calc(var(--b1) * var(--b-sum-k)); }
-.b-sum-small { font-size: calc(var(--b2) * var(--b-sum-k)); }
-.b-sum-label {
-  font-size: calc(var(--b3) * var(--b-sum-k));
+  align-items: center;
+  height: var(--b3);
+  margin-top: 1cqh;
+  padding-left: var(--b-indent);
+  font-size: var(--b3);
   line-height: 1;
-  font-weight: 400;
-  color: var(--gray-10);
+  font-weight: 500;
+  color: var(--gray-12);
   white-space: nowrap;
+  overflow: hidden;
 }
 
 /* ---------------- cold start ---------------- */

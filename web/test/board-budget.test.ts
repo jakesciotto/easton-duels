@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
-  B2, B3, ENTRY_ROWS_MAX, FLOOR_NOTE_FAR, FLOOR_NOTE_MATS, FOOTER_GAP, NOTE_GAP, SAFE_CQH,
-  SETUP_HEAD_GAP, SUM_ALLOW, SUM_FIGS,
-  SIGN_GAP, SUM_GAP, SUM_LINES, boardBudget, budgetWithNotes, lbGapFor, lbRowFor, matGapFor, maxFarFor,
+  B2, B3, ENTRY_ROWS_MAX, FLOOR_NOTE_FAR, FLOOR_NOTE_MATS, FOOTER_GAP, NOTE_GAP, RESULT_GAP,
+  SAFE_CQH, SETUP_HEAD_GAP,
+  SIGN_GAP, boardBudget, budgetWithNotes, lbGapFor, lbRowFor, matGapFor, maxFarFor,
 } from '@/routes/board/budget'
 import type { Composition } from '@/routes/board/plan'
 
@@ -26,7 +26,8 @@ function scoreBox(comp: Composition, row: number, far: number): number {
 }
 
 function total(b: ReturnType<typeof boardBudget>): number {
-  return b.hero + b.heroGap + b.band + b.footerGap + b.footer + b.noteGap + b.note + b.signGap + b.sign
+  return b.hero + b.heroGap + b.band + b.footerGap + b.footer
+    + b.resultGap + b.result + b.noteGap + b.note + b.signGap + b.sign
 }
 
 describe('the composition budget', () => {
@@ -37,8 +38,10 @@ describe('the composition budget', () => {
           for (const sign of [false, true]) {
             for (const mats of [1, 4, 8]) {
               const b = boardBudget({ comp, mats, far, note, sign })
-              expect(total(b), `${comp} far ${far} note ${note} sign ${sign} mats ${mats}`).toBeCloseTo(SAFE_CQH, 6)
-              expect(b.band).toBeGreaterThan(0)
+              const where = `${comp} far ${far} note ${note} sign ${sign} mats ${mats}`
+              expect(total(b), where).toBeCloseTo(SAFE_CQH, 6)
+              // done draws no band at all: the standings are the whole panel.
+              expect(comp === 'done' ? b.hero : b.band, where).toBeGreaterThan(0)
             }
           }
         }
@@ -61,13 +64,12 @@ describe('the composition budget', () => {
               expect(b.rows, where).toBeGreaterThan(0)
               expect(nameStep(b.row, far), where).toBeCloseTo(B3 * far, 6)
             }
-            // done has no row count to drop, so rule 3 lands on the type: it holds the
-            // floor, or the board says in words that the far setting is too large. What
-            // it never does is clip, and sumScale is derived from the band it was left.
+            // done spends its whole frame on the standings and the lines under them,
+            // so what it has to hold is the rows, not a band.
             if (comp === 'done') {
-              const holds = B2 * far * b.sumScale >= B3 * far - 1e-9
-              expect(holds || b.floorNote === FLOOR_NOTE_FAR, where).toBe(true)
-              expect(SUM_GAP * 2 + SUM_ALLOW * far + SUM_FIGS * far * b.sumScale, where).toBeLessThanOrEqual(b.band + 1e-9)
+              expect(b.band, where).toBe(0)
+              expect(b.result, where).toBeCloseTo(B3 * far, 6)
+              expect(lbRowFor(b.hero, 2, far), where).toBeGreaterThanOrEqual(B3 * far - 1e-9)
             }
             if (comp === 'setup') expect(b.queue, where).toBeGreaterThan(0)
             if (comp === 'mats') {
@@ -78,6 +80,25 @@ describe('the composition budget', () => {
               expect(b.row + b.queue * B3 * far, where).toBeLessThanOrEqual(b.panel + 1e-9)
             }
             expect(scoreBox(comp, b.row, far), where).toBeLessThanOrEqual(Math.max(b.row, 0) + 1e-9)
+          }
+        }
+      }
+    }
+  })
+
+  it('never has to say the far setting is too large', () => {
+    // The knob is capped by the team count and the hero yields to the band's own
+    // minimum, so no composition can be left under its floor by the setting alone. The
+    // guards in budget.ts stay as a tripwire; nothing the board can be opened at trips
+    // them, and a board that fills up says so about the mat count instead.
+    for (const comp of COMPS) {
+      for (const teams of [2, 3, 4, 5, 6, 7, 8]) {
+        for (const far of FARS.filter(f => f <= maxFarFor(teams))) {
+          for (const mats of [1, 2, 4, 8]) {
+            for (const note of [false, true]) {
+              const b = boardBudget({ comp, mats, teams, far, note, sign: comp === 'done' })
+              expect(b.floorNote, `${comp}, ${teams} teams, ${mats} mats at far ${far}`).not.toBe(FLOOR_NOTE_FAR)
+            }
           }
         }
       }
@@ -245,17 +266,15 @@ describe('the note', () => {
 })
 
 describe('the certified line', () => {
-  it('takes a b3 line of its own, out of the room the hero and the summary share', () => {
+  it('takes a b3 line of its own, out of the standings above it', () => {
     for (const far of FARS) {
       const open = boardBudget({ comp: 'done', mats: 1, far, note: false })
       const signed = boardBudget({ comp: 'done', mats: 1, far, note: false, sign: true })
       expect(signed.sign).toBeCloseTo(B3 * far, 6)
       expect(signed.signGap).toBe(SIGN_GAP)
-      // done's hero is a ceiling, not a fixed height, so the line comes out of the pair.
-      expect(signed.hero + signed.band).toBeCloseTo(open.hero + open.band - B3 * far - SIGN_GAP, 6)
+      // The standings are the only item that can give a line up, so they do.
+      expect(signed.hero).toBeCloseTo(open.hero - B3 * far - SIGN_GAP, 6)
       expect(total(signed)).toBeCloseTo(SAFE_CQH, 6)
-      // On its own the signature never costs the summary its floor at any setting.
-      expect(B2 * far * signed.sumScale, `far ${far}`).toBeGreaterThanOrEqual(B3 * far - 1e-9)
       expect(signed.floorNote, `far ${far}`).toBeNull()
     }
   })
@@ -263,24 +282,19 @@ describe('the certified line', () => {
   /**
    * A certified board left running can also lose contact or hold the wake lock warning.
    * Both lines are budgeted, because sharing one slot would put two b3 lines in the
-   * height of one and clip the bottom of the summary. In a deep room the two together
-   * take more than done's summary can give up at the floor step, and rule 3 applies:
-   * done has no row count to drop, so the type steps down and the board says in words
-   * that the far setting is too large. It is the honest answer, and it is reachable only
-   * with a fault on a certified board at far 1.06 and up.
+   * height of one and clip what is above them. The standings pay for all of it and stay
+   * above their own floor at every setting the knob offers.
    */
-  it('budgets its own line beside a note, and says so when the room cannot hold both', () => {
+  it('budgets its own line beside the result line and a note', () => {
     for (const far of FARS) {
       const both = boardBudget({ comp: 'done', mats: 1, far, note: true, sign: true })
       expect(both.note).toBeCloseTo(B3 * far, 6)
       expect(both.sign).toBeCloseTo(B3 * far, 6)
+      expect(both.result).toBeCloseTo(B3 * far, 6)
+      expect(both.resultGap).toBe(RESULT_GAP)
       expect(total(both)).toBeCloseTo(SAFE_CQH, 6)
-      expect(both.band).toBeGreaterThan(0)
-      // Whatever the setting, the summary is scaled to the band rather than overrunning.
-      expect(SUM_GAP * 2 + SUM_ALLOW * far + SUM_FIGS * far * both.sumScale).toBeLessThanOrEqual(both.band + 1e-9)
-    }
-    for (const far of FARS) {
-      expect(boardBudget({ comp: 'done', mats: 1, far, note: true, sign: true }).floorNote, `far ${far}`).toBeNull()
+      expect(lbRowFor(both.hero, 2, far), `far ${far}`).toBeGreaterThanOrEqual(B3 * far - 1e-9)
+      expect(both.floorNote, `far ${far}`).toBeNull()
     }
   })
 
@@ -364,22 +378,48 @@ describe('the data entry composition', () => {
 })
 
 describe('the closing composition', () => {
-  it('never squeezes the summary out of its own band', () => {
-    for (const far of FARS) {
-      for (const note of [false, true]) {
-        const b = boardBudget({ comp: 'done', mats: 1, far, note })
-        const where = `far ${far} note ${note}`
-        const content = SUM_GAP * 2 + SUM_LINES * far * b.sumScale
-        expect(content, where).toBeLessThanOrEqual(b.band + 1e-9)
-        expect(lbRowFor(b.hero, 2, far), where).toBeGreaterThanOrEqual(B3 * far - 1e-9)
-        // The figures step down together only where they have to, and never below b3.
-        expect(b.sumScale).toBeLessThanOrEqual(1)
-        expect(B2 * far * b.sumScale, where).toBeGreaterThanOrEqual(B3 * far)
-        expect(b.floorNote).toBeNull()
+  it('is one panel: the standings, the result line and the certified line', () => {
+    // Frame 3's budget: 70 + 1 + 9 + 1 + 9 is the whole safe frame, and both closing
+    // lines displace rather than overlaying the standings.
+    const certified = boardBudget({ comp: 'done', mats: 1, teams: 3, far: 1, note: false, sign: true })
+    expect(certified.hero).toBeCloseTo(70, 6)
+    expect(certified.band).toBe(0)
+    expect(certified.heroGap).toBe(0)
+    expect(lbRowFor(certified.hero, 3, 1)).toBeCloseTo(22.5333, 4)
+    expect(total(certified)).toBeCloseTo(SAFE_CQH, 6)
+    // Before certification the standings take that line back.
+    expect(boardBudget({ comp: 'done', mats: 1, teams: 3, far: 1, note: false }).hero).toBeCloseTo(80, 6)
+  })
+
+  it('holds its rows at the floor through seven teams on a certified board', () => {
+    for (const teams of [2, 3, 4, 5, 6, 7]) {
+      const b = boardBudget({ comp: 'done', mats: 1, teams, far: 1, note: false, sign: true })
+      expect(lbRowFor(b.hero, teams, 1), `${teams} teams`).toBeGreaterThanOrEqual(B3 - 1e-9)
+    }
+    // Eight teams is the count the closing panel cannot hold at the floor. The lines
+    // under the standings are not negotiable and there is no band left to take it out
+    // of, so the rows step down 7 percent rather than the sentence going unsaid.
+    expect(lbRowFor(boardBudget({ comp: 'done', mats: 1, teams: 8, far: 1, note: false, sign: true }).hero, 8, 1))
+      .toBeCloseTo(8.4, 6)
+  })
+
+  it('spends the whole frame and clips nothing at every count and setting', () => {
+    // Where the closing lines take more than the standings can give at the floor, the
+    // row shortens and the type follows it down: --lb-name is min(b3, the row). What
+    // never happens is a panel that overruns the frame or a row with no height at all.
+    for (const teams of [2, 3, 4, 5, 6, 7, 8]) {
+      for (const far of FARS.filter(f => f <= maxFarFor(teams))) {
+        for (const note of [false, true]) {
+          for (const sign of [false, true]) {
+            const b = boardBudget({ comp: 'done', mats: 1, teams, far, note, sign })
+            const where = `${teams} teams at far ${far} note ${note} sign ${sign}`
+            expect(total(b), where).toBeCloseTo(SAFE_CQH, 6)
+            expect(lbRowFor(b.hero, teams, far), where).toBeGreaterThan(0)
+            expect(b.floorNote, where).toBeNull()
+          }
+        }
       }
     }
-    expect(boardBudget({ comp: 'done', mats: 1, far: 1, note: false }).sumScale).toBe(1)
-    expect(boardBudget({ comp: 'done', mats: 1, far: 1, note: false }).band).toBeCloseTo(48, 6)
   })
 })
 

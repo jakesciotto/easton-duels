@@ -455,26 +455,72 @@ describe('Board compositions', () => {
     expect(screen.queryByRole('region', { name: 'On deck' })).not.toBeInTheDocument()
   })
 
-  it('closes on a final summary of wins, points and matches', () => {
-    const snapshot = sampleSnapshot({
-      event: event('done', 'live'),
-      teams: [
-        { id: 1, name: 'Ridgeline', color: 'red', position: 0, wins: 7, points: 41 },
-        { id: 2, name: 'Lakeside', color: 'blue', position: 1, wins: 5, points: 33 },
-      ],
-      matches: [pair(1, 'Ava Park', 'Sofia Diaz', { status: 'done' })],
-    })
-    const { container } = render(<Board snapshot={snapshot} connected />)
+  // Frame 3: one panel. Today's close was a hero over a summary that said the hero's own
+  // two numbers again, bigger; a leaderboard in both would say the same thing twice. The
+  // standings take 70cqh, then the sentence, then the signature.
+  describe('the final standings', () => {
+    const NAMES = ['Ridgeline', 'Lakeside', 'Harbor Park', 'Cedar Ridge']
 
-    expect(safe(container)).toHaveAttribute('data-comp', 'done')
-    const summary = screen.getByRole('region', { name: 'Final' })
-    expect(within(summary).getByText('7')).toBeInTheDocument()
-    expect(within(summary).getByText('41')).toBeInTheDocument()
-    expect(within(summary).getAllByText('Matches')).toHaveLength(2)
-    // The standings name the winner by the rank numeral and the lead tone on its row.
-    const hero = screen.getByRole('region', { name: 'Scoreboard' })
-    expect(within(hero).getByText('7').closest('.lb-row')).toHaveClass('lb-lead')
-    expect(within(hero).getByText('5').closest('.lb-row')).not.toHaveClass('lb-lead')
+    function closed(scores: [number, number][]): Snapshot {
+      return sampleSnapshot({
+        event: event('done', 'live'),
+        teams: scores.map(([wins, points], i) => ({
+          id: i + 1, name: NAMES[i], color: TEAM_COLOR_KEYS[i], position: i, wins, points,
+        })),
+        matches: [pair(1, 'Ava Park', 'Sofia Diaz', { status: 'done' })],
+      })
+    }
+
+    it('closes on the standings, a result line and nothing else', () => {
+      const { container } = render(<Board snapshot={closed([[7, 41], [5, 33], [4, 30]])} connected />)
+
+      expect(safe(container)).toHaveAttribute('data-comp', 'done')
+      const standings = screen.getByRole('region', { name: 'Scoreboard' })
+      expect(within(standings).getAllByText(/pts/)).toHaveLength(3)
+      expect(within(standings).getByText('7').closest('.lb-row')).toHaveClass('lb-lead')
+      expect(container.querySelector('.b-result')).toHaveTextContent('Ridgeline wins')
+      // Pick 3: today's Matches figure is dropped, and the mat band is not drawn at all.
+      expect(screen.queryByText('Matches')).not.toBeInTheDocument()
+      expect(screen.queryByRole('region', { name: 'Final' })).not.toBeInTheDocument()
+      expect(container.querySelector('.b-band')).toBeNull()
+      expect(container.querySelector('.b-summary')).toBeNull()
+    })
+
+    it('keeps every team edge lit, because these are final standings', () => {
+      // Today the loser's bar emptied. Every team should still be identifiable at the
+      // close: the winner is named by the numeral and by the sentence, not by a blank.
+      const { container } = render(<Board snapshot={closed([[7, 41], [5, 33], [4, 30]])} connected />)
+      const edges = [...container.querySelectorAll('.lb-row')].map(r => (r as HTMLElement).style.getPropertyValue('--team'))
+      expect(edges.filter(Boolean)).toHaveLength(3)
+      expect(container.querySelector('.b-bar-quiet')).toBeNull()
+    })
+
+    it('names a two way tie and a three way tie', () => {
+      const two = render(<Board snapshot={closed([[7, 41], [7, 41], [4, 30]])} connected />)
+      expect(two.container.querySelector('.b-result')).toHaveTextContent('Ridgeline and Lakeside tie')
+      two.unmount()
+
+      const three = render(<Board snapshot={closed([[7, 41], [7, 41], [7, 41]])} connected />)
+      expect(three.container.querySelector('.b-result')).toHaveTextContent('Ridgeline, Lakeside and Harbor Park tie')
+    })
+
+    it('names every team in a tie of more than three', () => {
+      const { container } = render(<Board snapshot={closed([[2, 8], [2, 8], [2, 8], [2, 8]])} connected />)
+      expect(container.querySelector('.b-result'))
+        .toHaveTextContent('Ridgeline, Lakeside, Harbor Park and Cedar Ridge tie')
+    })
+
+    it('spends the whole safe frame on the standings and its two lines', () => {
+      const certifiedAt = new Date(2026, 9, 3, 15, 42).toISOString()
+      const snapshot = closed([[9, 48], [7, 41], [6, 37]])
+      const { container } = render(
+        <Board snapshot={{ ...snapshot, event: { ...snapshot.event, status: 'certified', certifiedAt } }} connected lastSuccessAt={Date.now()} />,
+      )
+      // 70 + 1 + 9 + 1 + 9 is the whole 90cqh frame: both lines displace, neither overlays.
+      expect(safe(container).style.getPropertyValue('--b-hero-n')).toBe('70')
+      expect(container.querySelector('.b-result')).toHaveTextContent('Ridgeline wins')
+      expect(container.querySelector('.b-sign')).toHaveTextContent('Final, certified at 3:42 pm')
+    })
   })
 
   // 6.15: one b3 line of its own under the summary, centred and quiet. It is not a note:
@@ -718,6 +764,31 @@ describe('Board calibration', () => {
     expect(far('?far=3')).toBe('1.2')
     expect(far('?far=0.2')).toBe('0.85')
     expect(far('?far=1.05')).toBe('1.05')
+  })
+
+  it('caps the setting against the team count, because eight floor rows fill the frame', () => {
+    // Pick 5. Eight rows at the b3 floor are 74.8cqh at far 1 and 89.76 at 1.2, which is
+    // the whole safe frame with nothing left for a mat row, and no line spare to say so.
+    // The knob is clamped where the count cannot hold it rather than reported afterwards.
+    const board = (count: number) => {
+      const teams = Array.from({ length: count }, (_, i) => ({
+        id: i + 1, name: `Team ${i + 1}`, color: TEAM_COLOR_KEYS[i], position: i, wins: 0, points: 0,
+      }))
+      return atMode(sampleSnapshot({ teams, mats: [mat(1, { current: pair(10, 'Mateo Rivera', 'Lucas Ferreira'), bound: true })], matches: [] }), 'live')
+    }
+    const far = (count: number, query: string) => {
+      window.history.replaceState({}, '', `/board/1${query}`)
+      const view = render(<Board snapshot={board(count)} connected />)
+      const value = (view.container.querySelector('.b-stage') as HTMLElement).style.getPropertyValue('--far')
+      view.unmount()
+      return value
+    }
+    expect(far(3, '?far=1.2')).toBe('1.2')
+    expect(far(8, '?far=1.2')).toBe('1')
+    // The calibration itself is not lost: it is the room's measurement, and the next
+    // event on this television may hold three teams.
+    expect(window.localStorage.getItem('duels.board.far')).toBe('1.2')
+    expect(far(8, '?far=0.85')).toBe('0.85')
   })
 })
 

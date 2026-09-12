@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve as resolvePath } from 'node:path'
-import { B1, B2, B3, HERO_GAP, SETUP_HEAD_GAP, boardBudget } from '@/routes/board/budget'
+import { B1, B2, B3, HERO_GAP, SAFE_CQH, SETUP_HEAD_GAP, boardBudget, lbGapFor, lbRowFor } from '@/routes/board/budget'
 import type { Composition } from '@/routes/board/plan'
 
 /**
@@ -32,6 +32,8 @@ const CQW = 19.2 // 1 percent of a 1920px stage
 const SAFE_W = 1728 // 90cqw
 // Geist Mono advances 0.6em, which is what makes 2ch of b2 the 168px score slot in 6.15.
 const CH_EM = 0.6
+// " pts" is Geist, not Geist Mono, and its four characters average about half an em.
+const PTS_EM = 0.5
 const FARS = [0.85, 1, 1.2]
 
 type Vars = Record<string, string>
@@ -150,8 +152,8 @@ function boardVars(far: number): Vars {
  * --b-hero-n, --lb-rows and --lb-gap-n on the safe layer, and .b-lb derives the row and
  * both type steps from them.
  */
-function lbVars(far: number, teams: number, comp: Composition = 'mats', mats = 2): Vars {
-  const budget = boardBudget({ comp, mats, teams, far, note: false })
+function lbVars(far: number, teams: number, comp: Composition = 'mats', sign = false): Vars {
+  const budget = boardBudget({ comp, mats: 2, teams, far, note: false, sign })
   return {
     ...boardVars(far),
     ...customProperties('.b-lb'),
@@ -282,6 +284,70 @@ describe('the hero figures', () => {
     expect(rule('.lb-row')).not.toMatch(/background/)
     // Pick 4: nothing separates the standings from the band but the 3cqh gap.
     expect(rule('.b-lb')).not.toMatch(/border/)
+  })
+})
+
+/**
+ * The hero's own arithmetic, at every setting the knob offers and the three counts the
+ * mockup draws. The claim is the one the stylesheet cannot make for itself: the rows and
+ * the gaps between them fill --b-hero-n exactly, the hero and the band and their gap
+ * fill the safe frame exactly, and the row's fixed tracks leave the name a field.
+ */
+describe('the leaderboard hero arithmetic', () => {
+  const COUNTS = [2, 3, 8]
+
+  it('fills the hero and the safe frame at every far and every count', () => {
+    for (const far of FARS) {
+      for (const teams of COUNTS) {
+        for (const comp of ['mats', 'done'] as const) {
+          const sign = comp === 'done'
+          const b = boardBudget({ comp, mats: 2, teams, far, note: false, sign })
+          const vars = lbVars(far, teams, comp, sign)
+          const where = `${comp}, ${teams} teams at far ${far}`
+          const row = px('var(--lb-row)', vars)
+          const gap = px(decl('.b-lb', 'gap'), vars)
+
+          // The stylesheet's own division of the hero, against the budget's.
+          expect(row, where).toBeCloseTo(lbRowFor(b.hero, teams, far) * CQH, 6)
+          expect(gap, where).toBeCloseTo(lbGapFor(teams) * far * CQH, 6)
+          expect(teams * row + (teams - 1) * gap, where).toBeCloseTo(px('var(--b-lb-h)', { ...vars, '--b-lb-h': decl('.b-lb', 'height') }), 6)
+
+          // And the frame: hero, gap, band and every closing line, inside 90cqh.
+          const frame = b.hero + b.heroGap + b.band + b.footerGap + b.footer
+            + b.resultGap + b.result + b.noteGap + b.note + b.signGap + b.sign
+          expect(frame, where).toBeCloseTo(SAFE_CQH, 6)
+          expect(row, where).toBeGreaterThan(0)
+          // Nothing renders type its own box cannot hold: both steps are clamped to it.
+          expect(px('var(--lb-name)', vars), where).toBeLessThanOrEqual(row + 1e-9)
+          expect(px('var(--lb-wins)', vars) * 0.78, where).toBeLessThanOrEqual(row + 1e-9)
+        }
+      }
+    }
+  })
+
+  it('leaves the team name a field at every far and every count', () => {
+    // The fixed tracks are the rank, both indents, the two gaps, the wins slot and the
+    // points slot. The name is the flexible one, which is 6.15's "names truncate, they
+    // never shrink": at eight teams and far 1 it still has most of the safe width.
+    for (const far of FARS) {
+      for (const teams of COUNTS) {
+        const vars = lbVars(far, teams)
+        const where = `${teams} teams at far ${far}`
+        const name = px('var(--lb-name)', vars)
+        const wins = px('var(--lb-wins)', vars)
+        const tracks = decl('.lb-row', 'grid-template-columns').replace(/minmax\(0, 1fr\)/g, 'FLEX').split(' ')
+        expect(tracks.filter(t => t === 'FLEX'), where).toHaveLength(1)
+        const fixed = tracks
+          .filter(t => t !== 'FLEX' && t !== 'auto')
+          .reduce((sum, t) => sum + px(t, vars, t === 'var(--lb-col-wins)' ? wins : name), 0)
+          + px(decl('.lb-row', 'padding-left'), vars)
+          + px(decl('.lb-row', 'padding-right'), vars)
+          // The points track is `auto`: three characters of the name step plus " pts".
+          + 3 * CH_EM * name + 4 * PTS_EM * name
+        expect(fixed, where).toBeLessThan(SAFE_W)
+        expect(SAFE_W - fixed, where).toBeGreaterThan(SAFE_W / 3)
+      }
+    }
   })
 })
 

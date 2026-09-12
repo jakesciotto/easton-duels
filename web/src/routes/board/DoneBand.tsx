@@ -1,32 +1,27 @@
-import type { TeamView } from '@shared/types'
-import { cn } from '@/lib/utils'
-import { Fig } from './MatRow'
+import type { LeaderboardRow, TeamView } from '@shared/types'
 
-function Line({ value, label, big = false }: { value: number; label: string; big?: boolean }) {
-  return (
-    <div className="b-sum-line">
-      <Fig className={cn('b-sum-fig font-mono', big ? 'b-sum-big' : 'b-sum-small')} value={value} />
-      <span className="b-sum-label font-sans">{label}</span>
-    </div>
-  )
+/**
+ * The sentence under the final standings. Every team that shares rank 1 is named, in
+ * the standings' own order, so the line and the numerals above it cannot disagree.
+ *
+ * A tie of more than three is still named in full: the alternative is a line that says
+ * some teams tied and leaves the room counting numerals to work out which.
+ */
+export function resultText(teams: TeamView[], leaderboard: LeaderboardRow[]): string {
+  const byId = new Map(teams.map(t => [t.id, t]))
+  const names = leaderboard
+    .filter(row => row.rank === 1)
+    .map(row => byId.get(row.teamId)?.name)
+    .filter((name): name is string => name !== undefined)
+  if (names.length === 0) return ''
+  if (names.length === 1) return `${names[0]} wins`
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]} tie`
 }
 
-function SummaryHalf({ team, matches, side }: { team: TeamView; matches: number; side: 'a' | 'b' }) {
-  return (
-    <div className={cn('b-sum-half', side === 'b' ? 'b-sum-half-b' : null)}>
-      <Line value={team.wins} label="Wins" big />
-      <Line value={team.points} label="Points" />
-      <Line value={matches} label="Matches" />
-    </div>
-  )
-}
-
-export function DoneBand({ teams, matches }: { teams: TeamView[]; matches: number }) {
-  const [a, b] = teams
-  return (
-    <section aria-label="Final" className="b-summary">
-      <SummaryHalf team={a} matches={matches} side="a" />
-      <SummaryHalf team={b} matches={matches} side="b" />
-    </section>
-  )
+/**
+ * 6.15's note slot, in the budget but not in the note's colour: --attend is reserved for
+ * a state that needs a person, and a finished event needs nobody. Gray 12 at b3.
+ */
+export function DoneBand({ teams, leaderboard }: { teams: TeamView[]; leaderboard: LeaderboardRow[] }) {
+  return <div className="b-result font-sans">{resultText(teams, leaderboard)}</div>
 }
