@@ -138,6 +138,23 @@ describe('proposeMatches', () => {
     expect((await proposeMatches(db, s.eventId)).map(p => [p.a.firstName, p.b.firstName])).toEqual([['Yara', 'Wilma']])
   })
 
+  it('skips a kid who is live on a mat, and frees them when the match is done', async () => {
+    const db = await freshDb()
+    const { s, id } = await pool(db, [
+      { name: 'Ines', team: 'A' },
+      { name: 'Bruno', team: 'B' },
+      { name: 'Kai', team: 'C' },
+    ])
+    const match = await db.insert(matches).values({
+      eventId: s.eventId, orderIndex: 0, rulesetId: s.rulesetId, lengthSec: 300, status: 'live',
+      athleteAId: id('Ines'), athleteBId: id('Kai'),
+    }).returning().get()
+    expect(await proposeMatches(db, s.eventId)).toEqual([])
+
+    await db.update(matches).set({ status: 'done' }).where(eq(matches.id, match.id)).run()
+    expect((await proposeMatches(db, s.eventId)).map(p => [p.a.firstName, p.b.firstName])).toEqual([['Ines', 'Bruno']])
+  })
+
   it('skips a kid with a pending match and frees one whose match is done', async () => {
     const db = await freshDb()
     const { s, id } = await pool(db, [

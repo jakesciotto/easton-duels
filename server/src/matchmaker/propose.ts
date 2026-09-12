@@ -3,6 +3,7 @@ import type { DbLike } from '../db/client.js'
 import { events, teams, athletes, matches, proposals, type AthleteRow, type ProposalRow } from '../db/schema.js'
 import { MatchStateError } from '../match/events.js'
 import { recordAudit } from '../audit/log.js'
+import { isUnfought } from '../match/pairs.js'
 import { beltDistance } from './cost.js'
 import { classGap, weightClass } from '../shared/weight-class.js'
 import type { Proposal, ProposalSide } from '../shared/types.js'
@@ -151,7 +152,7 @@ export async function proposeMatches(db: DbLike, eventId: number): Promise<Propo
       .from(matches).where(eq(matches.eventId, eventId)).all()
     // A kid with an unfought match is spoken for. One whose matches have all settled is
     // free again, but never against the same opponent twice.
-    const busy = new Set(matchRows.filter(m => m.status === 'pending').flatMap(m => [m.a, m.b]))
+    const busy = new Set(matchRows.filter(m => isUnfought(m.status)).flatMap(m => [m.a, m.b]))
     const met = new Set(matchRows.map(m => pairKey(m.a, m.b)))
 
     const free = roster.filter(k =>

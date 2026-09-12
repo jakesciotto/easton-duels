@@ -1,6 +1,16 @@
 import { and, asc, eq, inArray, or } from 'drizzle-orm'
 import type { DbLike } from '../db/client.js'
 import { teams, athletes, mats, matches, type AthleteRow } from '../db/schema.js'
+import type { MatchStatus } from '../shared/types.js'
+
+/**
+ * A match nobody has fought through yet. A kid in one is busy: the proposer leaves them
+ * out, and the confirm and swap guards refuse them. Both finishing and skipping land on
+ * 'done', so either frees the kid again. This is the one definition of busy, because the
+ * console's "Without a match" list reads the same way and the two must not disagree.
+ */
+export const UNFOUGHT: readonly MatchStatus[] = ['pending', 'live']
+export const isUnfought = (status: MatchStatus) => UNFOUGHT.includes(status)
 
 // Returns the pair with the kid from the earlier team first, or a message when the pair is
 // invalid. An event holds up to eight teams, so the order is the teams' own, which is what
@@ -20,14 +30,14 @@ export async function resolvePair(db: DbLike, eventId: number, aId: number, bId:
 
 /**
  * The first of these kids who already has an unfought match on this event, or null. A
- * pending match is a pairing nobody has run yet, so a second one for the same kid is a
- * mistake wherever the server is the one choosing the pair.
+ * second unfought match for one kid is a mistake wherever the server is the one choosing
+ * the pair, and a kid on a mat cannot be in two places at once.
  */
 export async function busyAthlete(db: DbLike, eventId: number, ids: number[]): Promise<AthleteRow | null> {
   if (ids.length === 0) return null
   const rows = await db.select({ a: matches.athleteAId, b: matches.athleteBId }).from(matches).where(and(
     eq(matches.eventId, eventId),
-    eq(matches.status, 'pending'),
+    inArray(matches.status, [...UNFOUGHT]),
     or(inArray(matches.athleteAId, ids), inArray(matches.athleteBId, ids)),
   )).all()
   const taken = new Set(rows.flatMap(m => [m.a, m.b]))

@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { and, asc, eq, inArray, ne, or } from 'drizzle-orm'
 import type { Env } from '../context.js'
 import type { DbLike } from '../db/client.js'
-import { events, athletes, rulesets, proposals, type ProposalRow } from '../db/schema.js'
+import { events, athletes, rulesets, proposals, type AthleteRow, type ProposalRow } from '../db/schema.js'
 import { validate } from '../lib/validate.js'
 import { errorJson, requireAdmin } from '../auth/middleware.js'
 import { assertNotCertified } from '../audit/certify.js'
@@ -18,6 +18,10 @@ const swapSchema = z.object({
 
 const eventExists = async (db: DbLike, eventId: number) =>
   Boolean(await db.select({ id: events.id }).from(events).where(eq(events.id, eventId)).get())
+
+// One sentence for both guards, so the console reads the same refusal wherever the server
+// is the one choosing the pair.
+const busyMessage = (kid: AthleteRow) => `${kid.firstName} ${kid.lastName} already has a match`
 
 const firstRuleset = (db: DbLike, eventId: number) =>
   db.select({ id: rulesets.id }).from(rulesets).where(eq(rulesets.eventId, eventId)).orderBy(asc(rulesets.id)).get()
@@ -36,7 +40,7 @@ const confirm = (db: DbLike, row: ProposalRow, rulesetId: number) =>
     {
       guard: async tx => {
         const busy = await busyAthlete(tx, row.eventId, [row.athleteAId, row.athleteBId])
-        return busy ? `${busy.firstName} ${busy.lastName} already has a match` : null
+        return busy ? busyMessage(busy) : null
       },
       also: async tx => { await tx.delete(proposals).where(eq(proposals.id, row.id)).run() },
     },
@@ -102,7 +106,8 @@ proposalRoutes.patch('/proposals/:proposalId', requireAdmin, validate('json', sw
   // refusing on their account would strand a draft the organizer is trying to fix.
   const incoming = [body.athleteAId, body.athleteBId]
     .filter((id): id is number => id !== undefined && id !== row.athleteAId && id !== row.athleteBId)
-  if (await busyAthlete(db, row.eventId, incoming)) return errorJson(c, 409, 'match_state', 'already has a match')
+  const busy = await busyAthlete(db, row.eventId, incoming)
+  if (busy) return errorJson(c, 409, 'match_state', busyMessage(busy))
 
   const pair = await resolvePair(db, row.eventId, body.athleteAId ?? row.athleteAId, body.athleteBId ?? row.athleteBId)
   if (typeof pair === 'string') return errorJson(c, 422, 'validation', pair)

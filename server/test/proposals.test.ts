@@ -135,6 +135,26 @@ describe('confirming', () => {
     ])
   })
 
+  it('refuses a draft whose kid went live on another mat, and counts it in a confirm all', async () => {
+    const { app, db, adminToken, s, id } = await pool(THREE)
+    const made = await call(app, 'POST', `/api/events/${s.eventId}/proposals`, undefined, adminToken)
+    expect(made.body).toHaveLength(2)
+    // Ines is on a mat right now. Her draft is stale until that match settles.
+    await db.insert(matches).values({
+      eventId: s.eventId, matId: s.matIds[0], orderIndex: 40, rulesetId: s.rulesetId, lengthSec: 300,
+      status: 'live', athleteAId: id('Ines'), athleteBId: id('Kai'),
+    }).run()
+
+    const refused = await call(app, 'POST', `/api/proposals/${made.body[0].id}/confirm`, undefined, adminToken)
+    expect(refused.status).toBe(409)
+    expect(refused.body.error.code).toBe('match_state')
+    expect(refused.body.error.message).toBe('Ines Vantel already has a match')
+
+    const all = await call(app, 'POST', `/api/events/${s.eventId}/proposals/confirm-all`, undefined, adminToken)
+    expect(all.body).toEqual({ created: 0, skipped: 2 })
+    expect(await db.select().from(proposals).where(eq(proposals.eventId, s.eventId)).all()).toHaveLength(2)
+  })
+
   it('confirms every draft in cost order and empties the panel', async () => {
     const { app, db, adminToken, s, id } = await pool([
       { name: 'Ines', team: 'A', lbs: 62, age: 11 },
@@ -197,7 +217,12 @@ describe('swapping a kid into a draft', () => {
     const busy = await call(app, 'PATCH', `/api/proposals/${first.id}`, { athleteBId: id('Kai') }, adminToken)
     expect(busy.status).toBe(409)
     expect(busy.body.error.code).toBe('match_state')
-    expect(busy.body.error.message).toBe('already has a match')
+    expect(busy.body.error.message).toBe('Kai Vantel already has a match')
+
+    await db.update(matches).set({ status: 'live' }).where(eq(matches.eventId, s.eventId)).run()
+    const onMat = await call(app, 'PATCH', `/api/proposals/${first.id}`, { athleteBId: id('Nadia') }, adminToken)
+    expect(onMat.status).toBe(409)
+    expect(onMat.body.error.message).toBe('Nadia Vantel already has a match')
 
     const mate = await call(app, 'PATCH', `/api/proposals/${first.id}`, { athleteBId: id('Ines') }, adminToken)
     expect(mate.status).toBe(422)
